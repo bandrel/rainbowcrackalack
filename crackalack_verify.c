@@ -29,19 +29,19 @@
 #include "version.h"
 
 
-static int raw_table = 0, quick_table = 0, sorted_table = 0, truncate = VERIFY_DONT_TRUNCATE;
+static int raw_table = 0, quick_table = 0, sorted_table = 0, truncate_on_err = VERIFY_DONT_TRUNCATE;
 static struct option long_options[] = {
   {"raw", no_argument, &raw_table, 1},
   {"quick", no_argument, &quick_table, 1},
   {"sorted", no_argument, &sorted_table, 1},
-  {"truncate", no_argument, &truncate, VERIFY_TRUNCATE_ON_ERROR},
+  {"truncate_on_err", no_argument, &truncate_on_err, VERIFY_TRUNCATE_ON_ERROR},
   {"num_chains", required_argument, 0, 'n'},
   {0, 0, 0, 0}
 };
 
 
 void print_usage(char *prog_name) {
-  fprintf(stderr, "This program verifies rainbow tables.\n\n\n  %s --raw [--truncate] [--num_chains X] table.rt\n\nThe above command will verify a newly-generated rainbow table.  This ensures that the table 1.) has sequential start points, and 2.) has non-zero ending points.  Optionally, it can truncate the file to just before the first error found, if any.\n\n\n  %s --quick table.rt\n\nThe above command will quickly verify a newly-generated rainbow table.  It is similar to using '--raw', but does not examine the start & end points, and only verifies 5 random chains.  As a result, it can do basic verification without needing to read the entire table into memory first (which incurs a huge I/O cost).  The use case for this option is for quickly checking terabytes of tables for sanity.\n\n\n  %s --sorted [--num_chains X] table.rtc\n\nThe above command will verify a sorted rainbow table (i.e.: that it is suitable for lookups).  It ensures that the end indices are sorted in ascending order.  The table may be compressed or uncompressed.\n\n\nIn any case, --num_chains sets the number of random chains to verify using CPU code (hence, providing a large number here will have a dramatic effect on the speed of verification).  Unless overridden, this defaults to 100.\n\n\n", prog_name, prog_name, prog_name);
+  fprintf(stderr, "This program verifies rainbow tables.\n\n\n  %s --raw [--truncate_on_err] [--num_chains X] table.rt\n\nThe above command will verify a newly-generated rainbow table.  This ensures that the table 1.) has sequential start points, and 2.) has non-zero ending points.  Optionally, it can truncate_on_err the file to just before the first error found, if any.\n\n\n  %s --quick table.rt\n\nThe above command will quickly verify a newly-generated rainbow table.  It is similar to using '--raw', but does not examine the start & end points, and only verifies 5 random chains.  As a result, it can do basic verification without needing to read the entire table into memory first (which incurs a huge I/O cost).  The use case for this option is for quickly checking terabytes of tables for sanity.\n\n\n  %s --sorted [--num_chains X] table.rtc\n\nThe above command will verify a sorted rainbow table (i.e.: that it is suitable for lookups).  It ensures that the end indices are sorted in ascending order.  The table may be compressed or uncompressed.\n\n\nIn any case, --num_chains sets the number of random chains to verify using CPU code (hence, providing a large number here will have a dramatic effect on the speed of verification).  Unless overridden, this defaults to 100.\n\n\n", prog_name, prog_name, prog_name);
 }
 
 
@@ -73,9 +73,9 @@ int main(int ac, char **av) {
     exit(-1);
   }
 
-  /* Sorted tables cannot be truncated. */
-  if (sorted_table && truncate) {
-    fprintf(stderr, "\nError: sorted tables cannot be truncated.\n\n");
+  /* Sorted tables cannot be truncate_on_errd. */
+  if (sorted_table && truncate_on_err) {
+    fprintf(stderr, "\nError: sorted tables cannot be truncate_on_errd.\n\n");
     exit(-1);
   }
 
@@ -94,10 +94,10 @@ int main(int ac, char **av) {
   else if (sorted_table)
     table_type = VERIFY_TABLE_TYPE_LOOKUP;
 
-  if (!verify_rainbowtable_file(filename, table_type, VERIFY_TABLE_IS_COMPLETE, truncate, num_chains_to_verify)) {
+  if (!verify_rainbowtable_file(filename, table_type, VERIFY_TABLE_IS_COMPLETE, truncate_on_err, num_chains_to_verify)) {
     fprintf(stderr, "\n%sRainbow table verification FAILED.%s", REDB, CLR);
-    if (truncate == VERIFY_TRUNCATE_ON_ERROR)
-      fprintf(stderr, "  File truncated.");
+    if (truncate_on_err == VERIFY_TRUNCATE_ON_ERROR)
+      fprintf(stderr, "  File truncate_on_errd.");
     fprintf(stderr, "\n\n");
     return -1;
   }

@@ -30,6 +30,16 @@ ifeq ($(BUILD),linux)
   LIBS     := -lpthread -ldl -lgcrypt -lOpenCL
 endif
 
+ifeq ($(BUILD),macos)
+  CC := clang
+  EXE :=
+  CPPFLAGS := $(CPPFLAGS_common) -DUSE_METAL -I/opt/homebrew/include
+  CFLAGS   := $(CFLAGS_common)
+  LDFLAGS  := $(LDFLAGS_common) -L/opt/homebrew/lib
+  LIBS     := -lpthread -lgcrypt -framework Metal -framework Foundation
+  GPU_BACKEND_OBJ := $(OBJDIR)/metal_setup.o
+endif
+
 ifeq ($(BUILD),windows)
   CC := $(CC_windows)
   EXE := .exe
@@ -42,6 +52,8 @@ ifeq ($(BUILD),windows)
 
   PREP := prep_opencl_headers
 endif
+
+GPU_BACKEND_OBJ ?= $(OBJDIR)/opencl_setup.o
 
 SRCS := $(wildcard *.c)
 OBJS := $(patsubst %.c,$(OBJDIR)/%.o,$(SRCS))
@@ -65,7 +77,7 @@ BINARIES := \
 	$(OUTDIR)/$(PERFECTIFY) \
 	$(OUTDIR)/$(ENUMERATE)
 
-.PHONY: all linux windows clean strip \
+.PHONY: all linux macos windows clean strip \
         prep_opencl_headers prep_none \
         bundle_windows
 
@@ -73,6 +85,9 @@ all: $(PREP) $(BINARIES)
 
 linux:
 	$(MAKE) BUILD=linux all
+
+macos:
+	$(MAKE) BUILD=macos all
 
 windows:
 	$(MAKE) BUILD=windows all bundle_windows
@@ -100,6 +115,9 @@ DEPS := $(OBJS:.o=.d)
 $(OBJDIR)/%.o: %.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
+$(OBJDIR)/%.o: %.m | $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fobjc-arc -c $< -o $@
+
 -include $(DEPS)
 
 $(OUTDIR)/$(GEN_PROG): \
@@ -111,7 +129,7 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
-	$(OBJDIR)/opencl_setup.o \
+	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
@@ -122,7 +140,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/crackalack_unit_tests.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
-	$(OBJDIR)/opencl_setup.o \
+	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/test_chain.o \
 	$(OBJDIR)/test_chain_ntlm9.o \
 	$(OBJDIR)/test_hash.o \
@@ -162,7 +180,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
-	$(OBJDIR)/opencl_setup.o \
+	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/verify.o

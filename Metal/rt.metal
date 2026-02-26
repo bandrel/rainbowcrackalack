@@ -1,16 +1,10 @@
 #include "shared.h"
-#include "ntlm.cl"
-#include "netntlmv1.cl"
+#include "ntlm.metal"
+#include "netntlmv1.metal"
 
-/*
-#ifdef USE_DES_BITSLICE
-#include "des_bs.cl"
-#else
-#include "des.cl"
-#endif
-*/
-inline void index_to_plaintext(unsigned long index, char *charset, unsigned int charset_len, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned long *plaintext_space_up_to_index, unsigned char *plaintext, unsigned int *plaintext_len) {
-  
+/* DES support not yet ported to Metal. */
+inline void index_to_plaintext(ulong index, thread char *charset, unsigned int charset_len, unsigned int plaintext_len_min, unsigned int plaintext_len_max, thread ulong *plaintext_space_up_to_index, thread unsigned char *plaintext, thread unsigned int *plaintext_len) {
+
   //printf("index_to_plaintext .CL\tindex: %x; charset[1]: %02x; charset_len: %d; plaintext_len_min: %d\n", index, charset[1],  charset_len, plaintext_len_min);
 
   for (int i = plaintext_len_max - 1; i >= plaintext_len_min - 1; i--) {
@@ -20,7 +14,7 @@ inline void index_to_plaintext(unsigned long index, char *charset, unsigned int 
     }
   }
 
-  unsigned long index_x = index - plaintext_space_up_to_index[*plaintext_len - 1];
+  ulong index_x = index - plaintext_space_up_to_index[*plaintext_len - 1];
   for (int i = *plaintext_len - 1; i >= 0; i--) {
     plaintext[i] = charset[index_x % charset_len];
     index_x = index_x / charset_len;
@@ -30,14 +24,14 @@ inline void index_to_plaintext(unsigned long index, char *charset, unsigned int 
 }
 
 
-inline void do_hash(unsigned int hash_type, unsigned char *plaintext, unsigned int plaintext_len, unsigned char *hash_value, unsigned int *hash_len /*, __global unsigned char *g_debug*/) {
+inline void do_hash(unsigned int hash_type, thread unsigned char *plaintext, unsigned int plaintext_len, thread unsigned char *hash_value, thread unsigned int *hash_len) {
 
 #if HASH_TYPE == HASH_NTLM
-  ntlm_hash(plaintext, plaintext_len, hash_value /*, g_debug*/);
+  ntlm_hash(plaintext, plaintext_len, hash_value);
   *hash_len = 16;
 #elif HASH_TYPE == HASH_NETNTLMV1
   uint32_t SK[32];
-  netntlmv1_hash(SK, plaintext, hash_value /*, g_debug*/);
+  netntlmv1_hash(SK, plaintext, hash_value);
   *hash_len = 8;
 #endif
 
@@ -45,8 +39,8 @@ inline void do_hash(unsigned int hash_type, unsigned char *plaintext, unsigned i
 }
 
 
-inline unsigned long hash_to_index(unsigned char *hash_value, unsigned int hash_len, unsigned int reduction_offset, unsigned long plaintext_space_total, unsigned int pos) {
-  unsigned long ret = hash_value[7];
+inline ulong hash_to_index(thread unsigned char *hash_value, unsigned int hash_len, unsigned int reduction_offset, ulong plaintext_space_total, unsigned int pos) {
+  ulong ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
   ret <<= 8;
@@ -66,8 +60,8 @@ inline unsigned long hash_to_index(unsigned char *hash_value, unsigned int hash_
 }
 
 
-inline unsigned long fill_plaintext_space_table(unsigned int charset_len, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned long *plaintext_space_up_to_index) {
-  unsigned long n = 1;
+inline ulong fill_plaintext_space_table(unsigned int charset_len, unsigned int plaintext_len_min, unsigned int plaintext_len_max, thread ulong *plaintext_space_up_to_index) {
+  ulong n = 1;
 
   plaintext_space_up_to_index[0] = 0;
   for (int i = 1; i <= plaintext_len_max; i++) {
@@ -81,33 +75,33 @@ inline unsigned long fill_plaintext_space_table(unsigned int charset_len, unsign
 }
 
 
-// Copies the plaintext_space_up_to_index array from global memory to local memory.
-inline void copy_plaintext_space_up_to_index(unsigned long *dest, __global unsigned long *src) {
+// Copies the plaintext_space_up_to_index array from device memory to thread memory.
+inline void copy_plaintext_space_up_to_index(thread ulong *dest, device ulong *src) {
   for (int i = 0; i < MAX_PLAINTEXT_LEN; i++)
     dest[i] = src[i];
 }
 
 
-inline unsigned long generate_rainbow_chain(
+inline ulong generate_rainbow_chain(
     unsigned int hash_type,
-    char *charset,
+    thread char *charset,
     unsigned int charset_len,
     unsigned int plaintext_len_min,
     unsigned int plaintext_len_max,
     unsigned int reduction_offset,
     unsigned int chain_len,
-    unsigned long start,
+    ulong start,
     unsigned int pos,
-    unsigned long *plaintext_space_up_to_index,
-    unsigned long plaintext_space_total,
-    unsigned char *plaintext,
-    unsigned int *plaintext_len,
-    unsigned char *hash,
-    unsigned int *hash_len) {
+    thread ulong *plaintext_space_up_to_index,
+    ulong plaintext_space_total,
+    thread unsigned char *plaintext,
+    thread unsigned int *plaintext_len,
+    thread unsigned char *hash,
+    thread unsigned int *hash_len) {
 
   //printf("generate_rainbow_chain\thash_type: %x; charset[1]: %x; charset_len: %d; plaintext_len_min: %d; chain_len: %d\n", hash_type, charset, charset_len, plaintext_len_min, chain_len);
 
-  unsigned long index = start;
+  ulong index = start;
   for (; pos < chain_len - 1; pos++) {
     index_to_plaintext(index, charset, charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, plaintext_len);
     do_hash(hash_type, plaintext, *plaintext_len, hash, hash_len);

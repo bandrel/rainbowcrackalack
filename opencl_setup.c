@@ -426,6 +426,12 @@ void print_device_info(cl_device_id *devices, cl_uint num_devices) {
 }
 
 
+void gpu_release_device(gpu_device device) {
+  if (device != NULL)
+    rc_clReleaseDevice(device);
+}
+
+
 /* Prints debugging information about platforms. */
 void print_platform_info(cl_platform_id *platforms, cl_uint num_platforms) {
   unsigned int i = 0;
