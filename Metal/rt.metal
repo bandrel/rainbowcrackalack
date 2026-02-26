@@ -2,12 +2,11 @@
 #include "ntlm.metal"
 #include "netntlmv1.metal"
 
-/* DES support not yet ported to Metal. */
 inline void index_to_plaintext(ulong index, thread char *charset, unsigned int charset_len, unsigned int plaintext_len_min, unsigned int plaintext_len_max, thread ulong *plaintext_space_up_to_index, thread unsigned char *plaintext, thread unsigned int *plaintext_len) {
 
   //printf("index_to_plaintext .CL\tindex: %x; charset[1]: %02x; charset_len: %d; plaintext_len_min: %d\n", index, charset[1],  charset_len, plaintext_len_min);
 
-  for (int i = plaintext_len_max - 1; i >= plaintext_len_min - 1; i--) {
+  for (int i = (int)plaintext_len_max - 1; i >= (int)plaintext_len_min - 1; i--) {
     if (index >= plaintext_space_up_to_index[i]) {
       *plaintext_len = i + 1;
       break;
@@ -64,9 +63,9 @@ inline ulong fill_plaintext_space_table(unsigned int charset_len, unsigned int p
   ulong n = 1;
 
   plaintext_space_up_to_index[0] = 0;
-  for (int i = 1; i <= plaintext_len_max; i++) {
+  for (int i = 1; i <= (int)plaintext_len_max; i++) {
     n = n * charset_len;
-    if (i < plaintext_len_min)
+    if (i < (int)plaintext_len_min)
       plaintext_space_up_to_index[i] = 0;
     else
       plaintext_space_up_to_index[i] = plaintext_space_up_to_index[i - 1] + n;
