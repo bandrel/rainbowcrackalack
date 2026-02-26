@@ -13,7 +13,9 @@ __kernel void precompute_ntlm9(
     __global unsigned int *g_device_num,
     __global unsigned int *g_total_devices,
     __global unsigned int *g_exec_block_scaler,
-    __global unsigned long *g_output) {
+    __global unsigned long *g_output,
+    __global unsigned long *unused8,
+    __global unsigned long *unused9) {
 
   long target_chain_len = (803000 - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
 
