@@ -13,7 +13,9 @@ __kernel void precompute(
     __global unsigned int *g_device_num,
     __global unsigned int *g_total_devices,
     __global unsigned int *g_exec_block_scaler,
-    __global unsigned long *g_output) {
+    __global unsigned long *g_output,
+    __global unsigned long *g_plaintext_space_up_to_index,
+    __global unsigned long *g_plaintext_space_total) {
 
   long target_chain_len = (*g_chain_len - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
 
@@ -36,7 +38,8 @@ __kernel void precompute(
   unsigned int plaintext_len_max = *g_plaintext_len_max;
   unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
   unsigned int chain_len = *g_chain_len;
-  unsigned long plaintext_space_total = fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
+  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index);
+  unsigned long plaintext_space_total = *g_plaintext_space_total;
 
 
   g_memcpy(hash, g_hash, *g_hash_len);
