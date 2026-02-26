@@ -23,6 +23,7 @@
 #include <inttypes.h>
 #include <locale.h>
 #include <pthread.h>
+#include "compat.h"
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
@@ -30,7 +31,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "opencl_setup.h"
+#include "gpu_backend.h"
 
 #include "charset.h"
 #include "clock.h"
@@ -71,7 +72,7 @@
 
 #define ROUND(_x) ((unsigned int)(_x + 0.5))
 
-void write_chains(char *filename, unsigned int chains_per_work_unit, cl_ulong *start_indices, unsigned int start_indices_size, cl_ulong *end_indices, unsigned int end_indices_size, unsigned int thread_id);
+void write_chains(char *filename, unsigned int chains_per_work_unit, gpu_ulong *start_indices, unsigned int start_indices_size, gpu_ulong *end_indices, unsigned int end_indices_size, unsigned int thread_id);
 
 
 struct hash_names {
@@ -87,13 +88,13 @@ struct hash_names valid_hash_names[] = {
 
 /* Struct to represent one GPU device. */
 typedef struct {
-  cl_uint device_number;
-  cl_device_id device;
-  cl_context context;
-  cl_program program;
-  cl_kernel kernel;
-  cl_command_queue queue;
-  cl_uint num_work_units;
+  gpu_uint device_number;
+  gpu_device device;
+  gpu_context context;
+  gpu_program program;
+  gpu_kernel kernel;
+  gpu_queue queue;
+  gpu_uint num_work_units;
 } gpu_dev;
 
 /* Struct for async write thread state. */
@@ -105,8 +106,8 @@ typedef struct {
   int shutdown;
   char *filename;
   unsigned int device_number;
-  cl_ulong *start_buf;
-  cl_ulong *end_buf;
+  gpu_ulong *start_buf;
+  gpu_ulong *end_buf;
   unsigned int buf_size;
 } writer_state;
 
@@ -247,13 +248,13 @@ void *host_thread(void *ptr) {
   double elapsed = 0;*/
   int err = 0;
 
-  cl_context context = NULL;
-  cl_command_queue queue = NULL;
-  cl_kernel kernel = NULL;
+  gpu_context context = NULL;
+  gpu_queue queue = NULL;
+  gpu_kernel kernel = NULL;
 
-  cl_mem hash_type_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL;
+  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL;
 
-  cl_uint pos_start = 0;
+  gpu_uint pos_start = 0;
 
   if ((strlen(args->charset) == 0) && (args->charset != NULL)) {
     charset_len = 256;
@@ -293,6 +294,10 @@ void *host_thread(void *ptr) {
   queue = gpu->queue;
   kernel = gpu->kernel;
 
+#ifdef USE_METAL
+  kernel_work_group_size = 256;
+  kernel_preferred_work_group_size_multiple = 32;
+#else
   if ((rc_clGetKernelWorkGroupInfo(kernel, gpu->device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &kernel_work_group_size, NULL) != CL_SUCCESS) || \
       (rc_clGetKernelWorkGroupInfo(kernel, gpu->device, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(size_t), &kernel_preferred_work_group_size_multiple, NULL) != CL_SUCCESS)) {
     fprintf(stderr, "Failed to get preferred work group size!\n");
@@ -303,6 +308,7 @@ void *host_thread(void *ptr) {
     pthread_exit(NULL);
     return NULL;
   }
+#endif
 
   /* If the user provided a static GWS on the command line, use that.   Otherwise,
    * use the driver's work group size multiplied by the preferred multiple. */
@@ -327,8 +333,8 @@ void *host_thread(void *ptr) {
 #endif
 
   indices_size = gws;
-  start_indices = calloc(indices_size, sizeof(cl_ulong));
-  end_indices = calloc(indices_size, sizeof(cl_ulong));
+  start_indices = calloc(indices_size, sizeof(gpu_ulong));
+  end_indices = calloc(indices_size, sizeof(gpu_ulong));
   if ((start_indices == NULL) || (end_indices == NULL)) {
     fprintf(stderr, "Failed to create start/end index buffers.\n");
     exit(-1);
@@ -339,8 +345,8 @@ void *host_thread(void *ptr) {
   ws.shutdown = 0;
   ws.filename = args->filename;
   ws.device_number = gpu->device_number;
-  ws.start_buf = calloc(indices_size, sizeof(cl_ulong));
-  ws.end_buf = calloc(indices_size, sizeof(cl_ulong));
+  ws.start_buf = calloc(indices_size, sizeof(gpu_ulong));
+  ws.end_buf = calloc(indices_size, sizeof(gpu_ulong));
   ws.buf_size = indices_size;
   if ((ws.start_buf == NULL) || (ws.end_buf == NULL)) {
     fprintf(stderr, "Failed to create writer double-buffers.\n");
@@ -417,20 +423,20 @@ void *host_thread(void *ptr) {
     /* Most of the parameters need only be set once upon first invokation. */
     if (hash_type_buffer == NULL) {
       uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN] = {0};
-      cl_ulong pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
+      gpu_ulong pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
 
-      CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(cl_uint));
+      CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_len + 1);
-      CLCREATEARG(2, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(cl_uint));
-      CLCREATEARG(3, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(cl_uint));
-      CLCREATEARG(4, reduction_offset_buffer, CL_RO, args->reduction_offset, sizeof(cl_uint));
-      CLCREATEARG(5, chain_len_buffer, CL_RO, args->chain_len, sizeof(cl_uint));
-      CLCREATEARG_ARRAY(6, indices_buffer, CL_RW, start_indices, indices_size * sizeof(cl_ulong));
-      CLCREATEARG(7, pos_start_buffer, CL_RO, pos_start, sizeof(cl_uint));
-      CLCREATEARG_ARRAY(8, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(cl_ulong));
-      CLCREATEARG(9, pspace_total_buffer, CL_RO, pspace_total, sizeof(cl_ulong));
+      CLCREATEARG(2, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
+      CLCREATEARG(3, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
+      CLCREATEARG(4, reduction_offset_buffer, CL_RO, args->reduction_offset, sizeof(gpu_uint));
+      CLCREATEARG(5, chain_len_buffer, CL_RO, args->chain_len, sizeof(gpu_uint));
+      CLCREATEARG_ARRAY(6, indices_buffer, CL_RW, start_indices, indices_size * sizeof(gpu_ulong));
+      CLCREATEARG(7, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
+      CLCREATEARG_ARRAY(8, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
+      CLCREATEARG(9, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
     } else {
-      CLWRITEBUFFER(indices_buffer, indices_size * sizeof(cl_ulong), start_indices);
+      CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
     }
 
     /* If the chain length is greater than MAX_CHAIN_LEN, then the chains must be computed in multiple passes (otherwise Windows drivers crash). */
@@ -444,8 +450,8 @@ void *host_thread(void *ptr) {
       /* Starting at 0, the position start increases by a multiple of MAX_CHAIN_LEN. */
       pos_start = pass * MAX_CHAIN_LEN;
 
-      CLWRITEBUFFER(chain_len_buffer, sizeof(cl_uint), &chain_len);
-      CLWRITEBUFFER(pos_start_buffer, sizeof(cl_uint), &pos_start);
+      CLWRITEBUFFER(chain_len_buffer, sizeof(gpu_uint), &chain_len);
+      CLWRITEBUFFER(pos_start_buffer, sizeof(gpu_uint), &pos_start);
 
       /* For AMD GPUs, ensure that all kernels are running concurrently.  This is a
        * requirement for the closed-source Windows driver, and may or may not be
@@ -470,7 +476,7 @@ void *host_thread(void *ptr) {
     }
 
     /* Get the kernel output. */
-    CLREADBUFFER(indices_buffer, indices_size * sizeof(cl_ulong), end_indices);
+    CLREADBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), end_indices);
 
     /* If we are in benchmark mode, don't loop again, nor write to the output file. */
     if (args->benchmark_mode)
@@ -481,8 +487,8 @@ void *host_thread(void *ptr) {
       pthread_mutex_lock(&ws.mutex);
       while (ws.ready)
         pthread_cond_wait(&ws.cond, &ws.mutex);
-      memcpy(ws.start_buf, start_indices, indices_size * sizeof(cl_ulong));
-      memcpy(ws.end_buf, end_indices, indices_size * sizeof(cl_ulong));
+      memcpy(ws.start_buf, start_indices, indices_size * sizeof(gpu_ulong));
+      memcpy(ws.end_buf, end_indices, indices_size * sizeof(gpu_ulong));
       ws.buf_size = indices_size;
       ws.ready = 1;
       pthread_cond_signal(&ws.cond);
@@ -500,10 +506,10 @@ void *host_thread(void *ptr) {
 
 
 /* Writes the chains given by the kernel to the file. */
-void write_chains(char *filename, unsigned int chains_per_work_unit, cl_ulong *start_indices, unsigned int start_indices_size, cl_ulong *end_indices, unsigned int end_indices_size, unsigned int thread_id) {
+void write_chains(char *filename, unsigned int chains_per_work_unit, gpu_ulong *start_indices, unsigned int start_indices_size, gpu_ulong *end_indices, unsigned int end_indices_size, unsigned int thread_id) {
   int i = 0, j = 0;
   unsigned int file_size = 0;
-  cl_ulong start = 0;
+  gpu_ulong start = 0;
   rc_file f = rc_fopen(filename, 0), l = NULL;
   char log_filename[256] = {0};
   int empty_chains = 0;
@@ -563,8 +569,8 @@ void write_chains(char *filename, unsigned int chains_per_work_unit, cl_ulong *s
   for (i = 0; i < start_indices_size; i++) {
     start = start_indices[i];
     for (j = (i * chains_per_work_unit); (j < ((i * chains_per_work_unit) + chains_per_work_unit)) && (j < end_indices_size); j++) {
-      rc_fwrite(&start, sizeof(cl_ulong), 1, f);
-      rc_fwrite(&(end_indices[j]), sizeof(cl_ulong), 1, f);
+      rc_fwrite(&start, sizeof(gpu_ulong), 1, f);
+      rc_fwrite(&(end_indices[j]), sizeof(gpu_ulong), 1, f);
       start++;
     }
   }
@@ -579,8 +585,8 @@ void write_chains(char *filename, unsigned int chains_per_work_unit, cl_ulong *s
 
 
 int main(int ac, char **av) {
-  cl_platform_id platforms[MAX_NUM_PLATFORMS] = {0};
-  cl_device_id devices[MAX_NUM_DEVICES] = {0};
+  gpu_platform platforms[MAX_NUM_PLATFORMS] = {0};
+  gpu_device devices[MAX_NUM_DEVICES] = {0};
   pthread_t threads[MAX_NUM_DEVICES] = {0};
   char filename[256] = {0}, time_str[128] = {0};
 
@@ -590,7 +596,7 @@ int main(int ac, char **av) {
   char *hash_name = NULL, *charset_name = NULL, *charset = NULL;
   unsigned int plaintext_len_min = 0, plaintext_len_max = 0, total_chains_in_table = 0, table_index = 0, benchmark_mode = 0;
   unsigned int resuming_table = 0;  /* Set when a table gen is being resumed. */
-  cl_uint hash_type = 0, chain_len = 0, num_platforms = 0, num_devices = 0;
+  gpu_uint hash_type = 0, chain_len = 0, num_platforms = 0, num_devices = 0;
   uint64_t part_index = 0;
   int i = 0;
   int charset_len = 0;
@@ -922,7 +928,7 @@ int main(int ac, char **av) {
   }
 
   for (i = 0; i < num_devices; i++)
-    rc_clReleaseDevice(devices[i]);
+    gpu_release_device(devices[i]);
 
   pthread_barrier_destroy(&barrier);
   FREE(args);
