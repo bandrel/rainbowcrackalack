@@ -16,6 +16,20 @@ NTLM 9-character tables (50% effective) are available for [free download via Bit
 
 For convenience, the tables [may also be purchased](https://www.rainbowcrackalack.com/#download) on a USB 3.0 external hard drive.
 
+## Binaries
+
+|Binary               |Purpose                                              |
+|----------------------|-----------------------------------------------------|
+|`crackalack_gen`      |Generate rainbow tables                              |
+|`crackalack_lookup`   |Look up hashes against rainbow tables                |
+|`crackalack_verify`   |Verify generated tables for correctness              |
+|`crackalack_sort`     |Sort rainbow tables by end index for lookup          |
+|`crackalack_unit_tests`|Run GPU-accelerated unit tests                      |
+|`crackalack_rtc2rt`   |Decompress .rtc tables to .rt format                 |
+|`perfectify`          |Remove duplicate endpoints from tables               |
+|`get_chain`           |Extract a single chain from a table                  |
+|`enumerate_chain`     |Walk a chain and print each step                     |
+
 ## Examples
 
 #### Generating NTLM 9-character tables
