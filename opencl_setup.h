@@ -87,6 +87,10 @@ extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 #define CLWAIT(_queue) \
   { err = rc_clFinish(_queue); if (err == CL_INVALID_COMMAND_QUEUE) { fprintf(stderr, "\nError: clFinish() returned CL_INVALID_COMMAND_QUEUE (%d).  This is often caused by running out of host memory.  Sometimes, it can be worked around by lowering the GWS setting (see command line options; hint: try setting it to a multiple of the max compute units reported at the beginning of the program output.  For example, if the MCU is 15, try setting the GWS parameter to 15 * 256 = 3840, 15 * 1024 = 15360, etc).\n", err); exit(-1); } else if (err < 0) { fprintf(stderr, "clFinish failed: %d\n", err); exit(-1); } }
 
+#define CLWRITEBUFFER(_buffer, _len, _ptr) \
+  { err = rc_clEnqueueWriteBuffer(queue, _buffer, CL_TRUE, 0, _len, _ptr, 0, NULL, NULL); \
+  if (err < 0) { fprintf(stderr, "clEnqueueWriteBuffer failed: %d\n", err); exit(-1); } }
+
 #define CLREADBUFFER(_buffer, _len, _ptr) \
   { err = rc_clEnqueueReadBuffer(queue, _buffer, CL_TRUE, 0, _len, _ptr, 0, NULL, NULL); if (err < 0) { fprintf(stderr, "clEnqueueReadBuffer failed: %d\n", err); exit(-1); } }
 

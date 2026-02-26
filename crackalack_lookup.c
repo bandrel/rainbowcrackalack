@@ -128,6 +128,13 @@ typedef struct {
 } thread_args;
 
 
+/* Per-thread search result entry. */
+typedef struct {
+  precomputed_and_potential_indices *ppi;
+  cl_ulong start;
+  unsigned int position;
+} search_result_entry;
+
 /* Struct to pass to binary search threads. */
 typedef struct {
   cl_ulong *rainbow_table;
@@ -135,6 +142,9 @@ typedef struct {
   precomputed_and_potential_indices *ppi_head;
   unsigned int thread_number;
   unsigned int total_threads;
+  search_result_entry *local_results;
+  unsigned int num_local_results;
+  unsigned int local_results_capacity;
 } search_thread_args;
 
 
@@ -246,7 +256,7 @@ unsigned int num_hashes_precomputed_total = 0;
 
 /* The total number of tables to preload in memory while binary searching and false
  * alarm checking is done by the main thread. */
-#define MAX_PRELOAD_NUM 2
+#define MAX_PRELOAD_NUM 4
 
 #define LOCK_PPI() \
   if (pthread_mutex_lock(&ppi_mutex)) { perror("Failed to lock mutex"); exit(-1); }
@@ -258,7 +268,7 @@ unsigned int num_hashes_precomputed_total = 0;
 /* Adds a potential start index (and position within the chain) to check for false
  * alarms. */
 void add_potential_start_index_and_position(precomputed_and_potential_indices *ppi, cl_ulong start, unsigned int position) {
-  #define POTENTIAL_START_INDICES_INITIAL_SIZE 16
+  #define POTENTIAL_START_INDICES_INITIAL_SIZE 1024
 
   LOCK_PPI();
 
@@ -872,7 +882,7 @@ void *host_thread_precompute(void *ptr) {
   int err = 0;
   char *kernel_path = PRECOMPUTE_KERNEL_PATH, *kernel_name = "precompute";
 
-  cl_mem hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL/*, debug_buffer = NULL*/;
+  cl_mem hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL/*, debug_buffer = NULL*/;
 
   size_t gws = 0;
   cl_ulong *output = NULL, *output_block = NULL;
@@ -978,7 +988,14 @@ void *host_thread_precompute(void *ptr) {
   CLCREATEARG(8, device_num_buffer, CL_RO, gpu->device_number, sizeof(cl_uint));
   CLCREATEARG(9, total_devices_buffer, CL_RO, args->total_devices, sizeof(cl_uint));
   CLCREATEARG_ARRAY(11, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(cl_ulong));
-  /*CLCREATEARG_DEBUG(9, debug_buffer, debug_ptr);*/
+
+  {
+    uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN] = {0};
+    unsigned int actual_charset_len = (strcmp(args->charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(args->charset);
+    cl_ulong pspace_total = fill_plaintext_space_table(actual_charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
+    CLCREATEARG_ARRAY(12, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(cl_ulong));
+    CLCREATEARG(13, pspace_total_buffer, CL_RO, pspace_total, sizeof(cl_ulong));
+  }
 
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
     unsigned int exec_block_scaler = exec_block * gws;
@@ -1036,7 +1053,8 @@ void *host_thread_precompute(void *ptr) {
   CLFREEBUFFER(total_devices_buffer);
   CLFREEBUFFER(exec_block_scaler_buffer);
   CLFREEBUFFER(output_block_buffer);
-  /*CLFREEBUFFER(debug_buffer);*/
+  CLFREEBUFFER(pspace_table_buffer);
+  CLFREEBUFFER(pspace_total_buffer);
 
   CLRELEASEKERNEL(gpu->kernel);
   CLRELEASEPROGRAM(gpu->program);
@@ -1113,43 +1131,30 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
 
       Below, we collate the results into a single array containing "100 99 98 [...]".
     */
-    for (i = 0; i < args[0].num_results; i++) {
-      for (j = 0; j < num_devices; j++) {
-	output[output_index] = args[j].results[i];
-	output_index++;
+    {
+      unsigned int total_results = args[0].num_results * num_devices;
+      if (total_results >= args[0].chain_len - 1)
+        total_results = args[0].chain_len - 1;
+
+      output_index = total_results;
+
+      unsigned int ri = total_results - 1;
+      for (i = 0; i < args[0].num_results; i++) {
+        for (j = 0; j < num_devices; j++) {
+          if (ri < total_results)
+            output[ri] = args[j].results[i];
+          if (ri == 0)
+            goto collation_done;
+          ri--;
+        }
       }
+      collation_done: ;
     }
 
     /* Now that pulled all the GPU results into one array, free them. */
     for (i = 0; i < num_devices; i++) {
       FREE(args[i].results);
       args[i].num_results = 0;
-    }
-
-    /* We may have a few extra indices in the array at the end, if the chain length
-     * is not divisible by the number of GPUs.  In that case, we simply truncate the
-     * end of the array. */
-    if (output_index >= args[0].chain_len - 1)
-      output_index = args[0].chain_len -1;
-    else { /* Sanity check: this should never happen... */
-      fprintf(stderr, "Error: output_index < chain_len - 1!: %u < %u\n", output_index, args[0].chain_len - 1);
-      exit(-1);
-    }
-
-    /* Reverse the output buffer.
-     * TODO: this logic can be merged in, above, to simplify. */
-    {
-      uint64_t *tmp = calloc(output_index, sizeof(uint64_t));
-      if (tmp == NULL) {
-	fprintf(stderr, "Failed to create temp buffer.\n");
-	exit(-1);
-      }
-
-      for (i = 0; i < output_index; i++)
-	tmp[i] = output[output_index - i - 1];
-
-      FREE(output);
-      output = tmp;
     }
 
     /* Ensure we didn't get all zeros. */
@@ -1476,26 +1481,22 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
 }
 
 
-/* Helper function for rt_binary_search(). */
 unsigned int _rt_binary_search(cl_ulong *rainbow_table, unsigned int low, unsigned int high, cl_ulong search_index, cl_ulong *start) {
   unsigned int chain = 0;
 
-
-  /*printf("_rt_binary_search(%u, %u, %lu)\n", low, high, search_index);*/
-  if (high - low <= 8) {
-    for (chain = low; chain < high; chain++) {
-      if (search_index == rainbow_table[(chain * 2) + 1]) {
-	*start = rainbow_table[chain * 2];
-	/*printf("\nbinary search: found %lu at %u (between %u and %u)\n", *start, chain, low, high);*/
-	return 1;
-      }
-    }
-  } else {
-    chain = ((high - low) / 2) + low;
-    if (search_index >= rainbow_table[(chain * 2) + 1])
-      return _rt_binary_search(rainbow_table, chain, high, search_index, start);
+  while (high - low > 8) {
+    unsigned int mid = ((high - low) / 2) + low;
+    if (search_index >= rainbow_table[(mid * 2) + 1])
+      low = mid;
     else
-      return _rt_binary_search(rainbow_table, low, chain, search_index, start);
+      high = mid;
+  }
+
+  for (chain = low; chain < high; chain++) {
+    if (search_index == rainbow_table[(chain * 2) + 1]) {
+      *start = rainbow_table[chain * 2];
+      return 1;
+    }
   }
 
   return 0;
@@ -1508,12 +1509,30 @@ void *rt_binary_search_thread(void *ptr) {
   unsigned int i = 0;
   cl_ulong start = 0;
 
+  args->num_local_results = 0;
+  args->local_results_capacity = 256;
+  args->local_results = calloc(args->local_results_capacity, sizeof(search_result_entry));
+  if (args->local_results == NULL) {
+    fprintf(stderr, "Failed to allocate thread-local search results buffer.\n");
+    exit(-1);
+  }
 
   while (ppi_cur != NULL) {
-    if (ppi_cur->plaintext == NULL) { /* If this hash isn't cracked yet... */
+    if (ppi_cur->plaintext == NULL) {
       for (i = 0 + args->thread_number; i < ppi_cur->num_precomputed_end_indices; i += args->total_threads) {
 	if (_rt_binary_search(args->rainbow_table, 0, args->num_chains, ppi_cur->precomputed_end_indices[i], &start)) {
-	  add_potential_start_index_and_position(ppi_cur, start, i);
+	  if (args->num_local_results == args->local_results_capacity) {
+	    args->local_results_capacity *= 2;
+	    args->local_results = realloc(args->local_results, args->local_results_capacity * sizeof(search_result_entry));
+	    if (args->local_results == NULL) {
+	      fprintf(stderr, "Failed to grow thread-local search results buffer.\n");
+	      exit(-1);
+	    }
+	  }
+	  args->local_results[args->num_local_results].ppi = ppi_cur;
+	  args->local_results[args->num_local_results].start = start;
+	  args->local_results[args->num_local_results].position = i;
+	  args->num_local_results++;
 	}
       }
     }
@@ -1568,6 +1587,16 @@ void rt_binary_search(cl_ulong *rainbow_table, unsigned int num_chains, precompu
       perror("Failed to join with thread");
       exit(-1);
     }
+  }
+
+  /* Merge per-thread results into the ppi structures. */
+  for (i = 0; i < num_threads; i++) {
+    unsigned int r;
+    for (r = 0; r < args[i].num_local_results; r++) {
+      search_result_entry *entry = &args[i].local_results[r];
+      add_potential_start_index_and_position(entry->ppi, entry->start, entry->position);
+    }
+    FREE(args[i].local_results);
   }
 
   s_time = get_elapsed(&start_time_searching);
@@ -2215,6 +2244,14 @@ int main(int ac, char **av) {
     get_device_uint(args[i].gpu.device, CL_DEVICE_MAX_COMPUTE_UNITS, &(args[i].gpu.num_work_units));
   }
 
+  /* Start preloading tables into memory in parallel with precomputation. */
+  preload_thread_args.rt_dir = strdup(rt_dir);
+  err = pthread_create(&preload_thread_id, NULL, preloading_thread, &preload_thread_args);
+  if (err != 0) {
+    printf("Failed to create thread: %d\n", err);
+    return -1;
+  }
+
   num_hashes_precomputed_total = num_hashes;
   start_timer(&precompute_start_time);
   for (i = 0; i < num_hashes; i++) {
@@ -2235,14 +2272,6 @@ int main(int ac, char **av) {
    * user.  Strange crashes in the OpenCL functions can occur when memory is exhausted,
    * and its not obvious that this is the culprit. */
   check_memory_usage();
-
-  /* Start preloading tables into memory. */
-  preload_thread_args.rt_dir = strdup(rt_dir);
-  err = pthread_create(&preload_thread_id, NULL, preloading_thread, &preload_thread_args);
-  if (err != 0) {
-    printf("Failed to create thread: %d\n", err);
-    return -1;
-  }
 
   /* Using the pre-computed end indices, perform a binary search on all rainbow tables
    * in the target directory.  Any matching indices will trigger false alarm checks. */
