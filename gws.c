@@ -1,12 +1,12 @@
 #include <string.h>
 
-#include "opencl_setup.h"
+#include "gpu_backend.h"
 
 #include "gws.h"
 
 
 /* Given a GPU device, returns the optimal GWS setting (found through manual experimentation).  Returns 0 if the optimal setting on the device is unknown. */
-unsigned int get_optimal_gws(cl_device_id device) {
+unsigned int get_optimal_gws(gpu_device device) {
   char vendor[128] = {0}, name[64] = {0};
 
 
@@ -79,6 +79,19 @@ unsigned int get_optimal_gws(cl_device_id device) {
       return 64 * 768; /* NTLM 8-char: 5,671/s */
 #endif
   }
+
+#ifdef USE_METAL
+  if (strcmp(vendor, "Apple") == 0) {
+    if (strstr(name, "M1") != NULL)
+      return 256 * 256;
+    else if (strstr(name, "M2") != NULL)
+      return 256 * 256;
+    else if (strstr(name, "M3") != NULL)
+      return 256 * 256;
+    else if (strstr(name, "M4") != NULL)
+      return 256 * 256;
+  }
+#endif
 
   return 0;
 }
