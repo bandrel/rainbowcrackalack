@@ -38,4 +38,7 @@
 char *validate_charset(char *charset_name);
 void get_valid_charsets(char *buf, unsigned int buf_size);
 
+/* Returns charset_name if it is a valid mask string (contains '?'), NULL otherwise. */
+char *validate_mask(char *charset_name);
+
 #endif

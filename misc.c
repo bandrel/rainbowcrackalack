@@ -35,6 +35,7 @@
 #include "gpu_backend.h"
 
 #include "charset.h"
+#include "mask_parse.h"
 #include "misc.h"
 #include "shared.h"
 
@@ -304,7 +305,7 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
 	/* Ensure that the hash type and character set is valid, the plaintext
 	 * length min & max are set properly, and the chain length is set. */
 	if ((rt_params->hash_type != HASH_UNDEFINED) && \
-	    (validate_charset(rt_params->charset_name) != NULL) && \
+	    (validate_charset(rt_params->charset_name) != NULL || is_mask_string(rt_params->charset_name)) && \
 	    (rt_params->plaintext_len_min > 0) && \
 	    (rt_params->plaintext_len_min <= rt_params->plaintext_len_max) && \
 	    (rt_params->plaintext_len_max < MAX_PLAINTEXT_LEN) && \

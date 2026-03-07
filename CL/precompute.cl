@@ -15,7 +15,10 @@ __kernel void precompute(
     __global unsigned int *g_exec_block_scaler,
     __global unsigned long *g_output,
     __global unsigned long *g_plaintext_space_up_to_index,
-    __global unsigned long *g_plaintext_space_total) {
+    __global unsigned long *g_plaintext_space_total,
+    __global unsigned int *g_is_mask,
+    __global char *g_mask_charset_data,
+    __global unsigned int *g_mask_charset_lens) {
 
   long target_chain_len = (*g_chain_len - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
 
@@ -38,6 +41,7 @@ __kernel void precompute(
   unsigned int plaintext_len_max = *g_plaintext_len_max;
   unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
   unsigned int chain_len = *g_chain_len;
+  unsigned int is_mask = *g_is_mask;
   copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index);
   unsigned long plaintext_space_total = *g_plaintext_space_total;
 
@@ -46,7 +50,7 @@ __kernel void precompute(
   index = hash_to_index(hash, hash_len, reduction_offset, plaintext_space_total, target_chain_len - 1);
 
   for(unsigned int i = target_chain_len; i < chain_len - 1; i++) { // was chain_len - 1
-    index_to_plaintext(index, charset, charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
+    index_to_plaintext(index, charset, charset_len, is_mask, g_mask_charset_data, g_mask_charset_lens, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
     do_hash(hash_type, plaintext, plaintext_len, hash, &hash_len);
     index = hash_to_index(hash, hash_len, reduction_offset, plaintext_space_total, i);
   }

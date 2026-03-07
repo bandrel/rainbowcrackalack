@@ -39,6 +39,7 @@
 #include "file_lock.h"
 #include "gws.h"
 #include "hash_validate.h"
+#include "mask_parse.h"
 #include "misc.h"
 #include "shared.h"
 #include "terminal_color.h"
@@ -125,6 +126,10 @@ typedef struct {
   char *filename;
 
   unsigned int initial_chains_per_execution;
+
+  unsigned int is_mask;
+  char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
 
   gpu_dev gpu;
 } thread_args;
@@ -252,14 +257,15 @@ void *host_thread(void *ptr) {
   gpu_queue queue = NULL;
   gpu_kernel kernel = NULL;
 
-  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL;
+  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
 
   gpu_uint pos_start = 0;
 
-  if ((strlen(args->charset) == 0) && (args->charset != NULL)) {
+  if (args->is_mask) {
+    charset_len = 0;
+  } else if ((args->charset != NULL) && (strlen(args->charset) == 0)) {
     charset_len = 256;
-  }
-  else {
+  } else {
     charset_len = strlen(args->charset);
   }
 
@@ -278,7 +284,7 @@ void *host_thread(void *ptr) {
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized NTLM9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
-  } else {
+  } else if (!args->is_mask) {
     printf("%sWARNING: non-optimized kernel will be used since non-standard options were given!  Generation will be much slower.  (Hint: use \"crackalack_gen ntlm ascii-32-95 8 8 0 422000 67108864 X\" for optimized NTLM8 generation, or \"crackalack_gen ntlm ascii-32-95 9 9 0 803000 67108864 X\" for optimized NTLM9 generation.)%s\n", YELLOWB, CLR); fflush(stdout);
   }
 
@@ -408,6 +414,9 @@ void *host_thread(void *ptr) {
       CLFREEBUFFER(pos_start_buffer);
       CLFREEBUFFER(pspace_table_buffer);
       CLFREEBUFFER(pspace_total_buffer);
+      CLFREEBUFFER(is_mask_buffer);
+      CLFREEBUFFER(mask_data_buffer);
+      CLFREEBUFFER(mask_lens_buffer);
 
       CLRELEASEKERNEL(gpu->kernel);
       CLRELEASEPROGRAM(gpu->program);
@@ -423,7 +432,11 @@ void *host_thread(void *ptr) {
     /* Most of the parameters need only be set once upon first invokation. */
     if (hash_type_buffer == NULL) {
       uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN] = {0};
-      gpu_ulong pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
+      gpu_ulong pspace_total;
+      if (args->is_mask)
+        pspace_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, pspace_up_to_index);
+      else
+        pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
 
       CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_len + 1);
@@ -435,6 +448,9 @@ void *host_thread(void *ptr) {
       CLCREATEARG(7, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(8, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
       CLCREATEARG(9, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
+      CLCREATEARG(10, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
+      CLCREATEARG_ARRAY(11, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
+      CLCREATEARG_ARRAY(12, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
     } else {
       CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
     }
@@ -600,6 +616,14 @@ int main(int ac, char **av) {
   uint64_t part_index = 0;
   int i = 0;
   int charset_len = 0;
+  unsigned int is_mask = 0;
+  Mask mask;
+  char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
+
+  memset(&mask, 0, sizeof(mask));
+  memset(mask_charset_data, 0, sizeof(mask_charset_data));
+  memset(mask_charset_lens, 0, sizeof(mask_charset_lens));
 
 
   ENABLE_CONSOLE_COLOR();
@@ -657,20 +681,33 @@ int main(int ac, char **av) {
   }
 
 
-  charset = validate_charset(charset_name);
-  if (charset == NULL) {
-    char buf[256] = {0};
+  if (is_mask_string(charset_name)) {
+    if (mask_parse(charset_name, &mask, NULL, NULL, NULL, NULL) != 0) {
+      fprintf(stderr, "Error: invalid mask \"%s\".\n", charset_name);
+      exit(-1);
+    }
+    if ((unsigned int)mask.length != plaintext_len_min || (unsigned int)mask.length != plaintext_len_max) {
+      fprintf(stderr, "Error: mask length (%d) must equal plaintext_min (%u) and plaintext_max (%u).\n", mask.length, plaintext_len_min, plaintext_len_max);
+      exit(-1);
+    }
+    is_mask = 1;
+    mask_to_gpu_buffers(&mask, mask_charset_data, mask_charset_lens);
+    charset = "";
+    charset_len = 0;
+  } else {
+    charset = validate_charset(charset_name);
+    if (charset == NULL) {
+      char buf[256] = {0};
 
-    get_valid_charsets(buf, sizeof(buf));
-    fprintf(stderr, "Error: charset \"%s\" not supported.  Valid values are: %s", charset_name, buf);
-    exit(-1);
-  }
-
-  if (strcmp(charset_name, "byte") == 0) {
-    charset_len = 256;
-  }
-  else {
-    charset_len = strlen(charset);
+      get_valid_charsets(buf, sizeof(buf));
+      fprintf(stderr, "Error: charset \"%s\" not supported.  Valid values are: %s", charset_name, buf);
+      exit(-1);
+    }
+    if (strcmp(charset_name, "byte") == 0) {
+      charset_len = 256;
+    } else {
+      charset_len = strlen(charset);
+    }
   }
 
 
@@ -778,8 +815,11 @@ int main(int ac, char **av) {
       fprintf(stderr, "\n  !! Warning: plaintext length max is too large (%u > %"PRIu64").  Skipping start index safety check.\n\n", plaintext_len_max, sizeof(plaintext_space_up_to_index) + 1);  fflush(stderr);
     } else {
 
-      //fprintf(stderr, "charset_len: %d\n", charset_len);
-      uint64_t plaintext_space_total = fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
+      uint64_t plaintext_space_total;
+      if (is_mask)
+        plaintext_space_total = fill_plaintext_space_table_mask(mask_charset_lens, plaintext_len_max, plaintext_space_up_to_index);
+      else
+        plaintext_space_total = fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
       
       /* Ensure that the user didn't specify a part index so great that it
        * overflows the plaintext space total.  If so, calculate the largest
@@ -850,6 +890,11 @@ int main(int ac, char **av) {
     args[i].chain_len = chain_len;
     args[i].filename = filename;
     args[i].initial_chains_per_execution = INITIAL_CHAINS_PER_EXECUTION;
+    args[i].is_mask = is_mask;
+    if (is_mask) {
+      memcpy(args[i].mask_charset_data, mask_charset_data, sizeof(args[i].mask_charset_data));
+      memcpy(args[i].mask_charset_lens, mask_charset_lens, sizeof(args[i].mask_charset_lens));
+    }
     args[i].gpu.device_number = i;
     args[i].gpu.device = devices[i];
 
