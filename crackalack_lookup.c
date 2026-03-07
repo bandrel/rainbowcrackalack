@@ -48,6 +48,7 @@
 #include "clock.h"
 #include "cpu_rt_functions.h"
 #include "hash_validate.h"
+#include "mask_parse.h"
 #include "misc.h"
 #include "rtc_decompress.h"
 #include "shared.h"
@@ -129,6 +130,10 @@ typedef struct {
   gpu_ulong *hash_base_indices;
 
   gpu_dev gpu;
+
+  unsigned int is_mask;
+  char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
 } thread_args;
 
 
@@ -349,14 +354,16 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
     exit(-1);
   }
   int charset_len = 0;
-  if (strcmp(args->charset_name, "byte") == 0) {
-    charset_len = 256;
+  if (args->is_mask) {
+    plaintext_space_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, plaintext_space_up_to_index);
+  } else {
+    if (strcmp(args->charset_name, "byte") == 0) {
+      charset_len = 256;
+    } else {
+      charset_len = strlen(args->charset) + 1;
+    }
+    plaintext_space_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
   }
-  else {
-    charset_len = strlen(args->charset) + 1;
-  }
-
-  plaintext_space_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
 
   /* Collate all the start indices into one buffer. */
   ppi_cur = ppi;
@@ -421,7 +428,10 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
         unsigned char real_key[8] = {0};
 
 
-      	index_to_plaintext(args[i].results[j], args[i].charset, charset_len, args[i].plaintext_len_min, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
+      	if (args[i].is_mask)
+          index_to_plaintext_mask(args[i].results[j], args[i].mask_charset_lens, args[i].mask_charset_data, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
+        else
+          index_to_plaintext(args[i].results[j], args[i].charset, charset_len, args[i].plaintext_len_min, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
 
       	/* Double check NTLM results to weed out super false alarms. */
       	if (args[i].hash_type == HASH_NTLM) {
@@ -694,7 +704,7 @@ void *host_thread_false_alarm(void *ptr) {
   int err = 0;
   char *kernel_path = FALSE_ALARM_KERNEL_PATH, *kernel_name = "false_alarm_check";
 
-  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL;
+  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
   /*gpu_buffer debug_ulong_buffer = NULL;*/
 
   gpu_ulong *start_indices = NULL, *hash_base_indices = NULL, *plaintext_indices = NULL, *output_block = NULL;
@@ -706,14 +716,16 @@ void *host_thread_false_alarm(void *ptr) {
   size_t gws = 0, kernel_work_group_size = 0, kernel_preferred_work_group_size_multiple = 0;
   /*gpu_ulong debug_ulong[128] = {0};*/
   int charset_len = 0;
-  if (strcmp(args->charset_name, "byte") == 0) {
-    charset_len = 256;
+  if (args->is_mask) {
+    plaintext_space_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, plaintext_space_up_to_index);
+  } else {
+    if (strcmp(args->charset_name, "byte") == 0) {
+      charset_len = 256;
+    } else {
+      charset_len = strlen(args->charset) + 1;
+    }
+    plaintext_space_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
   }
-  else {
-    charset_len = strlen(args->charset) + 1;
-  }
-
-  plaintext_space_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
 
   num_start_indices = num_start_index_positions = num_hash_base_indices = num_plaintext_indices = args->num_potential_start_indices;
 
@@ -826,6 +838,9 @@ void *host_thread_false_alarm(void *ptr) {
   CLCREATEARG_ARRAY(11, start_index_positions_buffer, CL_RO, start_index_positions, num_start_index_positions * sizeof(unsigned int));
   CLCREATEARG_ARRAY(12, hash_base_indices_buffer, CL_RO, hash_base_indices, num_hash_base_indices * sizeof(gpu_ulong));
   CLCREATEARG_ARRAY(14, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
+  CLCREATEARG(15, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
+  CLCREATEARG_ARRAY(16, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
+  CLCREATEARG_ARRAY(17, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
 
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
     unsigned int exec_block_scaler = exec_block * gws;
@@ -875,6 +890,9 @@ void *host_thread_false_alarm(void *ptr) {
   CLFREEBUFFER(start_index_positions_buffer);
   CLFREEBUFFER(hash_base_indices_buffer);
   CLFREEBUFFER(output_block_buffer);
+  CLFREEBUFFER(is_mask_buffer);
+  CLFREEBUFFER(mask_data_buffer);
+  CLFREEBUFFER(mask_lens_buffer);
 
   CLRELEASEKERNEL(gpu->kernel);
   CLRELEASEPROGRAM(gpu->program);
@@ -896,7 +914,7 @@ void *host_thread_precompute(void *ptr) {
   int err = 0;
   char *kernel_path = PRECOMPUTE_KERNEL_PATH, *kernel_name = "precompute";
 
-  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL/*, debug_buffer = NULL*/;
+  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL/*, debug_buffer = NULL*/;
 
   size_t gws = 0;
   gpu_ulong *output = NULL, *output_block = NULL;
@@ -987,10 +1005,11 @@ void *host_thread_precompute(void *ptr) {
   /*get_device_uint(gpu->device, CL_DEVICE_MAX_COMPUTE_UNITS, &(gpu->num_work_units));*/
 
   int charset_len = 0;
-  if (strcmp(args->charset_name, "byte") == 0) {
+  if (args->is_mask) {
+    charset_len = 0;
+  } else if (strcmp(args->charset_name, "byte") == 0) {
     charset_len = 256;
-  }
-  else {
+  } else {
     charset_len = strlen(args->charset) + 1;
   }
 
@@ -1009,10 +1028,18 @@ void *host_thread_precompute(void *ptr) {
 
   {
     uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN] = {0};
-    unsigned int actual_charset_len = (strcmp(args->charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(args->charset);
-    gpu_ulong pspace_total = fill_plaintext_space_table(actual_charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
+    gpu_ulong pspace_total;
+    if (args->is_mask)
+      pspace_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, pspace_up_to_index);
+    else {
+      unsigned int actual_charset_len = (strcmp(args->charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(args->charset);
+      pspace_total = fill_plaintext_space_table(actual_charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
+    }
     CLCREATEARG_ARRAY(12, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
     CLCREATEARG(13, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
+    CLCREATEARG(14, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
+    CLCREATEARG_ARRAY(15, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
+    CLCREATEARG_ARRAY(16, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
   }
 
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
@@ -1073,6 +1100,9 @@ void *host_thread_precompute(void *ptr) {
   CLFREEBUFFER(output_block_buffer);
   CLFREEBUFFER(pspace_table_buffer);
   CLFREEBUFFER(pspace_total_buffer);
+  CLFREEBUFFER(is_mask_buffer);
+  CLFREEBUFFER(mask_data_buffer);
+  CLFREEBUFFER(mask_lens_buffer);
 
   CLRELEASEKERNEL(gpu->kernel);
   CLRELEASEPROGRAM(gpu->program);
@@ -1915,6 +1945,14 @@ int main(int ac, char **av) {
   char time_precomp_str[64] = {0}, time_io_str[64] = {0}, time_searching_str[64] = {0}, time_falsealarms_str[64] = {0}, time_total_str[64] = {0}, time_per_table_str[64] = {0};
 
   rt_parameters rt_params = {0};
+  Mask lookup_mask;
+  char lookup_mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  unsigned int lookup_mask_lens[MAX_PLAINTEXT_LEN];
+  unsigned int lookup_is_mask = 0;
+
+  memset(&lookup_mask, 0, sizeof(lookup_mask));
+  memset(lookup_mask_data, 0, sizeof(lookup_mask_data));
+  memset(lookup_mask_lens, 0, sizeof(lookup_mask_lens));
 
   gpu_platform platforms[MAX_NUM_PLATFORMS] = {0};
   gpu_device devices[MAX_NUM_DEVICES] = {0};
@@ -2242,6 +2280,15 @@ int main(int ac, char **av) {
     goto err;
   }
 
+  if (is_mask_string(rt_params.charset_name)) {
+    if (mask_parse(rt_params.charset_name, &lookup_mask, NULL, NULL, NULL, NULL) != 0) {
+      fprintf(stderr, "Error: invalid mask in table filename: \"%s\".\n", rt_params.charset_name);
+      goto err;
+    }
+    lookup_is_mask = 1;
+    mask_to_gpu_buffers(&lookup_mask, lookup_mask_data, lookup_mask_lens);
+  }
+
   /* We set most of the args once, since all GPUs & hashes need all the same
    * parameters. */
   for (i = 0; i < num_devices; i++) {
@@ -2249,8 +2296,13 @@ int main(int ac, char **av) {
     args[i].hash_name = rt_params.hash_name;
     args[i].username = NULL;  /* Filled in below. */
     args[i].hash = NULL;      /* Filled in below. */
-    args[i].charset = validate_charset(rt_params.charset_name);
+    args[i].is_mask = lookup_is_mask;
+    args[i].charset = lookup_is_mask ? "" : validate_charset(rt_params.charset_name);
     args[i].charset_name = rt_params.charset_name;
+    if (lookup_is_mask) {
+      memcpy(args[i].mask_charset_data, lookup_mask_data, sizeof(args[i].mask_charset_data));
+      memcpy(args[i].mask_charset_lens, lookup_mask_lens, sizeof(args[i].mask_charset_lens));
+    }
     args[i].plaintext_len_min = rt_params.plaintext_len_min;
     args[i].plaintext_len_max = rt_params.plaintext_len_max;
     args[i].table_index = rt_params.table_index;

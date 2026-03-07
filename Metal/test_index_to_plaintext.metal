@@ -14,6 +14,9 @@ kernel void test_index_to_plaintext(
     device unsigned char *g_plaintext [[buffer(5)]],
     device unsigned int *g_plaintext_len [[buffer(6)]],
     device unsigned char *g_debug [[buffer(7)]],
+    device unsigned int *g_is_mask [[buffer(8)]],
+    device char *g_mask_charset_data [[buffer(9)]],
+    device unsigned int *g_mask_charset_lens [[buffer(10)]],
     uint gid [[thread_position_in_grid]]) {
 
   ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
@@ -24,12 +27,13 @@ kernel void test_index_to_plaintext(
   ulong index = *g_index;
   unsigned char plaintext[MAX_PLAINTEXT_LEN];
   unsigned int plaintext_len = *g_plaintext_len;
+  unsigned int is_mask = *g_is_mask;
 
   unsigned int charset_len = g_strncpy(charset, g_charset, sizeof(charset));
 
   fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
 
-  index_to_plaintext(index, charset, charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
+  index_to_plaintext(index, charset, charset_len, is_mask, g_mask_charset_data, g_mask_charset_lens, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
 
   *g_plaintext_len = plaintext_len;
   for (int i = 0; i < plaintext_len; i++)
