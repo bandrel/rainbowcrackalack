@@ -52,7 +52,7 @@
 struct _rt_parameters {
   char hash_name[16];
   unsigned int hash_type;
-  char charset_name[32];
+  char charset_name[64]; /* 64 bytes: accommodates mask strings up to 32 ?X tokens */
   unsigned int plaintext_len_min;
   unsigned int plaintext_len_max;
   unsigned int table_index;
