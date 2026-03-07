@@ -21,11 +21,12 @@ __kernel void test_index_to_plaintext(
   unsigned char plaintext[MAX_PLAINTEXT_LEN];
   unsigned int plaintext_len = *g_plaintext_len;
 
-  unsigned int charset_len = g_strncpy(charset, g_charset, sizeof(charset));
+  g_strncpy(charset, g_charset, sizeof(charset));
+  unsigned int charset_len = strlen(charset);
 
   fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
 
-  index_to_plaintext(index, charset, charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
+  index_to_plaintext(index, charset, charset_len, 0, g_charset, g_charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
 
   *g_plaintext_len = plaintext_len;
   for (int i = 0; i < plaintext_len; i++)
