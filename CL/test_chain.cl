@@ -18,7 +18,8 @@ __kernel void test_chain(
   unsigned int chain_len = *g_chain_len;
   unsigned long start = *g_start;
 
-  unsigned int charset_len = g_strncpy(charset, g_charset, sizeof(charset));
+  g_strncpy(charset, g_charset, sizeof(charset));
+  unsigned int charset_len = strlen(charset);
   unsigned long plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
   unsigned char plaintext[MAX_PLAINTEXT_LEN];
   unsigned int plaintext_len = 0;
@@ -31,6 +32,9 @@ __kernel void test_chain(
     HASH_TYPE,
     charset,
     charset_len,
+    0,
+    g_charset,
+    g_table_index,
     plaintext_len_min,
     plaintext_len_max,
     reduction_offset,
