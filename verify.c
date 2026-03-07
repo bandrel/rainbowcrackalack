@@ -24,6 +24,7 @@
 
 #include "charset.h"
 #include "cpu_rt_functions.h"
+#include "mask_parse.h"
 #include "file_lock.h"
 #include "misc.h"
 #include "rtc_decompress.h"
@@ -133,10 +134,17 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
   rc_file f = NULL;
   uint64_t *rainbow_table = NULL;
   char *charset = NULL;
+  unsigned int is_mask = 0;
+  Mask mask;
+  char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
 
   unsigned int file_size = 0, actual_num_chains = 0, error_chain_num = 0, is_compressed = 0;
   uint64_t expected_start = 0, plaintext_space_total = 0;
 
+  memset(&mask, 0, sizeof(mask));
+  memset(mask_charset_data, 0, sizeof(mask_charset_data));
+  memset(mask_charset_lens, 0, sizeof(mask_charset_lens));
 
   is_compressed = str_ends_with(filename, ".rtc");
 
@@ -149,11 +157,23 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
   charset = validate_charset(rt_params.charset_name);
   if (charset == NULL) {
-    fprintf(stderr, "Character set is invalid: %s\n", rt_params.charset_name);
-    return 0;
+    if (validate_mask(rt_params.charset_name) != NULL) {
+      if (mask_parse(rt_params.charset_name, &mask, NULL, NULL, NULL, NULL) != 0) {
+        fprintf(stderr, "Character set is invalid: %s\n", rt_params.charset_name);
+        return 0;
+      }
+      mask_to_gpu_buffers(&mask, mask_charset_data, mask_charset_lens);
+      is_mask = 1;
+    } else {
+      fprintf(stderr, "Character set is invalid: %s\n", rt_params.charset_name);
+      return 0;
+    }
   }
 
-  plaintext_space_total = fill_plaintext_space_table(strlen(charset), rt_params.plaintext_len_min, rt_params.plaintext_len_max, plaintext_space_up_to_index);
+  if (is_mask)
+    plaintext_space_total = fill_plaintext_space_table_mask(mask_charset_lens, rt_params.plaintext_len_max, plaintext_space_up_to_index);
+  else
+    plaintext_space_total = fill_plaintext_space_table(strlen(charset), rt_params.plaintext_len_min, rt_params.plaintext_len_max, plaintext_space_up_to_index);
 
   expected_start = (uint64_t)rt_params.num_chains * (uint64_t)rt_params.table_part;
 
@@ -279,10 +299,8 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
   /* If the number of chains to verify wasn't set by the user... */
   if (num_chains_to_verify < 0) {
-    charset = validate_charset(rt_params.charset_name);
-
     /* Set it to 50 for NTLM9 tables. */
-    if ((charset != NULL) && is_ntlm9(rt_params.hash_type, charset, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len))
+    if (!is_mask && is_ntlm9(rt_params.hash_type, charset, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len))
       num_chains_to_verify = 50;
     else /* Set it to 100 for all other tables. */
       num_chains_to_verify = 100;
@@ -295,7 +313,9 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     unsigned int i = 0, plaintext_len = sizeof(plaintext), hash_len = sizeof(hash);
 
 
-    if (rt_params.hash_type == HASH_NTLM) {
+    if (is_mask) {
+      printf("Note: skipping CPU chain verification for mask charset.\n"); fflush(stdout);
+    } else if (rt_params.hash_type == HASH_NTLM) {
       for (i = 0; i < num_chains_to_verify; i++) {
 	random_chain = get_random(actual_num_chains);
 	/*printf("  Verifying chain #%"PRIu64"...\n", random_chain);*/
