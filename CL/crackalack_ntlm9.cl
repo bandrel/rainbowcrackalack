@@ -12,7 +12,10 @@ __kernel void crackalack_ntlm9(
     __global unsigned long *g_indices,
     __global unsigned int *g_pos_start,
     __global unsigned long *unused8,
-    __global unsigned long *unused9) {
+    __global unsigned long *unused9,
+    __global unsigned int *unused10,
+    __global char *unused11,
+    __global unsigned int *unused12) {
   unsigned long index = g_indices[get_global_id(0)];
   unsigned char plaintext[9];
 
