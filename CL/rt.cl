@@ -43,6 +43,10 @@ inline void do_hash(unsigned int hash_type, unsigned char *plaintext, unsigned i
   *hash_len = 16;
 #elif HASH_TYPE == HASH_NETNTLMV1
   uint32_t SK[32];
+  /* DES always consumes 7 bytes of plaintext.  Zero any positions beyond
+   * plaintext_len so short plaintexts (e.g. 3-char numeric) match the
+   * CPU reference which uses a zero-initialised buffer. */
+  for (int _i = (int)plaintext_len; _i < 7; _i++) plaintext[_i] = 0;
   netntlmv1_hash(SK, plaintext, hash_value /*, g_debug*/);
   *hash_len = 8;
 #endif
