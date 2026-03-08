@@ -37,7 +37,7 @@ void _print_chain_error(uint64_t random_chain, uint64_t start, uint64_t actual_e
 }
 
 /* Verifies a rainbow table already loaded from disk. */
-int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, unsigned int *error_chain_num) {
+int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, unsigned int *error_chain_num, unsigned int is_mask) {
   unsigned int i = 0;
   uint64_t start = 0, end = 0;
 
@@ -54,7 +54,8 @@ int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigne
 	return 0;
       }
 
-      if (end == 0) {
+      /* end index 0 is valid for mask tables (e.g. index 0 maps to a real plaintext) */
+      if (!is_mask && end == 0) {
 	fprintf(stderr, "Chain #%u has an end value of zero!\n", i);
 	*error_chain_num = i;
 	return 0;
@@ -284,7 +285,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     rc_fclose(f);
   }
 
-  if (!verify_rainbowtable(rainbow_table, actual_num_chains, table_type, expected_start, plaintext_space_total, &error_chain_num)) {
+  if (!verify_rainbowtable(rainbow_table, actual_num_chains, table_type, expected_start, plaintext_space_total, &error_chain_num, is_mask)) {
     if ((table_type == VERIFY_TABLE_TYPE_GENERATED) && (truncate_at_error == VERIFY_TRUNCATE_ON_ERROR)) {
       f = rc_fopen(filename, 0);
       if (f == NULL)
