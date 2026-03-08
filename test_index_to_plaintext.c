@@ -67,7 +67,7 @@ int cpu_test_index_to_plaintext(char *charset, gpu_uint plaintext_len_min, gpu_u
   if (strcmp(computed_plaintext, expected_plaintext) == 0)
     return 1;
   else {
-    printf("\n\nCPU error:\n\tIndex: %"PRIu64"\n\tExpected: [%"PRIu64"][%s]\n\tCalculated: [%u][%s]\n\n", index, strlen(expected_plaintext), expected_plaintext, computed_plaintext_len, computed_plaintext);
+    printf("\n\nCPU error:\n\tIndex: %"PRIu64"\n\tExpected: [%"PRIu64"][%s]\n\tCalculated: [%u][%s]\n\n", index, (uint64_t)strlen(expected_plaintext), expected_plaintext, computed_plaintext_len, computed_plaintext);
     return 0;
   }
 }
@@ -122,7 +122,7 @@ int gpu_test_index_to_plaintext(gpu_device device, gpu_context context, gpu_kern
   if ((plaintext_len == strlen(expected_plaintext)) && (strcmp(expected_plaintext, (char *)plaintext) == 0))
     test_passed = 1;
   else {
-    printf("\n\nGPU error:\n\tIndex: %"PRIu64"\n\tExpected: [%"PRIu64"][%s]\n\tCalculated: [%u][%s]\n\n", index, strlen(expected_plaintext), expected_plaintext, plaintext_len, plaintext);
+    printf("\n\nGPU error:\n\tIndex: %"PRIu64"\n\tExpected: [%"PRIu64"][%s]\n\tCalculated: [%u][%s]\n\n", index, (uint64_t)strlen(expected_plaintext), expected_plaintext, plaintext_len, plaintext);
   }
 
   CLFREEBUFFER(charset_buffer);

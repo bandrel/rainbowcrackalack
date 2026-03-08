@@ -793,7 +793,7 @@ void *host_thread_false_alarm(void *ptr) {
    * use the driver's work group size multiplied by the preferred multiple. */
   if (user_provided_gws > 0) {
     gws = user_provided_gws;
-    printf("GPU #%u is using user-provided GWS value of %"PRIu64"\n", gpu->device_number, gws);
+    printf("GPU #%u is using user-provided GWS value of %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
   } else {
     /*gws = kernel_work_group_size * kernel_preferred_work_group_size_multiple;*/
 
@@ -1377,7 +1377,7 @@ void _preloading_thread(char *rt_dir) {
 
 	    rainbow_table = calloc(num_longs, sizeof(gpu_ulong));
 	    if (rainbow_table == NULL) {
-	      fprintf(stderr, "Failed to allocate %"PRIu64" bytes for rainbow table!: %s\n", num_longs * sizeof(gpu_ulong), filepath);
+	      fprintf(stderr, "Failed to allocate %"PRIu64" bytes for rainbow table!: %s\n", (uint64_t)(num_longs * sizeof(gpu_ulong)), filepath);
 	      exit(-1);
 	    }
 
@@ -1389,7 +1389,7 @@ void _preloading_thread(char *rt_dir) {
 	    time_io += get_elapsed(&start_time_io);
 	    num_chains = num_longs / 2;
 	  } else
-	    fprintf(stderr, "Rainbow table size is not a multiple of %"PRIu64": %ld\n", sizeof(gpu_ulong) * 2, file_size);
+	    fprintf(stderr, "Rainbow table size is not a multiple of %"PRIu64": %ld\n", (uint64_t)(sizeof(gpu_ulong) * 2), file_size);
 
 	  FCLOSE(f);
 	} else
@@ -1810,7 +1810,7 @@ gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, 
 	file_size = get_file_size(f);
 
 	if (file_size % sizeof(gpu_ulong) != 0) {
-	  fprintf(stderr, "Precomputed indices file is not a multiple of %"PRIu64": %u\n", sizeof(gpu_ulong), file_size);
+	  fprintf(stderr, "Precomputed indices file is not a multiple of %"PRIu64": %u\n", (uint64_t)sizeof(gpu_ulong), file_size);
 	  exit(-1);
 	}
 
