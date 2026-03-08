@@ -530,12 +530,17 @@ static int group_f(void)
         ok = 0;
     }
 
-    /* VR-07: mask table for lookup type - unsorted ends must be rejected. */
+    /* VR-07: mask table for lookup type - unsorted ends must be rejected.
+     * ends: 5, 3 - chain 1's end (3) < chain 0's end (5), so error_chain==1. */
     uint64_t unsorted_lookup[4] = { 7, 5,   3, 3 }; /* ends: 5, 3 - not sorted */
     error_chain = 99;
     if (verify_rainbowtable(unsorted_lookup, 2, VERIFY_TABLE_TYPE_LOOKUP,
                             0, 10000, &error_chain, 1)) {
         fprintf(stderr, "VR-07 failed: unsorted lookup table should be rejected\n");
+        ok = 0;
+    }
+    if (error_chain != 1) {
+        fprintf(stderr, "VR-07b: error_chain expected 1, got %u\n", error_chain);
         ok = 0;
     }
 
@@ -571,6 +576,26 @@ static int group_f(void)
         ok = 0;
     }
 
+    /* VR-11: num_chains=0 - the loop never executes so verify_rainbowtable
+     * returns 1 (valid empty table).  Explicitly document this behaviour. */
+    error_chain = 99;
+    if (!verify_rainbowtable(NULL, 0, VERIFY_TABLE_TYPE_GENERATED,
+                             0, 10000, &error_chain, 0)) {
+        fprintf(stderr, "VR-11 failed: empty table (num_chains=0) should pass\n");
+        ok = 0;
+    }
+
+    /* VR-12: plaintext_space_total=0 - bounds checks are skipped when the
+     * total is zero (the guard at verify.c:65 requires pst > 0).  The table
+     * should still pass structural checks. */
+    uint64_t vr12_chains[4] = { 0, 1,   1, 2 };
+    error_chain = 99;
+    if (!verify_rainbowtable(vr12_chains, 2, VERIFY_TABLE_TYPE_GENERATED,
+                             0, 0, &error_chain, 0)) {
+        fprintf(stderr, "VR-12 failed: pspace_total=0 should skip bounds check and pass\n");
+        ok = 0;
+    }
+
     return ok;
 }
 
@@ -596,13 +621,26 @@ static int group_g(void)
     if (strcmp(buf, "nospecifiers") != 0)
         { fprintf(stderr, "ME-03 failed: got \"%s\"\n", buf); ok = 0; }
 
-    /* ME-04 through ME-13: round-trip for all built-in specifiers */
+    /* ME-04 through ME-13: round-trip for all built-in specifiers.
+     * Also verify the encoded form directly: '?' must become '%' so that the
+     * filename-safety guarantee holds independent of round-trip symmetry. */
     const char *specifiers[] = {"?l","?u","?d","?s","?a","?b","?1","?2","?3","?4"};
     unsigned int n = (unsigned int)(sizeof(specifiers) / sizeof(specifiers[0]));
     for (unsigned int i = 0; i < n; i++) {
         char encoded[8];
         char decoded[8];
         mask_encode_for_filename(specifiers[i], encoded, sizeof(encoded));
+        /* Direct check: '?' must be encoded as '%' and the specifier char preserved. */
+        if (encoded[0] != '%') {
+            fprintf(stderr, "ME-%02u encode failed: first char is '%c', expected '%%'\n",
+                    4 + i, encoded[0]);
+            ok = 0;
+        }
+        if (encoded[1] != specifiers[i][1]) {
+            fprintf(stderr, "ME-%02u encode failed: specifier char is '%c', expected '%c'\n",
+                    4 + i, encoded[1], specifiers[i][1]);
+            ok = 0;
+        }
         strncpy(decoded, encoded, sizeof(decoded));
         mask_decode_from_filename(decoded);
         if (strcmp(decoded, specifiers[i]) != 0) {
