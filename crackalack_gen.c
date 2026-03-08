@@ -50,6 +50,7 @@
 #define CRACKALACK_KERNEL_PATH "crackalack.cl"
 #define CRACKALACK_NTLM8_KERNEL_PATH "crackalack_ntlm8.cl"
 #define CRACKALACK_NTLM9_KERNEL_PATH "crackalack_ntlm9.cl"
+#define CRACKALACK_MD5_8_KERNEL_PATH "crackalack_md5_8.cl"
 
 #define VERBOSE 1
 
@@ -294,6 +295,12 @@ void *host_thread(void *ptr) {
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized NTLM9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
+  } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+    kernel_path = CRACKALACK_MD5_8_KERNEL_PATH;
+    kernel_name = "crackalack_md5_8";
+    if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
+      printf("%sNote: optimized MD5_8 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
+    }
   } else if (!args->is_mask) {
     printf("%sWARNING: non-optimized kernel will be used since non-standard options were given!  Generation will be much slower.  (Hint: use \"crackalack_gen ntlm ascii-32-95 8 8 0 422000 67108864 X\" for optimized NTLM8 generation, or \"crackalack_gen ntlm ascii-32-95 9 9 0 803000 67108864 X\" for optimized NTLM9 generation.)%s\n", YELLOWB, CLR); fflush(stdout);
   }
@@ -302,7 +309,7 @@ void *host_thread(void *ptr) {
    * The Markov kernel has the same interface as the generic crackalack kernel
    * but adds sorted_pos0 and sorted_bigram as args 13 and 14. */
   if (args->use_markov) {
-    if (strcmp(kernel_path, CRACKALACK_NTLM8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NTLM9_KERNEL_PATH) == 0) {
+    if (strcmp(kernel_path, CRACKALACK_NTLM8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NTLM9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_8_KERNEL_PATH) == 0) {
       if (args->gpu.device_number == 0) {
         printf("%sNote: --markov cannot use fast-path kernels. Falling back to Markov generic kernel.%s\n", YELLOWB, CLR); fflush(stdout);
       }
