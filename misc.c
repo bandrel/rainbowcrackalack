@@ -293,6 +293,9 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
       strncpy(rt_params->charset_name, charset_name_ptr, sizeof(rt_params->charset_name) - 1);
       rt_params->charset_name[sizeof(rt_params->charset_name) - 1] = '\0';
 
+      /* Decode filename-safe mask encoding ('%' -> '?') for mask charsets. */
+      mask_decode_from_filename(rt_params->charset_name);
+
       /* Now parse the unsigned integers. */
       if (sscanf(suffix, "%u-%u_%u_%ux%u_%u", &rt_params->plaintext_len_min, &rt_params->plaintext_len_max, &rt_params->table_index, &rt_params->chain_len, &rt_params->num_chains, &rt_params->table_part) == 6) {
 
