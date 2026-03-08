@@ -444,13 +444,16 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
   /* Search for valid results, and update the ppi with the plaintext. */
   for (i = 0; i < total_devices; i++) {
     for (j = 0; j < args[i].num_results; j++) {
-      if (args[i].results[j] != 0) {
+      if (args[i].results[j] != UINT64_MAX) {
       	char plaintext[MAX_PLAINTEXT_LEN] = {0};
       	unsigned int plaintext_len = 0;
         unsigned char real_key[8] = {0};
 
 
-      	if (args[i].is_mask)
+      	if (args[i].use_markov) {
+          index_to_plaintext_markov_cpu(args[i].results[j], &g_markov, args[i].plaintext_len_max, (unsigned char *)plaintext);
+          plaintext_len = args[i].plaintext_len_max;
+        } else if (args[i].is_mask)
           index_to_plaintext_mask(args[i].results[j], args[i].mask_charset_lens, args[i].mask_charset_data, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
         else
           index_to_plaintext(args[i].results[j], args[i].charset, charset_len, args[i].plaintext_len_min, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
@@ -761,11 +764,12 @@ void *host_thread_false_alarm(void *ptr) {
   start_index_positions = args->potential_start_index_positions;
   hash_base_indices = args->hash_base_indices;
 
-  plaintext_indices = calloc(num_plaintext_indices, sizeof(gpu_ulong));
+  plaintext_indices = malloc(num_plaintext_indices * sizeof(gpu_ulong));
   if (plaintext_indices == NULL) {
     fprintf(stderr, "Error while allocating buffers.\n");
     exit(-1);
   }
+  memset(plaintext_indices, 0xFF, num_plaintext_indices * sizeof(gpu_ulong));
 
   /* If we're generating the standard NTLM 8-character tables, use the special
    * optimized kernel instead! */
@@ -852,11 +856,12 @@ void *host_thread_false_alarm(void *ptr) {
   //printf("num_exec_blocks: %d, num_start_indices: %d\n", num_exec_blocks, num_start_indices);
 
   output_block_len = gws;
-  output_block = calloc(output_block_len, sizeof(gpu_ulong));
+  output_block = malloc(output_block_len * sizeof(gpu_ulong));
   if (output_block == NULL) {
     fprintf(stderr, "Error while allocating output buffer(s).\n");
     exit(-1);
   }
+  memset(output_block, 0xFF, output_block_len * sizeof(gpu_ulong));
 
   CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_len);
