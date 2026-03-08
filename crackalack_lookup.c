@@ -48,6 +48,7 @@
 #include "clock.h"
 #include "cpu_rt_functions.h"
 #include "hash_validate.h"
+#include "markov.h"
 #include "mask_parse.h"
 #include "misc.h"
 #include "rtc_decompress.h"
@@ -61,11 +62,21 @@
 #define PRECOMPUTE_NTLM8_KERNEL_PATH "precompute_ntlm8.cl"
 #define PRECOMPUTE_NTLM9_KERNEL_PATH "precompute_ntlm9.cl"
 #define PRECOMPUTE_NETNTLMV1_KERNEL_PATH "precompute_netntlmv1.cl"
+#ifdef USE_METAL
+#define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.metal"
+#else
+#define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
+#endif
 
 #define FALSE_ALARM_KERNEL_PATH "false_alarm_check.cl"
 #define FALSE_ALARM_NTLM8_KERNEL_PATH "false_alarm_check_ntlm8.cl"
 #define FALSE_ALARM_NTLM9_KERNEL_PATH "false_alarm_check_ntlm9.cl"
 #define FALSE_ALARM_NETNTLMV1_KERNEL_PATH "false_alarm_check_netntlv1.cl"
+#ifdef USE_METAL
+#define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.metal"
+#else
+#define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.cl"
+#endif
 
 #define HASH_FILE_FORMAT_PLAIN 1
 #define HASH_FILE_FORMAT_PWDUMP 2
@@ -134,6 +145,11 @@ typedef struct {
   unsigned int is_mask;
   char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
   unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
+
+  int use_markov;
+  uint8_t *sorted_pos0;    /* Points into the global markov model; not owned. */
+  uint8_t *sorted_bigram;  /* Points into the global markov model; not owned. */
+  unsigned int markov_charset_len;
 } thread_args;
 
 
@@ -186,6 +202,11 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
  * a command line arg. */
 char jtr_pot_filename[128] = "rainbowcrackalack_jtr.pot";
 char hashcat_pot_filename[128] = "rainbowcrackalack_hashcat.pot";
+
+/* Markov mode state set by --markov flag. */
+static int use_markov = 0;
+static char markov_path[1024] = {0};
+static markov_model g_markov = {0};
 
 /* The number of seconds spent on precomputation, file I/O, searching, and false alarm
  * checking. */
@@ -710,6 +731,7 @@ void *host_thread_false_alarm(void *ptr) {
   char *kernel_path = FALSE_ALARM_KERNEL_PATH, *kernel_name = "false_alarm_check";
 
   gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
+  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
   /*gpu_buffer debug_ulong_buffer = NULL;*/
 
   gpu_ulong *start_indices = NULL, *hash_base_indices = NULL, *plaintext_indices = NULL, *output_block = NULL;
@@ -761,6 +783,12 @@ void *host_thread_false_alarm(void *ptr) {
       printf("\nNote: optimized NTLM9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
       printed_false_alarm_optimized_message = 1;
     }
+  }
+
+  /* When --markov is active, override with the Markov false alarm kernel. */
+  if (args->use_markov) {
+    kernel_path = FALSE_ALARM_MARKOV_KERNEL_PATH;
+    kernel_name = "false_alarm_check_markov";
   }
 
   /* Load the kernel. */
@@ -847,6 +875,10 @@ void *host_thread_false_alarm(void *ptr) {
   CLCREATEARG(15, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(16, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
   CLCREATEARG_ARRAY(17, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
+  if (args->use_markov) {
+    CLCREATEARG_ARRAY(18, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
+    CLCREATEARG_ARRAY(19, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
+  }
 
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
     unsigned int exec_block_scaler = exec_block * gws;
@@ -899,6 +931,10 @@ void *host_thread_false_alarm(void *ptr) {
   CLFREEBUFFER(is_mask_buffer);
   CLFREEBUFFER(mask_data_buffer);
   CLFREEBUFFER(mask_lens_buffer);
+  if (args->use_markov) {
+    CLFREEBUFFER(sorted_pos0_buffer);
+    CLFREEBUFFER(sorted_bigram_buffer);
+  }
 
   CLRELEASEKERNEL(gpu->kernel);
   CLRELEASEPROGRAM(gpu->program);
@@ -920,7 +956,7 @@ void *host_thread_precompute(void *ptr) {
   int err = 0;
   char *kernel_path = PRECOMPUTE_KERNEL_PATH, *kernel_name = "precompute";
 
-  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL/*, debug_buffer = NULL*/;
+  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL, sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL/*, debug_buffer = NULL*/;
 
   size_t gws = 0;
   gpu_ulong *output = NULL, *output_block = NULL;
@@ -957,6 +993,12 @@ void *host_thread_precompute(void *ptr) {
       printf("\nNote: optimized NTLM9 kernel will be used for precomputation.\n\n"); fflush(stdout);
       printed_precompute_optimized_message = 1;
     }
+  }
+
+  /* When --markov is active, override with the Markov precompute kernel. */
+  if (args->use_markov) {
+    kernel_path = PRECOMPUTE_MARKOV_KERNEL_PATH;
+    kernel_name = "precompute_markov";
   }
 
   /* Load the kernel. */
@@ -1046,6 +1088,10 @@ void *host_thread_precompute(void *ptr) {
     CLCREATEARG(14, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
     CLCREATEARG_ARRAY(15, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
     CLCREATEARG_ARRAY(16, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
+    if (args->use_markov) {
+      CLCREATEARG_ARRAY(17, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
+      CLCREATEARG_ARRAY(18, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
+    }
   }
 
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
@@ -1109,6 +1155,10 @@ void *host_thread_precompute(void *ptr) {
   CLFREEBUFFER(is_mask_buffer);
   CLFREEBUFFER(mask_data_buffer);
   CLFREEBUFFER(mask_lens_buffer);
+  if (args->use_markov) {
+    CLFREEBUFFER(sorted_pos0_buffer);
+    CLFREEBUFFER(sorted_bigram_buffer);
+  }
 
   CLRELEASEKERNEL(gpu->kernel);
   CLRELEASEPROGRAM(gpu->program);
@@ -1977,16 +2027,31 @@ int main(int ac, char **av) {
   ENABLE_CONSOLE_COLOR();
   PRINT_PROJECT_HEADER();
   setlocale(LC_NUMERIC, "");
-  if ((ac < 3) || (ac > 5))
-    print_usage_and_exit(av[0], -1);
-  else if ((ac == 5) && (strcmp(av[3], "-gws") != 0) && (strcmp(av[3], "-disable-platform") != 0))
+  if (ac < 3)
     print_usage_and_exit(av[0], -1);
 
-  if (ac == 5) {
-    if (strcmp(av[3], "-gws") == 0)
-      user_provided_gws = (unsigned int)atoi(av[4]);
-    else if (strcmp(av[3], "-disable-platform") == 0)
-      disable_platform = (unsigned int)atoi(av[4]);
+  /* Parse optional flags (everything after the first two positional args). */
+  for (i = 3; i < (unsigned int)ac; i++) {
+    if ((strcmp(av[i], "-gws") == 0) && (i + 1 < (unsigned int)ac)) {
+      user_provided_gws = (unsigned int)atoi(av[++i]);
+    } else if ((strcmp(av[i], "-disable-platform") == 0) && (i + 1 < (unsigned int)ac)) {
+      disable_platform = (unsigned int)atoi(av[++i]);
+    } else if ((strcmp(av[i], "--markov") == 0) && (i + 1 < (unsigned int)ac)) {
+      use_markov = 1;
+      strncpy(markov_path, av[++i], sizeof(markov_path) - 1);
+    } else {
+      /* Undocumented third arg: override pot filename (kept for backward compat). */
+      if (i == 3 && av[i][0] != '-') {
+        strncpy(jtr_pot_filename, av[i], sizeof(jtr_pot_filename) - 1);
+        jtr_pot_filename[sizeof(jtr_pot_filename) - 1] = '\0';
+        strncpy(hashcat_pot_filename, av[i], sizeof(hashcat_pot_filename) - 1);
+        hashcat_pot_filename[sizeof(hashcat_pot_filename) - 1] = '\0';
+        strncat(hashcat_pot_filename, ".hashcat", sizeof(hashcat_pot_filename) - strlen(hashcat_pot_filename) - 1);
+      } else {
+        fprintf(stderr, "Error: unrecognized argument: %s\n", av[i]);
+        print_usage_and_exit(av[0], -1);
+      }
+    }
   }
 
   /* Initialize the devices. */
@@ -2019,16 +2084,6 @@ int main(int ac, char **av) {
 
   /* First arg is the directory (and/or sub-directories) containing rainbow tables. */
   rt_dir = av[1];
-
-  /* The default rainbowcrackalack.pot file can be overridden with a third argument.
-   * This is undocumented since its probably only useful for automated testing. */
-  if (ac == 4) {
-    strncpy(jtr_pot_filename, av[3], sizeof(jtr_pot_filename) - 1);
-    jtr_pot_filename[sizeof(jtr_pot_filename) - 1] = '\0';
-    strncpy(hashcat_pot_filename, av[3], sizeof(hashcat_pot_filename) - 1);
-    hashcat_pot_filename[sizeof(hashcat_pot_filename) - 1] = '\0';
-    strncat(hashcat_pot_filename, ".hashcat", sizeof(hashcat_pot_filename) - 1);
-  }
 
   /* Open the JTR pot file for reading.  We will check the hash(es) to see if any are
    * already cracked. */
@@ -2298,6 +2353,16 @@ int main(int ac, char **av) {
     mask_to_gpu_buffers(&lookup_mask, lookup_mask_data, lookup_mask_lens);
   }
 
+  /* If --markov was requested, load the model once before spawning threads. */
+  if (use_markov) {
+    if (markov_load(markov_path, &g_markov) != 0) {
+      fprintf(stderr, "Error: failed to load Markov model from '%s'\n", markov_path);
+      goto err;
+    }
+    printf("Loaded Markov model from %s (charset_len=%u).\n", markov_path, g_markov.charset_len);
+    fflush(stdout);
+  }
+
   /* We set most of the args once, since all GPUs & hashes need all the same
    * parameters. */
   for (i = 0; i < num_devices; i++) {
@@ -2321,6 +2386,12 @@ int main(int ac, char **av) {
     args[i].gpu.device_number = i;
     args[i].gpu.device = devices[i];
     get_device_uint(args[i].gpu.device, CL_DEVICE_MAX_COMPUTE_UNITS, &(args[i].gpu.num_work_units));
+    args[i].use_markov = use_markov;
+    if (use_markov) {
+      args[i].sorted_pos0    = g_markov.sorted_pos0;
+      args[i].sorted_bigram  = g_markov.sorted_bigram;
+      args[i].markov_charset_len = g_markov.charset_len;
+    }
   }
 
   /* Start preloading tables into memory in parallel with precomputation. */
@@ -2402,6 +2473,8 @@ int main(int ac, char **av) {
   free_precomputed_and_potential_indices(&ppi_head);
   free_loaded_hashes(usernames, hashes);
   FREE(args);
+  if (use_markov)
+    markov_free(&g_markov);
   pthread_barrier_destroy(&barrier);
   return 0;
 
@@ -2411,6 +2484,8 @@ int main(int ac, char **av) {
   free_precomputed_and_potential_indices(&ppi_head);
   free_loaded_hashes(usernames, hashes);
   FREE(args);
+  if (use_markov)
+    markov_free(&g_markov);
   pthread_barrier_destroy(&barrier);
   return -1;
 }
