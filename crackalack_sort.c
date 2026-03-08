@@ -160,6 +160,23 @@ static int sort_file(const char *filename) {
   fclose(f);
   f = NULL;
 
+  /* Skip if already sorted. */
+  {
+    unsigned int j;
+    int already_sorted = 1;
+    for (j = 0; j + 1 < num_chains; j++) {
+      if (data[j * 2 + 1] > data[(j + 1) * 2 + 1]) {
+        already_sorted = 0;
+        break;
+      }
+    }
+    if (already_sorted) {
+      printf("Skipping %s (already sorted).\n", filename);
+      ret = 0;
+      goto done;
+    }
+  }
+
   printf("Sorting %s (%u chains)... ", filename, num_chains);
   fflush(stdout);
 
