@@ -1,3 +1,21 @@
+/*
+ * Rainbow Crackalack: markov.c
+ * Copyright (C) 2018-2020  Joe Testa <jtesta@positronsecurity.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms version 3 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,11 +30,11 @@
  * Linux:  qsort_r(base, nmemb, size, compar(a, b, arg), arg)
  * ------------------------------------------------------------------------- */
 
-#ifdef __APPLE__
-
 typedef struct {
   const uint32_t *freq;
 } sort_ctx;
+
+#ifdef __APPLE__
 
 static int cmp_by_freq_desc_apple(void *thunk, const void *a, const void *b)
 {
@@ -31,10 +49,6 @@ static int cmp_by_freq_desc_apple(void *thunk, const void *a, const void *b)
 }
 
 #else /* Linux */
-
-typedef struct {
-  const uint32_t *freq;
-} sort_ctx;
 
 static int cmp_by_freq_desc_linux(const void *a, const void *b, void *arg)
 {
@@ -97,6 +111,12 @@ void markov_build_sorted(markov_model *model)
 int markov_train(const char *wordlist_path, const char *charset,
                  unsigned int charset_len, markov_model *model)
 {
+  if (charset_len == 0 || charset_len > 256) {
+    fprintf(stderr, "markov_train: charset_len %u out of range [1, 256]\n",
+            charset_len);
+    return -1;
+  }
+
   memset(model, 0, sizeof(*model));
   model->charset_len = charset_len;
   memcpy(model->charset, charset, charset_len);
@@ -129,7 +149,7 @@ int markov_train(const char *wordlist_path, const char *charset,
   }
 
   char buf[4096];
-  unsigned long valid_words = 0;
+  uint64_t valid_words = 0;
 
   while (fgets(buf, sizeof(buf), fp)) {
     /* Strip trailing CR / LF */
@@ -233,6 +253,7 @@ int markov_save(const char *path, const markov_model *model)
 write_error:
   fprintf(stderr, "markov_save: write error on '%s'\n", path);
   fclose(fp);
+  remove(path);
   return -1;
 }
 
@@ -258,9 +279,14 @@ int markov_load(const char *path, markov_model *model)
     return -1;
   }
 
-  /* Version */
+  /* Version - split into two checks so ver is initialised before use */
   uint32_t ver;
-  if (fread(&ver, sizeof(uint32_t), 1, fp) != 1 || ver != MARKOV_VERSION) {
+  if (fread(&ver, sizeof(uint32_t), 1, fp) != 1) {
+    fprintf(stderr, "markov_load: truncated version field in '%s'\n", path);
+    fclose(fp);
+    return -1;
+  }
+  if (ver != MARKOV_VERSION) {
     fprintf(stderr, "markov_load: unsupported version %u in '%s'\n", ver, path);
     fclose(fp);
     return -1;
@@ -345,6 +371,7 @@ void index_to_plaintext_markov_cpu(uint64_t index, const markov_model *model,
         break;
       }
     }
+    assert(prev_idx < n); /* charset chars are always in the model; caller bug otherwise */
     const uint8_t *row = model->sorted_bigram + (size_t)prev_idx * n;
     plaintext[i] = (unsigned char)model->charset[row[index % n]];
     index /= n;
