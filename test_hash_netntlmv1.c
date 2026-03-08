@@ -143,9 +143,11 @@ int test_hash_netntlmv1(gpu_device device, gpu_context context, gpu_kernel kerne
         unsigned char cpu_hash[8] = {0};
         char cpu_hex[17] = {0};
 
-        /* Verify the DES key expansion contract: setup_des_key must produce
-         * an 8-byte key that differs from the raw 7-byte plaintext (the
-         * expansion spreads 56 bits across 64 bits with parity). */
+        /* Smoke test: verify setup_des_key transforms the input.
+         * This catches a completely broken DES expansion but is not a full
+         * correctness check (a pathological input could produce identical
+         * first 7 bytes after expansion).  The primary correctness assertion
+         * is the GPU vs CPU hash comparison below. */
         {
             unsigned char expanded[8] = {0};
             setup_des_key((char *)input, expanded);
