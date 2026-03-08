@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "charset.h"
+#include "markov.h"
 #include "mask_parse.h"
 
 #define MAX_PLAINTEXT_LEN 16
@@ -279,6 +280,42 @@ static int cmd_recommend(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_train(int argc, char **argv) {
+    if (argc < 4) {
+        fprintf(stderr,
+                "Usage: crackalack_plan train <hash> <wordlist> "
+                "<charset_name> <output.markov>\n");
+        return 1;
+    }
+
+    /* argv[0]=hash (informational), argv[1]=wordlist, argv[2]=charset,
+     * argv[3]=output path */
+    const char *wordlist_path  = argv[1];
+    const char *charset_name   = argv[2];
+    const char *output_path    = argv[3];
+
+    char *charset_string = validate_charset((char *)charset_name);
+    if (charset_string == NULL) {
+        fprintf(stderr, "Error: unknown charset '%s'.\n", charset_name);
+        return 1;
+    }
+
+    unsigned int charset_len = (unsigned int)strlen(charset_string);
+
+    markov_model model;
+    if (markov_train(wordlist_path, charset_string, charset_len, &model) != 0)
+        return 1;
+
+    if (markov_save(output_path, &model) != 0) {
+        markov_free(&model);
+        return 1;
+    }
+
+    markov_free(&model);
+    printf("Trained model written to '%s'\n", output_path);
+    return 0;
+}
+
 static void print_usage(void) {
     fprintf(stderr,
             "Usage: crackalack_plan <subcommand> ...\n"
@@ -288,7 +325,7 @@ static void print_usage(void) {
             "<chain_len> <num_chains>\n"
             "  recommend <hash> <charset_or_mask> <min_len> <max_len> "
             "<target_pct>\n"
-            "  train     (not yet implemented)\n");
+            "  train <hash> <wordlist> <charset_name> <output.markov>\n");
 }
 
 int main(int argc, char **argv) {
@@ -305,10 +342,8 @@ int main(int argc, char **argv) {
     if (strcmp(subcmd, "recommend") == 0)
         return cmd_recommend(argc - 2, argv + 2);
 
-    if (strcmp(subcmd, "train") == 0) {
-        printf("train: not yet implemented\n");
-        return 1;
-    }
+    if (strcmp(subcmd, "train") == 0)
+        return cmd_train(argc - 2, argv + 2);
 
     fprintf(stderr, "Error: unknown subcommand '%s'.\n\n", subcmd);
     print_usage();
