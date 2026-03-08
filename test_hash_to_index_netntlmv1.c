@@ -146,16 +146,12 @@ int test_h2i_netntlmv1(gpu_device device, gpu_context context, gpu_kernel kernel
         tests_passed &= gpu_test_netntlmv1_h2i(device, context, kernel,
                                                 t, cpu_index);
 
-        /* Also verify CPU agrees with itself (sanity check). */
-        {
-            uint64_t cpu_index2 = hash_to_index(hash_bytes, hash_len,
-                                                  reduction_offset,
-                                                  pspace_total, t->pos);
-            if (cpu_index2 != cpu_index) {
-                fprintf(stderr, "NetNTLMv1 h2i CPU sanity check failed for "
-                        "test %u\n", i);
-                tests_passed = 0;
-            }
+        /* Verify the CPU index is within the plaintext space. */
+        if (cpu_index >= pspace_total) {
+            fprintf(stderr, "NetNTLMv1 h2i CPU range check failed for "
+                    "test %u: index %"PRIu64" >= pspace %"PRIu64"\n",
+                    i, cpu_index, pspace_total);
+            tests_passed = 0;
         }
     }
 
