@@ -414,7 +414,8 @@ static int group_e(void)
     fill_plaintext_space_table_mask(lens3, 3, pspace);
     if (pspace[3] != 1000) { fprintf(stderr, "FP-03a: pspace[3]=%"PRIu64"\n", pspace[3]); ok = 0; }
     if (pspace[2] != 0)    { fprintf(stderr, "FP-03b: pspace[2]=%"PRIu64"\n", pspace[2]); ok = 0; }
-    if (pspace[0] != 0)    { fprintf(stderr, "FP-03c: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
+    if (pspace[1] != 0)    { fprintf(stderr, "FP-03c: pspace[1]=%"PRIu64"\n", pspace[1]); ok = 0; }
+    if (pspace[0] != 0)    { fprintf(stderr, "FP-03d: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
 
     /* FP-04: single ?a (95) */
     unsigned int lens4[] = {95};
@@ -434,14 +435,17 @@ static int group_e(void)
     fill_plaintext_space_table_mask(lens6, 3, pspace);
     if (pspace[3] != 6760) { fprintf(stderr, "FP-06a: pspace[3]=%"PRIu64"\n", pspace[3]); ok = 0; }
     if (pspace[2] != 0)    { fprintf(stderr, "FP-06b: pspace[2]=%"PRIu64"\n", pspace[2]); ok = 0; }
-    if (pspace[0] != 0)    { fprintf(stderr, "FP-06c: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
+    if (pspace[1] != 0)    { fprintf(stderr, "FP-06c: pspace[1]=%"PRIu64"\n", pspace[1]); ok = 0; }
+    if (pspace[0] != 0)    { fprintf(stderr, "FP-06d: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
 
     /* FP-07: ?u?l?d?s (26*26*10*33=223080) */
     unsigned int lens7[] = {26, 26, 10, 33};
     fill_plaintext_space_table_mask(lens7, 4, pspace);
     if (pspace[4] != 223080) { fprintf(stderr, "FP-07a: pspace[4]=%"PRIu64"\n", pspace[4]); ok = 0; }
     if (pspace[3] != 0)      { fprintf(stderr, "FP-07b: pspace[3]=%"PRIu64"\n", pspace[3]); ok = 0; }
-    if (pspace[0] != 0)      { fprintf(stderr, "FP-07c: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
+    if (pspace[2] != 0)      { fprintf(stderr, "FP-07c: pspace[2]=%"PRIu64"\n", pspace[2]); ok = 0; }
+    if (pspace[1] != 0)      { fprintf(stderr, "FP-07d: pspace[1]=%"PRIu64"\n", pspace[1]); ok = 0; }
+    if (pspace[0] != 0)      { fprintf(stderr, "FP-07e: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
 
     /* FP-08: single ?b (256) */
     unsigned int lens8[] = {256};
