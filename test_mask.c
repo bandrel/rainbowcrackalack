@@ -407,12 +407,14 @@ static int group_e(void)
     fill_plaintext_space_table_mask(lens2, 2, pspace);
     if (pspace[2] != 260) { fprintf(stderr, "FP-02a: pspace[2]=%"PRIu64"\n", pspace[2]); ok = 0; }
     if (pspace[1] != 0)   { fprintf(stderr, "FP-02b: pspace[1]=%"PRIu64"\n", pspace[1]); ok = 0; }
+    if (pspace[0] != 0)   { fprintf(stderr, "FP-02c: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
 
     /* FP-03: ?d?d?d */
     unsigned int lens3[] = {10, 10, 10};
     fill_plaintext_space_table_mask(lens3, 3, pspace);
     if (pspace[3] != 1000) { fprintf(stderr, "FP-03a: pspace[3]=%"PRIu64"\n", pspace[3]); ok = 0; }
     if (pspace[2] != 0)    { fprintf(stderr, "FP-03b: pspace[2]=%"PRIu64"\n", pspace[2]); ok = 0; }
+    if (pspace[0] != 0)    { fprintf(stderr, "FP-03c: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
 
     /* FP-04: single ?a (95) */
     unsigned int lens4[] = {95};
@@ -425,18 +427,21 @@ static int group_e(void)
     fill_plaintext_space_table_mask(lens5, 2, pspace);
     if (pspace[2] != 858) { fprintf(stderr, "FP-05a: pspace[2]=%"PRIu64"\n", pspace[2]); ok = 0; }
     if (pspace[1] != 0)   { fprintf(stderr, "FP-05b: pspace[1]=%"PRIu64"\n", pspace[1]); ok = 0; }
+    if (pspace[0] != 0)   { fprintf(stderr, "FP-05c: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
 
     /* FP-06: ?u?l?d (26*26*10=6760) */
     unsigned int lens6[] = {26, 26, 10};
     fill_plaintext_space_table_mask(lens6, 3, pspace);
     if (pspace[3] != 6760) { fprintf(stderr, "FP-06a: pspace[3]=%"PRIu64"\n", pspace[3]); ok = 0; }
     if (pspace[2] != 0)    { fprintf(stderr, "FP-06b: pspace[2]=%"PRIu64"\n", pspace[2]); ok = 0; }
+    if (pspace[0] != 0)    { fprintf(stderr, "FP-06c: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
 
     /* FP-07: ?u?l?d?s (26*26*10*33=223080) */
     unsigned int lens7[] = {26, 26, 10, 33};
     fill_plaintext_space_table_mask(lens7, 4, pspace);
     if (pspace[4] != 223080) { fprintf(stderr, "FP-07a: pspace[4]=%"PRIu64"\n", pspace[4]); ok = 0; }
     if (pspace[3] != 0)      { fprintf(stderr, "FP-07b: pspace[3]=%"PRIu64"\n", pspace[3]); ok = 0; }
+    if (pspace[0] != 0)      { fprintf(stderr, "FP-07c: pspace[0]=%"PRIu64"\n", pspace[0]); ok = 0; }
 
     /* FP-08: single ?b (256) */
     unsigned int lens8[] = {256};

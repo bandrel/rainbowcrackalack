@@ -28,11 +28,16 @@ struct netntlmv1_chain_test {
     unsigned int table_index;
 };
 
-/* Short chains using ascii-32-95 with 7-char plaintexts. */
+/* Short chains using ascii-32-95 with 7-char plaintexts.
+ * Includes low table_index values (0, 1) for basic coverage and high
+ * table_index values (100, 1000) to exercise large reduction offsets
+ * (table_index * 65536) which stress the hash_to_index modular reduction. */
 static struct netntlmv1_chain_test netntlmv1_chain_tests[] = {
     {0UL,   100, 0},
     {999UL, 100, 0},
     {0UL,   200, 1},
+    {0UL,   100, 100},
+    {500UL, 150, 1000},
 };
 
 
@@ -40,6 +45,12 @@ static struct netntlmv1_chain_test netntlmv1_chain_tests[] = {
  * CPU reference NetNTLMv1 chain generator.
  * Mirrors the GPU crackalack kernel for HASH_NETNTLMV1 with ascii-32-95 7-char
  * tables using index_to_plaintext + setup_des_key + netntlmv1_hash + hash_to_index.
+ *
+ * The loop runs chain_len-1 iterations (not chain_len) because a rainbow chain
+ * of length N has N links but only N-1 hash+reduce steps: the start point is
+ * link 0, each iteration produces the next link, and the final index after
+ * N-1 steps is the endpoint stored in the table.  This matches the GPU
+ * crackalack kernel which also iterates from pos_start to chain_len-1.
  */
 static uint64_t cpu_netntlmv1_chain(uint64_t start, unsigned int chain_len,
                                      unsigned int table_index)

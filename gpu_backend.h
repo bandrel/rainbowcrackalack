@@ -213,7 +213,7 @@ extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 
 #define CLCREATEARG_DEBUG(_arg_index, _debug_buffer, _debug_ptr) \
   { _debug_ptr = calloc(DEBUG_LEN, sizeof(unsigned char)); \
-    CLCREATEARG(_arg_index, _debug_buffer, GPU_RW, _debug_ptr, DEBUG_LEN); }
+    CLCREATEARG_ARRAY(_arg_index, _debug_buffer, GPU_RW, _debug_ptr, DEBUG_LEN); }
 
 #define CLCREATECONTEXT(_context_callback, _device_ptr) \
   gpu_create_context(*(_device_ptr))
@@ -270,7 +270,7 @@ extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 
 #define CLCREATEARG_DEBUG(_arg_index, _debug_buffer, _debug_ptr) \
   { _debug_ptr = calloc(DEBUG_LEN, sizeof(unsigned char)); \
-    CLCREATEARG(_arg_index, _debug_buffer, CL_MEM_READ_WRITE, _debug_ptr, DEBUG_LEN); }
+    CLCREATEARG_ARRAY(_arg_index, _debug_buffer, CL_MEM_READ_WRITE, _debug_ptr, DEBUG_LEN); }
 
 #define CLCREATECONTEXT(_context_callback, _device_ptr) \
   rc_clCreateContext(NULL, 1, _device_ptr, _context_callback, NULL, &err); if (err < 0) { fprintf(stderr, "Failed to create context: %d\n", err); exit(-1); }

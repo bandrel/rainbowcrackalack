@@ -5,6 +5,16 @@
  * Strategy: compute the expected hash with the CPU reference implementation
  * (setup_des_key + netntlmv1_hash), then verify the GPU produces the same
  * 8-byte output.
+ *
+ * GPU kernel input contract:
+ *   The GPU test_hash kernel receives the RAW 7-byte plaintext (not a
+ *   DES-expanded key).  The kernel is responsible for calling setup_des_key
+ *   internally to expand the 7-byte plaintext into an 8-byte DES key before
+ *   performing the DES-ECB encryption.
+ *
+ *   The CPU reference (cpu_netntlmv1_hash) mirrors this by explicitly calling
+ *   setup_des_key on the 7-byte plaintext, then passing the 8-byte expanded
+ *   key to netntlmv1_hash.  Both paths must produce the same 8-byte hash.
  */
 
 #include <stdio.h>
@@ -30,7 +40,11 @@ static const char *netntlmv1_test_inputs[] = {
 };
 
 
-/* Compute the CPU-side NetNTLMv1 hash of a 7-byte plaintext. */
+/*
+ * Compute the CPU-side NetNTLMv1 hash of a 7-byte plaintext.
+ * This mirrors the GPU kernel contract: the raw 7-byte plaintext is first
+ * DES-expanded into an 8-byte key via setup_des_key, then hashed.
+ */
 static void cpu_netntlmv1_hash(const char *plaintext7, unsigned char *out_hash) {
     unsigned char key[8] = {0};
 
@@ -66,8 +80,7 @@ static int gpu_test_netntlmv1_hash(gpu_device device, gpu_context context,
     queue = CLCREATEQUEUE(context, device);
 
     output = calloc(MAX_HASH_OUTPUT_LEN, sizeof(unsigned char));
-    debug_ptr = calloc(DEBUG_LEN, sizeof(unsigned char));
-    if (!output || !debug_ptr) {
+    if (!output) {
         fprintf(stderr, "Error allocating buffers in test_hash_netntlmv1\n");
         exit(-1);
     }
@@ -129,6 +142,20 @@ int test_hash_netntlmv1(gpu_device device, gpu_context context, gpu_kernel kerne
         const char *input = netntlmv1_test_inputs[i];
         unsigned char cpu_hash[8] = {0};
         char cpu_hex[17] = {0};
+
+        /* Verify the DES key expansion contract: setup_des_key must produce
+         * an 8-byte key that differs from the raw 7-byte plaintext (the
+         * expansion spreads 56 bits across 64 bits with parity). */
+        {
+            unsigned char expanded[8] = {0};
+            setup_des_key((char *)input, expanded);
+            if (memcmp(expanded, input, 7) == 0) {
+                fprintf(stderr, "NetNTLMv1 test %u: DES key expansion had no "
+                        "effect - raw and expanded keys are identical\n", i);
+                tests_passed = 0;
+                continue;
+            }
+        }
 
         /* Compute CPU reference hash. */
         cpu_netntlmv1_hash(input, cpu_hash);
