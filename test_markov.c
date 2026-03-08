@@ -253,6 +253,8 @@ static int group_d(void)
     if (markov_load("/tmp/no_such_file_rca_xyz.markov", &m) != -1) {
         fprintf(stderr, "ME-01 failed: expected -1 for missing file\n");
         ok = 0;
+    } else {
+        fprintf(stderr, " (expected)\n");
     }
 
     /* ME-02: load file with wrong magic returns -1
@@ -276,6 +278,8 @@ static int group_d(void)
         if (markov_load(bad_path, &m) != -1) {
             fprintf(stderr, "ME-02 failed: expected -1 for bad magic\n");
             ok = 0;
+        } else {
+            fprintf(stderr, " (expected)\n");
         }
         remove(bad_path);
     }
@@ -294,6 +298,8 @@ static int group_d(void)
         if (markov_train(empty_path, "abc", 3, &m) != -1) {
             fprintf(stderr, "ME-03 failed: expected -1 for empty corpus\n");
             ok = 0;
+        } else {
+            fprintf(stderr, " (expected)\n");
         }
         remove(empty_path);
     }
