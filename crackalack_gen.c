@@ -352,6 +352,8 @@ void *host_thread(void *ptr) {
     CLRELEASEPROGRAM(gpu->program);
     CLRELEASEQUEUE(gpu->queue);
     CLRELEASECONTEXT(gpu->context);
+    if (args->use_markov)
+      markov_free(&markov);
     pthread_exit(NULL);
     return NULL;
   }
