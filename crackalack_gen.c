@@ -974,7 +974,7 @@ int main(int ac, char **av) {
       memcpy(args[i].mask_charset_lens, mask_charset_lens, sizeof(args[i].mask_charset_lens));
     }
     args[i].use_markov = use_markov;
-    strncpy(args[i].markov_path, markov_path, sizeof(args[i].markov_path) - 1);
+    snprintf(args[i].markov_path, sizeof(args[i].markov_path), "%s", markov_path);
     args[i].gpu.device_number = i;
     args[i].gpu.device = devices[i];
 
