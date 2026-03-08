@@ -35,6 +35,7 @@
 #include "test_hash_to_index_ntlm9.h"
 #include "test_index_to_plaintext.h"
 #include "test_index_to_plaintext_ntlm9.h"
+#include "test_markov.h"
 #include "test_mask.h"
 #include "test_misc.h"
 #include "test_sort.h"
@@ -139,6 +140,16 @@ int main(int ac, char **av) {
   /* Sort utility tests (CPU-only, no kernel needed). */
   printf("Running sort utility tests... "); fflush(stdout);
   if (!test_sort()) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+
+  /* Markov tests (CPU-only, no kernel needed). */
+  printf("Running Markov tests... "); fflush(stdout);
+  if (!test_markov()) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
