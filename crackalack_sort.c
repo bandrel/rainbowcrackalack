@@ -242,7 +242,7 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex) {
   {
     int gpu_ok = gpu_sort(data, num_chains);
     pthread_mutex_unlock(gpu_mutex);
-    if (gpu_ok != 0)
+    if (gpu_ok != 0 || !is_sorted_rt(data, num_chains))
       qsort(data, num_chains, CHAIN_SIZE, compare_by_end_index);
   }
 
