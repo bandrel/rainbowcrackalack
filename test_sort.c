@@ -14,7 +14,7 @@
 static int group_a(void)
 {
     int ok = 1;
-    uint64_t data[12];
+    uint64_t data[12] = {0};
 
     /* ISR-01: empty array is sorted. */
     if (is_sorted_rt(data, 0) != 1)
