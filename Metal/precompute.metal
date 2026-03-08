@@ -9,19 +9,20 @@ kernel void precompute(
     device unsigned char *g_hash [[buffer(1)]],
     device unsigned int *g_hash_len [[buffer(2)]],
     device char *g_charset [[buffer(3)]],
-    device unsigned int *g_plaintext_len_min [[buffer(4)]],
-    device unsigned int *g_plaintext_len_max [[buffer(5)]],
-    device unsigned int *g_table_index [[buffer(6)]],
-    device ulong *g_chain_len [[buffer(7)]],
-    device unsigned int *g_device_num [[buffer(8)]],
-    device unsigned int *g_total_devices [[buffer(9)]],
-    device unsigned int *g_exec_block_scaler [[buffer(10)]],
-    device ulong *g_output [[buffer(11)]],
-    device ulong *g_plaintext_space_up_to_index [[buffer(12)]],
-    device ulong *g_plaintext_space_total [[buffer(13)]],
-    device unsigned int *g_is_mask [[buffer(14)]],
-    device char *g_mask_charset_data [[buffer(15)]],
-    device unsigned int *g_mask_charset_lens [[buffer(16)]],
+    device unsigned int *g_charset_len [[buffer(4)]],
+    device unsigned int *g_plaintext_len_min [[buffer(5)]],
+    device unsigned int *g_plaintext_len_max [[buffer(6)]],
+    device unsigned int *g_table_index [[buffer(7)]],
+    device ulong *g_chain_len [[buffer(8)]],
+    device unsigned int *g_device_num [[buffer(9)]],
+    device unsigned int *g_total_devices [[buffer(10)]],
+    device unsigned int *g_exec_block_scaler [[buffer(11)]],
+    device ulong *g_output [[buffer(12)]],
+    device ulong *g_plaintext_space_up_to_index [[buffer(13)]],
+    device ulong *g_plaintext_space_total [[buffer(14)]],
+    device unsigned int *g_is_mask [[buffer(15)]],
+    device char *g_mask_charset_data [[buffer(16)]],
+    device unsigned int *g_mask_charset_lens [[buffer(17)]],
     uint gid [[thread_position_in_grid]]) {
 
   long target_chain_len = (*g_chain_len - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
@@ -40,7 +41,8 @@ kernel void precompute(
 
   unsigned int hash_type = *g_hash_type;
   unsigned int hash_len = *g_hash_len;
-  unsigned int charset_len = g_strncpy(charset, g_charset, sizeof(charset));
+  unsigned int charset_len = *g_charset_len;
+  g_memcpy((thread unsigned char *)charset, (device unsigned char *)g_charset, charset_len);
   unsigned int plaintext_len_min = *g_plaintext_len_min;
   unsigned int plaintext_len_max = *g_plaintext_len_max;
   unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
