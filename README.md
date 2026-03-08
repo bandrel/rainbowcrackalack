@@ -26,6 +26,7 @@ For convenience, the tables [may also be purchased](https://www.rainbowcrackalac
 |`crackalack_sort`     |Sort rainbow tables by end index for lookup          |
 |`crackalack_unit_tests`|Run GPU-accelerated unit tests                      |
 |`crackalack_rtc2rt`   |Decompress .rtc tables to .rt format                 |
+|`crackalack_plan`     |Estimate table parameters, recommend chain settings, and train Markov models|
 |`perfectify`          |Remove duplicate endpoints from tables               |
 |`get_chain`           |Extract a single chain from a table                  |
 |`enumerate_chain`     |Walk a chain and print each step                     |
@@ -89,6 +90,47 @@ To override the worker count explicitly:
     # ./crackalack_sort --jobs 4 /export/ntlm8_tables/*.rt
 
 `--jobs 0` (or omitting `--jobs`) uses automatic detection. Files that are already sorted are skipped without being rewritten.
+
+#### Estimating table size and coverage
+
+Given full generation parameters, `crackalack_plan estimate` prints file size and coverage without generating anything:
+
+    # ./crackalack_plan estimate ntlm ascii-32-95 8 8 422000 67108864
+
+#### Recommending chain parameters for a target coverage
+
+    # ./crackalack_plan recommend ntlm '?l?d?d?d' 4 4 50%
+
+#### Training a Markov model from a wordlist
+
+    # ./crackalack_plan train ntlm rockyou.txt ascii-32-95 ntlm_rockyou.markov
+
+Recommended minimum wordlist size: **1M passwords**. The bigram model has 95x95 = 9,025 transition parameters; ~1M real training words provide reliable estimates for all common bigrams.
+
+| Wordlist size | Model quality |
+|---------------|---------------|
+| < 100K        | Poor - rare bigrams unreliable |
+| 100K - 1M     | Acceptable |
+| 1M - 10M      | Good |
+| 10M+          | Excellent (diminishing returns above ~20M) |
+
+rockyou.txt (14.3M entries) is the practical gold standard for general consumer passwords. Quality matters more than size - 1M real leaked passwords from the target environment beat 100M generic dictionary words.
+
+#### Generating tables with a Markov model
+
+Pass `--markov <file.markov>` to `crackalack_gen` to bias chain start points toward the most probable plaintexts per the training corpus:
+
+    # ./crackalack_gen ntlm ascii-32-95 8 8 0 422000 67108864 0 --markov ntlm_rockyou.markov
+
+A 10% coverage Markov table covers 10% of the most probable password space rather than 10% of the alphabetical space - dramatically better real-world crack rates for common passwords.
+
+**Note:** `--markov` requires `min_len == max_len`. It cannot be combined with the NTLM8/NTLM9 fast-path kernels (falls back to the generic Markov kernel with a warning).
+
+#### Looking up hashes against Markov-generated tables
+
+Pass the same `--markov` flag to `crackalack_lookup` when looking up hashes against tables that were generated with `--markov`:
+
+    # ./crackalack_lookup /export/ntlm8_tables/ /home/user/hashes.txt --markov ntlm_rockyou.markov
 
 #### Table lookups against NTLM 8-character hashes
 
