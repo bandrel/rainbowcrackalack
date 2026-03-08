@@ -17,12 +17,19 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#  include <unistd.h>
+#  ifdef __APPLE__
+#    include <sys/sysctl.h>
+#  endif
 #endif
 #include <errno.h>
 #include <inttypes.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "gpu_backend.h"
 #include "terminal_color.h"
@@ -30,6 +37,74 @@
 
 #define CHAIN_SIZE (unsigned int)(sizeof(uint64_t) * 2)
 #define SORT_KERNEL_PATH "sort.cl"
+
+
+static uint64_t get_free_ram(void) {
+#ifdef _WIN32
+  MEMORYSTATUSEX ms;
+  ms.dwLength = sizeof(ms);
+  GlobalMemoryStatusEx(&ms);
+  return (uint64_t)ms.ullAvailPhys;
+#elif defined(__APPLE__)
+  uint64_t total = 0;
+  size_t len = sizeof(total);
+  sysctlbyname("hw.memsize", &total, &len, NULL, 0);
+  return total * 4 / 10;  /* 40% of total as conservative available */
+#else
+  long pages = sysconf(_SC_AVPHYS_PAGES);
+  long page_size = sysconf(_SC_PAGE_SIZE);
+  if (pages <= 0 || page_size <= 0)
+    return 0;
+  return (uint64_t)pages * (uint64_t)page_size;
+#endif
+}
+
+static int get_cpu_cores(void) {
+#ifdef _WIN32
+  SYSTEM_INFO si;
+  GetSystemInfo(&si);
+  return (int)si.dwNumberOfProcessors;
+#else
+  int n = (int)sysconf(_SC_NPROCESSORS_ONLN);
+  return n > 0 ? n : 1;
+#endif
+}
+
+/* Compute number of parallel sort workers based on available resources.
+ * files[0..num_files-1] are the paths to be sorted. */
+static int compute_sort_jobs(int num_files, char **files) {
+  uint64_t free_ram = get_free_ram();
+  uint64_t max_file_size = 0;
+  int cpu_cores = get_cpu_cores();
+  int jobs;
+  int i;
+  struct stat st;
+
+  for (i = 0; i < num_files; i++) {
+    if (stat(files[i], &st) == 0 && (uint64_t)st.st_size > max_file_size)
+      max_file_size = (uint64_t)st.st_size;
+  }
+
+  if (max_file_size == 0 || free_ram == 0)
+    return 1;
+
+  jobs = (int)((free_ram * 8 / 10) / max_file_size);
+  if (jobs > cpu_cores) jobs = cpu_cores;
+  if (jobs > num_files) jobs = num_files;
+  if (jobs < 1)         jobs = 1;
+  return jobs;
+}
+
+
+typedef struct {
+  char           **files;
+  int              num_files;
+  int              next_file;
+  int              failures;
+  pthread_mutex_t  queue_mutex;
+  pthread_mutex_t  gpu_mutex;
+  pthread_mutex_t  failures_mutex;
+} sort_work_queue_t;
 
 
 static int compare_by_end_index(const void *a, const void *b) {
@@ -116,7 +191,7 @@ static int gpu_sort(uint64_t *data, unsigned int num_chains) {
 }
 
 
-static int sort_file(const char *filename) {
+static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex) {
   FILE *f = NULL;
   uint64_t *data = NULL;
   long file_size = 0;
@@ -180,8 +255,13 @@ static int sort_file(const char *filename) {
   printf("Sorting %s (%u chains)... ", filename, num_chains);
   fflush(stdout);
 
-  if (gpu_sort(data, num_chains) != 0)
-    qsort(data, num_chains, CHAIN_SIZE, compare_by_end_index);
+  pthread_mutex_lock(gpu_mutex);
+  {
+    int gpu_ok = gpu_sort(data, num_chains);
+    pthread_mutex_unlock(gpu_mutex);
+    if (gpu_ok != 0)
+      qsort(data, num_chains, CHAIN_SIZE, compare_by_end_index);
+  }
 
   f = fopen(filename, "wb");
   if (f == NULL) {
@@ -205,27 +285,89 @@ done:
 }
 
 
+static void *sort_worker(void *arg) {
+  sort_work_queue_t *q = (sort_work_queue_t *)arg;
+  while (1) {
+    int idx;
+    pthread_mutex_lock(&q->queue_mutex);
+    idx = q->next_file++;
+    pthread_mutex_unlock(&q->queue_mutex);
+    if (idx >= q->num_files)
+      break;
+    if (sort_file(q->files[idx], &q->gpu_mutex) != 0) {
+      pthread_mutex_lock(&q->failures_mutex);
+      q->failures++;
+      pthread_mutex_unlock(&q->failures_mutex);
+    }
+  }
+  return NULL;
+}
+
+
 int main(int ac, char **av) {
-  int i = 0;
-  int failures = 0;
+  int first_file = 1;
+  int num_jobs = 0;
+  int num_files;
+  sort_work_queue_t q;
+  pthread_t *threads = NULL;
+  int i, ret = 0;
 
   ENABLE_CONSOLE_COLOR();
   PRINT_PROJECT_HEADER();
 
   if (ac < 2) {
-    printf("Sorts rainbow tables by end index for use with crackalack_lookup.\n\nUsage: %s table1.rt [table2.rt ...]\n\n", av[0]);
+    printf("Sorts rainbow tables by end index for use with crackalack_lookup.\n\n"
+           "Usage: %s [--jobs N] table1.rt [table2.rt ...]\n\n"
+           "  --jobs N   use N parallel workers (0 = auto-detect, default: auto)\n\n",
+           av[0]);
     return 0;
   }
 
-  for (i = 1; i < ac; i++) {
-    if (sort_file(av[i]) != 0)
-      failures++;
+  if (ac >= 3 && strcmp(av[1], "--jobs") == 0) {
+    num_jobs = atoi(av[2]);
+    if (num_jobs < 0) num_jobs = 0;
+    first_file = 3;
   }
 
-  if (failures > 0) {
-    fprintf(stderr, "\n%s%d file(s) failed to sort.%s\n", REDB, failures, CLR);
+  num_files = ac - first_file;
+  if (num_files <= 0) {
+    fprintf(stderr, "%sError: no input files specified.%s\n", REDB, CLR);
     return 1;
   }
 
-  return 0;
+  if (num_jobs == 0)
+    num_jobs = compute_sort_jobs(num_files, av + first_file);
+
+  printf("Sorting %d file(s) with %d parallel worker(s).\n", num_files, num_jobs);
+
+  memset(&q, 0, sizeof(q));
+  q.files     = av + first_file;
+  q.num_files = num_files;
+  pthread_mutex_init(&q.queue_mutex,    NULL);
+  pthread_mutex_init(&q.gpu_mutex,      NULL);
+  pthread_mutex_init(&q.failures_mutex, NULL);
+
+  threads = malloc((size_t)num_jobs * sizeof(pthread_t));
+  if (!threads) {
+    fprintf(stderr, "%sError: failed to allocate thread array.%s\n", REDB, CLR);
+    ret = 1;
+    goto done;
+  }
+
+  for (i = 0; i < num_jobs; i++)
+    pthread_create(&threads[i], NULL, sort_worker, &q);
+  for (i = 0; i < num_jobs; i++)
+    pthread_join(threads[i], NULL);
+
+  if (q.failures > 0) {
+    fprintf(stderr, "\n%s%d file(s) failed to sort.%s\n", REDB, q.failures, CLR);
+    ret = 1;
+  }
+
+done:
+  pthread_mutex_destroy(&q.queue_mutex);
+  pthread_mutex_destroy(&q.gpu_mutex);
+  pthread_mutex_destroy(&q.failures_mutex);
+  free(threads);
+  return ret;
 }
