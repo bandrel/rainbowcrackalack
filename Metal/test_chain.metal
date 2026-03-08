@@ -6,13 +6,14 @@ using namespace metal;
 
 kernel void test_chain(
     device char *g_charset [[buffer(0)]],
-    device unsigned int *g_plaintext_len_min [[buffer(1)]],
-    device unsigned int *g_plaintext_len_max [[buffer(2)]],
-    device unsigned int *g_table_index [[buffer(3)]],
-    device unsigned int *g_chain_len [[buffer(4)]],
-    device ulong *g_start [[buffer(5)]],
-    device ulong *g_end [[buffer(6)]],
-    device unsigned char *g_debug [[buffer(7)]],
+    device unsigned int *g_charset_len [[buffer(1)]],
+    device unsigned int *g_plaintext_len_min [[buffer(2)]],
+    device unsigned int *g_plaintext_len_max [[buffer(3)]],
+    device unsigned int *g_table_index [[buffer(4)]],
+    device unsigned int *g_chain_len [[buffer(5)]],
+    device ulong *g_start [[buffer(6)]],
+    device ulong *g_end [[buffer(7)]],
+    device unsigned char *g_debug [[buffer(8)]],
     uint gid [[thread_position_in_grid]]) {
 
   char charset[MAX_CHARSET_LEN];
@@ -22,7 +23,8 @@ kernel void test_chain(
   unsigned int chain_len = *g_chain_len;
   ulong start = *g_start;
 
-  unsigned int charset_len = g_strncpy(charset, g_charset, sizeof(charset));
+  unsigned int charset_len = *g_charset_len;
+  g_memcpy((thread unsigned char *)charset, (device unsigned char *)g_charset, charset_len);
   ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
   unsigned char plaintext[MAX_PLAINTEXT_LEN];
   unsigned int plaintext_len = 0;

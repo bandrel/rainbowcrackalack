@@ -7,7 +7,10 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <stdint.h>
+
 #include "charset.h"
+#include "cpu_rt_functions.h"
 #include "hash_validate.h"
 #include "misc.h"
 #include "shared.h"
@@ -245,6 +248,68 @@ static int group_h(void)
 }
 
 
+/* --- Group I: byte charset regression tests --- */
+static int group_i(void)
+{
+    int ok = 1;
+
+    /* BCS-01: CHARSET_BYTE_LEN must be exactly 256 (was 257 due to duplicate
+     * trailing \x00 in the string literal). */
+    if (CHARSET_BYTE_LEN != 256)
+        { fprintf(stderr, "BCS-01 failed: CHARSET_BYTE_LEN=%d, expected 256\n",
+                  (int)CHARSET_BYTE_LEN); ok = 0; }
+
+    /* BCS-02: validate_charset("byte") returns non-NULL. */
+    if (validate_charset("byte") == NULL)
+        { fprintf(stderr, "BCS-02 failed: byte charset not found\n"); ok = 0; }
+
+    /* BCS-03: fill_plaintext_space_table with charset_len=256 and 7-7 must
+     * equal 256^7 = 72057594037927936. This catches the old +1 bug where
+     * charset_len was erroneously set to 257. */
+    {
+        uint64_t pspace_up_to[MAX_PLAINTEXT_LEN] = {0};
+        uint64_t pspace = fill_plaintext_space_table(256, 7, 7, pspace_up_to);
+        uint64_t expected = 1;
+        int i;
+        for (i = 0; i < 7; i++) expected *= 256;
+        if (pspace != expected)
+            { fprintf(stderr, "BCS-03 failed: pspace=%"PRIu64", expected %"PRIu64"\n",
+                      pspace, expected); ok = 0; }
+    }
+
+    /* BCS-04: fill_plaintext_space_table with ascii-32-95 (len=95) and 8-8
+     * must NOT use 96 (the old strlen+1 bug). */
+    {
+        uint64_t pspace_up_to[MAX_PLAINTEXT_LEN] = {0};
+        uint64_t pspace = fill_plaintext_space_table(95, 8, 8, pspace_up_to);
+        uint64_t pspace_wrong = 0;
+        uint64_t pspace_up_to_wrong[MAX_PLAINTEXT_LEN] = {0};
+        pspace_wrong = fill_plaintext_space_table(96, 8, 8, pspace_up_to_wrong);
+        if (pspace == pspace_wrong)
+            { fprintf(stderr, "BCS-04 failed: pspace with 95 == pspace with 96\n"); ok = 0; }
+        /* 95^8 = 6634204312890625 */
+        if (pspace != 6634204312890625UL)
+            { fprintf(stderr, "BCS-04b failed: pspace=%"PRIu64", expected 6634204312890625\n",
+                      pspace); ok = 0; }
+    }
+
+    /* BCS-05: parse_rt_params for byte charset table. */
+    {
+        rt_parameters p;
+        char fn[256];
+        strncpy(fn, "netntlmv1_byte#7-7_0_881689x134217668_0.rt", sizeof(fn));
+        parse_rt_params(&p, fn);
+        if (!p.parsed)
+            { fprintf(stderr, "BCS-05 failed: byte charset table not parsed\n"); ok = 0; }
+        else if (p.hash_type != HASH_NETNTLMV1 || p.plaintext_len_min != 7 ||
+                 p.plaintext_len_max != 7)
+            { fprintf(stderr, "BCS-05b failed: field mismatch\n"); ok = 0; }
+    }
+
+    return ok;
+}
+
+
 int test_misc(void)
 {
     int ok = 1;
@@ -257,6 +322,7 @@ int test_misc(void)
     ok &= group_f();
     ok &= group_g();
     ok &= group_h();
+    ok &= group_i();
 
     return ok;
 }

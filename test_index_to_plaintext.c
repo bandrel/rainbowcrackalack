@@ -77,7 +77,7 @@ int gpu_test_index_to_plaintext(gpu_device device, gpu_context context, gpu_kern
   CLMAKETESTVARS();
   int test_passed = 0;
 
-  gpu_buffer charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, index_buffer = NULL, plaintext_buffer = NULL, plaintext_len_buffer = NULL, debug_buffer = NULL;
+  gpu_buffer charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, index_buffer = NULL, plaintext_buffer = NULL, plaintext_len_buffer = NULL, debug_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
 
   unsigned char *plaintext = NULL;
   unsigned char *debug_ptr = NULL;
@@ -94,7 +94,7 @@ int gpu_test_index_to_plaintext(gpu_device device, gpu_context context, gpu_kern
     exit(-1);
   }
 
-  CLCREATEARG_ARRAY(0, charset_buffer, CL_RO, charset, strlen(charset) + 1);
+  CLCREATEARG_ARRAY(0, charset_buffer, CL_RO, charset, charset_len);
   CLCREATEARG(1, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
   CLCREATEARG(2, plaintext_len_min_buffer, CL_RO, plaintext_len_min, sizeof(gpu_uint));
   CLCREATEARG(3, plaintext_len_max_buffer, CL_RO, plaintext_len_max, sizeof(gpu_uint));
@@ -102,6 +102,15 @@ int gpu_test_index_to_plaintext(gpu_device device, gpu_context context, gpu_kern
   CLCREATEARG_ARRAY(5, plaintext_buffer, CL_WO, plaintext, MAX_PLAINTEXT_LEN);
   CLCREATEARG(6, plaintext_len_buffer, CL_WO, plaintext_len, sizeof(gpu_uint));
   CLCREATEARG_DEBUG(7, debug_buffer, debug_ptr);
+
+  gpu_uint is_mask = 0;
+  char dummy_mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  gpu_uint dummy_mask_lens[MAX_PLAINTEXT_LEN];
+  memset(dummy_mask_data, 0, sizeof(dummy_mask_data));
+  memset(dummy_mask_lens, 0, sizeof(dummy_mask_lens));
+  CLCREATEARG(8, is_mask_buffer, CL_RO, is_mask, sizeof(gpu_uint));
+  CLCREATEARG_ARRAY(9, mask_data_buffer, CL_RO, dummy_mask_data, sizeof(dummy_mask_data));
+  CLCREATEARG_ARRAY(10, mask_lens_buffer, CL_RO, dummy_mask_lens, sizeof(dummy_mask_lens));
 
   CLRUNKERNEL(queue, kernel, &global_work_size);
   CLFLUSH(queue);
@@ -133,6 +142,9 @@ int gpu_test_index_to_plaintext(gpu_device device, gpu_context context, gpu_kern
   CLFREEBUFFER(plaintext_buffer);
   CLFREEBUFFER(plaintext_len_buffer);
   CLFREEBUFFER(debug_buffer);
+  CLFREEBUFFER(is_mask_buffer);
+  CLFREEBUFFER(mask_data_buffer);
+  CLFREEBUFFER(mask_lens_buffer);
 
   CLRELEASEQUEUE(queue);
 

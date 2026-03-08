@@ -5,6 +5,7 @@
 __kernel void false_alarm_check_markov(
     __global unsigned int *g_hash_type,
     __global char *g_charset,
+    __global unsigned int *g_charset_len,
     __global unsigned int *g_plaintext_len_min,
     __global unsigned int *g_plaintext_len_max,
     __global unsigned int *g_reduction_offset,
@@ -34,8 +35,8 @@ __kernel void false_alarm_check_markov(
   unsigned int plaintext_len;
   unsigned int hash_len;
 
-  g_strncpy(charset, g_charset, sizeof(charset));
-  unsigned int charset_len = strlen(charset);
+  unsigned int charset_len = *g_charset_len;
+  g_memcpy((unsigned char *)charset, (unsigned char __global *)g_charset, charset_len);
   unsigned int hash_type = *g_hash_type;
   unsigned int plaintext_len_max = *g_plaintext_len_max;
   unsigned int reduction_offset = *g_reduction_offset;

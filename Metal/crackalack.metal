@@ -8,17 +8,18 @@ using namespace metal;
 kernel void crackalack(
     device unsigned int *g_hash_type [[buffer(0)]],
     device char *g_charset [[buffer(1)]],
-    device unsigned int *g_plaintext_len_min [[buffer(2)]],
-    device unsigned int *g_plaintext_len_max [[buffer(3)]],
-    device unsigned int *g_reduction_offset [[buffer(4)]],
-    device unsigned int *g_chain_len [[buffer(5)]],
-    device ulong *g_indices [[buffer(6)]],
-    device unsigned int *g_pos_start [[buffer(7)]],
-    device ulong *g_plaintext_space_up_to_index [[buffer(8)]],
-    device ulong *g_plaintext_space_total [[buffer(9)]],
-    device unsigned int *g_is_mask [[buffer(10)]],
-    device char *g_mask_charset_data [[buffer(11)]],
-    device unsigned int *g_mask_charset_lens [[buffer(12)]],
+    device unsigned int *g_charset_len [[buffer(2)]],
+    device unsigned int *g_plaintext_len_min [[buffer(3)]],
+    device unsigned int *g_plaintext_len_max [[buffer(4)]],
+    device unsigned int *g_reduction_offset [[buffer(5)]],
+    device unsigned int *g_chain_len [[buffer(6)]],
+    device ulong *g_indices [[buffer(7)]],
+    device unsigned int *g_pos_start [[buffer(8)]],
+    device ulong *g_plaintext_space_up_to_index [[buffer(9)]],
+    device ulong *g_plaintext_space_total [[buffer(10)]],
+    device unsigned int *g_is_mask [[buffer(11)]],
+    device char *g_mask_charset_data [[buffer(12)]],
+    device unsigned int *g_mask_charset_lens [[buffer(13)]],
     uint gid [[thread_position_in_grid]]) {
 
   unsigned int hash_type = *g_hash_type;
@@ -31,7 +32,8 @@ kernel void crackalack(
   unsigned int pos = *g_pos_start;
   unsigned int is_mask = *g_is_mask;
 
-  unsigned int charset_len = g_strncpy(charset, g_charset, sizeof(charset));
+  unsigned int charset_len = *g_charset_len;
+  g_memcpy((thread unsigned char *)charset, (device unsigned char *)g_charset, charset_len);
 
   ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
   unsigned char plaintext[MAX_PLAINTEXT_LEN];
