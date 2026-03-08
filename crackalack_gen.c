@@ -302,7 +302,7 @@ void *host_thread(void *ptr) {
    * The Markov kernel has the same interface as the generic crackalack kernel
    * but adds sorted_pos0 and sorted_bigram as args 13 and 14. */
   if (args->use_markov) {
-    if (kernel_path == CRACKALACK_NTLM8_KERNEL_PATH || kernel_path == CRACKALACK_NTLM9_KERNEL_PATH) {
+    if (strcmp(kernel_path, CRACKALACK_NTLM8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NTLM9_KERNEL_PATH) == 0) {
       if (args->gpu.device_number == 0) {
         printf("%sNote: --markov cannot use fast-path kernels. Falling back to Markov generic kernel.%s\n", YELLOWB, CLR); fflush(stdout);
       }
