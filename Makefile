@@ -132,6 +132,7 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/markov.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \

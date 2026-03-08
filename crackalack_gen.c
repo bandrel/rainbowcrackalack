@@ -34,6 +34,7 @@
 #include "gpu_backend.h"
 
 #include "charset.h"
+#include "markov.h"
 #include "clock.h"
 #include "cpu_rt_functions.h"
 #include "file_lock.h"
@@ -131,6 +132,9 @@ typedef struct {
   char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
   unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
 
+  int     use_markov;
+  char    markov_path[1024];
+
   gpu_dev gpu;
 } thread_args;
 
@@ -170,6 +174,10 @@ unsigned int is_amd_gpu = 0;
 
 /* The global work size, as over-ridden by the user on the command line. */
 size_t user_provided_gws = 0;
+
+/* Markov mode state set by --markov flag. */
+static int    use_markov = 0;
+static char   markov_path[1024] = {0};
 
 
 void print_usage_and_exit(char *prog_name, int exit_code) {
@@ -258,8 +266,10 @@ void *host_thread(void *ptr) {
   gpu_kernel kernel = NULL;
 
   gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
+  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
 
   gpu_uint pos_start = 0;
+  markov_model markov = {0};
 
   if (args->is_mask) {
     charset_len = 0;
@@ -288,6 +298,24 @@ void *host_thread(void *ptr) {
     printf("%sWARNING: non-optimized kernel will be used since non-standard options were given!  Generation will be much slower.  (Hint: use \"crackalack_gen ntlm ascii-32-95 8 8 0 422000 67108864 X\" for optimized NTLM8 generation, or \"crackalack_gen ntlm ascii-32-95 9 9 0 803000 67108864 X\" for optimized NTLM9 generation.)%s\n", YELLOWB, CLR); fflush(stdout);
   }
 
+  /* When --markov is requested, switch to the Markov generation kernel.
+   * The Markov kernel has the same interface as the generic crackalack kernel
+   * but adds sorted_pos0 and sorted_bigram as args 13 and 14. */
+  if (args->use_markov) {
+    if (kernel_path == CRACKALACK_NTLM8_KERNEL_PATH || kernel_path == CRACKALACK_NTLM9_KERNEL_PATH) {
+      if (args->gpu.device_number == 0) {
+        printf("%sNote: --markov cannot use fast-path kernels. Falling back to Markov generic kernel.%s\n", YELLOWB, CLR); fflush(stdout);
+      }
+    }
+#ifdef USE_METAL
+    kernel_path = "crackalack_markov.metal";
+    kernel_name = "crackalack_markov";
+#else
+    kernel_path = "crackalack_markov.cl";
+    kernel_name = "crackalack_markov";
+#endif
+  }
+
   /* Get the number of compute units in this device. */
   get_device_uint(gpu->device, CL_DEVICE_MAX_COMPUTE_UNITS, &(gpu->num_work_units));
 
@@ -299,6 +327,19 @@ void *host_thread(void *ptr) {
   context = gpu->context;
   queue = gpu->queue;
   kernel = gpu->kernel;
+
+  /* Load the Markov model and create GPU buffers for the sorted tables. */
+  if (args->use_markov) {
+    if (markov_load(args->markov_path, &markov) != 0) {
+      fprintf(stderr, "Failed to load Markov model from '%s'\n", args->markov_path);
+      CLRELEASEKERNEL(gpu->kernel);
+      CLRELEASEPROGRAM(gpu->program);
+      CLRELEASEQUEUE(gpu->queue);
+      CLRELEASECONTEXT(gpu->context);
+      pthread_exit(NULL);
+      return NULL;
+    }
+  }
 
 #ifdef USE_METAL
   kernel_work_group_size = 256;
@@ -417,6 +458,11 @@ void *host_thread(void *ptr) {
       CLFREEBUFFER(is_mask_buffer);
       CLFREEBUFFER(mask_data_buffer);
       CLFREEBUFFER(mask_lens_buffer);
+      if (args->use_markov) {
+        CLFREEBUFFER(sorted_pos0_buffer);
+        CLFREEBUFFER(sorted_bigram_buffer);
+        markov_free(&markov);
+      }
 
       CLRELEASEKERNEL(gpu->kernel);
       CLRELEASEPROGRAM(gpu->program);
@@ -451,6 +497,10 @@ void *host_thread(void *ptr) {
       CLCREATEARG(10, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(11, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
       CLCREATEARG_ARRAY(12, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
+      if (args->use_markov) {
+        CLCREATEARG_ARRAY(13, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
+        CLCREATEARG_ARRAY(14, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.charset_len * markov.charset_len * sizeof(uint8_t));
+      }
     } else {
       CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
     }
@@ -636,9 +686,7 @@ int main(int ac, char **av) {
   /*setenv("HSA_ENABLE_SDMA", "0", 1);*/ /* The ROCm driver on AMD Vega 64 doesn't work without this. */
 #endif
 
-  if ((ac != 9) && (ac != 11))
-    print_usage_and_exit(av[0], -1);
-  if ((ac == 11) && (strcmp(av[9], "-gws") != 0))
+  if (ac < 9)
     print_usage_and_exit(av[0], -1);
 
   /* Read command-line arguments. */
@@ -658,9 +706,28 @@ int main(int ac, char **av) {
   } else
     part_index = (unsigned int)atoi(av[8]);
 
-  /* Manually override the global work size. */
-  if (ac == 11)
-    user_provided_gws = (unsigned int)atoi(av[10]);
+  /* Parse optional flags: -gws GWS and --markov FILE (in any order after arg 8). */
+  for (i = 9; i < ac; i++) {
+    if (strcmp(av[i], "-gws") == 0) {
+      if (i + 1 >= ac) {
+        fprintf(stderr, "-gws requires a value\n");
+        return -1;
+      }
+      i++;
+      user_provided_gws = (unsigned int)atoi(av[i]);
+    } else if (strcmp(av[i], "--markov") == 0) {
+      if (i + 1 >= ac) {
+        fprintf(stderr, "--markov requires a filename\n");
+        return -1;
+      }
+      i++;
+      strncpy(markov_path, av[i], sizeof(markov_path) - 1);
+      use_markov = 1;
+    } else {
+      fprintf(stderr, "Unknown option: %s\n", av[i]);
+      print_usage_and_exit(av[0], -1);
+    }
+  }
 
 
   /* Check that this system has sufficient RAM. */
@@ -731,6 +798,11 @@ int main(int ac, char **av) {
   if ((chain_len == 0) || (total_chains_in_table == 0)) {
     fprintf(stderr, "Chain length and chain count must both be greater than 0.\n");
     exit(-1);
+  }
+
+  if (use_markov && plaintext_len_min != plaintext_len_max) {
+    fprintf(stderr, "Error: --markov requires fixed-length plaintext (min_len must equal max_len)\n");
+    return -1;
   }
 
   /* The original rcrack didn't support chain counts >= 128M, as that would
@@ -899,6 +971,8 @@ int main(int ac, char **av) {
       memcpy(args[i].mask_charset_data, mask_charset_data, sizeof(args[i].mask_charset_data));
       memcpy(args[i].mask_charset_lens, mask_charset_lens, sizeof(args[i].mask_charset_lens));
     }
+    args[i].use_markov = use_markov;
+    strncpy(args[i].markov_path, markov_path, sizeof(args[i].markov_path) - 1);
     args[i].gpu.device_number = i;
     args[i].gpu.device = devices[i];
 
