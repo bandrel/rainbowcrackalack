@@ -93,7 +93,7 @@ int gpu_test_chain(gpu_device device, gpu_context context, gpu_kernel kernel, ch
 
   int test_passed = 0;
 
-  gpu_buffer charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, start_buffer = NULL, end_buffer = NULL, debug_buffer = NULL;
+  gpu_buffer charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, start_buffer = NULL, end_buffer = NULL, debug_buffer = NULL;
 
   unsigned char *debug_ptr = NULL;
   gpu_ulong *end_ptr = NULL;
@@ -102,14 +102,16 @@ int gpu_test_chain(gpu_device device, gpu_context context, gpu_kernel kernel, ch
 
   queue = CLCREATEQUEUE(context, device);
 
-  CLCREATEARG_ARRAY(0, charset_buffer, CL_RO, charset, strlen(charset) + 1);
-  CLCREATEARG(1, plaintext_len_min_buffer, CL_RO, plaintext_len_min, sizeof(plaintext_len_min));
-  CLCREATEARG(2, plaintext_len_max_buffer, CL_RO, plaintext_len_max, sizeof(plaintext_len_max));
-  CLCREATEARG(3, table_index_buffer, CL_RO, table_index, sizeof(table_index));
-  CLCREATEARG(4, chain_len_buffer, CL_RO, chain_len, sizeof(chain_len));
-  CLCREATEARG(5, start_buffer, CL_RO, start, sizeof(start));
-  CLCREATEARG(6, end_buffer, CL_WO, end, sizeof(end));
-  CLCREATEARG_DEBUG(7, debug_buffer, debug_ptr);
+  gpu_uint charset_len_val = strlen(charset);
+  CLCREATEARG_ARRAY(0, charset_buffer, CL_RO, charset, charset_len_val);
+  CLCREATEARG(1, charset_len_buffer, CL_RO, charset_len_val, sizeof(gpu_uint));
+  CLCREATEARG(2, plaintext_len_min_buffer, CL_RO, plaintext_len_min, sizeof(plaintext_len_min));
+  CLCREATEARG(3, plaintext_len_max_buffer, CL_RO, plaintext_len_max, sizeof(plaintext_len_max));
+  CLCREATEARG(4, table_index_buffer, CL_RO, table_index, sizeof(table_index));
+  CLCREATEARG(5, chain_len_buffer, CL_RO, chain_len, sizeof(chain_len));
+  CLCREATEARG(6, start_buffer, CL_RO, start, sizeof(start));
+  CLCREATEARG(7, end_buffer, CL_WO, end, sizeof(end));
+  CLCREATEARG_DEBUG(8, debug_buffer, debug_ptr);
 
   CLRUNKERNEL(queue, kernel, &global_work_size);
   CLFLUSH(queue);
@@ -137,6 +139,7 @@ int gpu_test_chain(gpu_device device, gpu_context context, gpu_kernel kernel, ch
   */
 
   CLFREEBUFFER(charset_buffer);
+  CLFREEBUFFER(charset_len_buffer);
   CLFREEBUFFER(plaintext_len_min_buffer);
   CLFREEBUFFER(plaintext_len_max_buffer);
   CLFREEBUFFER(table_index_buffer);

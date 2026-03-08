@@ -144,7 +144,7 @@ static int gpu_test_netntlmv1_chain(gpu_device device, gpu_context context,
     char dummy_mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN] = {0};
     gpu_uint dummy_mask_lens[MAX_PLAINTEXT_LEN] = {0};
 
-    gpu_buffer hash_type_buf = NULL, charset_buf = NULL;
+    gpu_buffer hash_type_buf = NULL, charset_buf = NULL, charset_len_buf = NULL;
     gpu_buffer len_min_buf = NULL, len_max_buf = NULL;
     gpu_buffer reduc_buf = NULL, chain_len_buf = NULL;
     gpu_buffer indices_buf = NULL, pos_start_buf = NULL;
@@ -154,22 +154,24 @@ static int gpu_test_netntlmv1_chain(gpu_device device, gpu_context context,
 
     queue = CLCREATEQUEUE(context, device);
 
+    gpu_uint charset_len_val = t->charset_len;
     CLCREATEARG(0, hash_type_buf, CL_RO, hash_type, sizeof(hash_type));
     CLCREATEARG_ARRAY(1, charset_buf, CL_RO,
-                      t->charset, t->charset_len + 1);
-    CLCREATEARG(2, len_min_buf, CL_RO, plaintext_len_min, sizeof(plaintext_len_min));
-    CLCREATEARG(3, len_max_buf, CL_RO, plaintext_len_max, sizeof(plaintext_len_max));
-    CLCREATEARG(4, reduc_buf, CL_RO, reduction_offset, sizeof(reduction_offset));
-    CLCREATEARG(5, chain_len_buf, CL_RO, chain_len, sizeof(chain_len));
-    CLCREATEARG_ARRAY(6, indices_buf, CL_RW, indices, sizeof(gpu_ulong));
-    CLCREATEARG(7, pos_start_buf, CL_RO, pos_start, sizeof(pos_start));
-    CLCREATEARG_ARRAY(8, pspace_up_to_buf, CL_RO,
+                      t->charset, t->charset_len);
+    CLCREATEARG(2, charset_len_buf, CL_RO, charset_len_val, sizeof(gpu_uint));
+    CLCREATEARG(3, len_min_buf, CL_RO, plaintext_len_min, sizeof(plaintext_len_min));
+    CLCREATEARG(4, len_max_buf, CL_RO, plaintext_len_max, sizeof(plaintext_len_max));
+    CLCREATEARG(5, reduc_buf, CL_RO, reduction_offset, sizeof(reduction_offset));
+    CLCREATEARG(6, chain_len_buf, CL_RO, chain_len, sizeof(chain_len));
+    CLCREATEARG_ARRAY(7, indices_buf, CL_RW, indices, sizeof(gpu_ulong));
+    CLCREATEARG(8, pos_start_buf, CL_RO, pos_start, sizeof(pos_start));
+    CLCREATEARG_ARRAY(9, pspace_up_to_buf, CL_RO,
                       pspace_up_to, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
-    CLCREATEARG(9, pspace_total_buf, CL_RO, pspace_total, sizeof(pspace_total));
-    CLCREATEARG(10, is_mask_buf, CL_RO, is_mask, sizeof(is_mask));
-    CLCREATEARG_ARRAY(11, mask_data_buf, CL_RO,
+    CLCREATEARG(10, pspace_total_buf, CL_RO, pspace_total, sizeof(pspace_total));
+    CLCREATEARG(11, is_mask_buf, CL_RO, is_mask, sizeof(is_mask));
+    CLCREATEARG_ARRAY(12, mask_data_buf, CL_RO,
                       dummy_mask_data, sizeof(dummy_mask_data));
-    CLCREATEARG_ARRAY(12, mask_lens_buf, CL_RO,
+    CLCREATEARG_ARRAY(13, mask_lens_buf, CL_RO,
                       dummy_mask_lens, sizeof(dummy_mask_lens));
 
     CLRUNKERNEL(queue, kernel, &global_work_size);
@@ -190,6 +192,7 @@ static int gpu_test_netntlmv1_chain(gpu_device device, gpu_context context,
 
     CLFREEBUFFER(hash_type_buf);
     CLFREEBUFFER(charset_buf);
+    CLFREEBUFFER(charset_len_buf);
     CLFREEBUFFER(len_min_buf);
     CLFREEBUFFER(len_max_buf);
     CLFREEBUFFER(reduc_buf);
