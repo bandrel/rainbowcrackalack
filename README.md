@@ -103,7 +103,7 @@ Given full generation parameters, `crackalack_plan estimate` prints file size an
 
 #### Training a Markov model from a wordlist
 
-    # ./crackalack_plan train ntlm rockyou.txt ascii-32-95 ntlm_rockyou.markov
+    # ./crackalack_plan train rockyou.txt
 
 Recommended minimum wordlist size: **1M passwords**. The bigram model has 95x95 = 9,025 transition parameters; ~1M real training words provide reliable estimates for all common bigrams.
 
