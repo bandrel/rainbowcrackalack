@@ -32,6 +32,7 @@
 #include <sys/stat.h>
 
 #include "gpu_backend.h"
+#include "sort_utils.h"
 #include "terminal_color.h"
 #include "version.h"
 
@@ -75,8 +76,6 @@ static int get_cpu_cores(void) {
 static int compute_sort_jobs(int num_files, char **files) {
   uint64_t free_ram = get_free_ram();
   uint64_t max_file_size = 0;
-  int cpu_cores = get_cpu_cores();
-  int jobs;
   int i;
   struct stat st;
 
@@ -85,14 +84,8 @@ static int compute_sort_jobs(int num_files, char **files) {
       max_file_size = (uint64_t)st.st_size;
   }
 
-  if (max_file_size == 0 || free_ram == 0)
-    return 1;
-
-  jobs = (int)((free_ram * 8 / 10) / max_file_size);
-  if (jobs > cpu_cores) jobs = cpu_cores;
-  if (jobs > num_files) jobs = num_files;
-  if (jobs < 1)         jobs = 1;
-  return jobs;
+  return compute_sort_jobs_from_params(free_ram, max_file_size,
+                                       get_cpu_cores(), num_files);
 }
 
 
@@ -236,20 +229,10 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex) {
   f = NULL;
 
   /* Skip if already sorted. */
-  {
-    unsigned int j;
-    int already_sorted = 1;
-    for (j = 0; j + 1 < num_chains; j++) {
-      if (data[j * 2 + 1] > data[(j + 1) * 2 + 1]) {
-        already_sorted = 0;
-        break;
-      }
-    }
-    if (already_sorted) {
-      printf("Skipping %s (already sorted).\n", filename);
-      ret = 0;
-      goto done;
-    }
+  if (is_sorted_rt(data, num_chains)) {
+    printf("Skipping %s (already sorted).\n", filename);
+    ret = 0;
+    goto done;
   }
 
   printf("Sorting %s (%u chains)... ", filename, num_chains);
