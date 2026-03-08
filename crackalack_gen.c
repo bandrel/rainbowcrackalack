@@ -82,6 +82,7 @@ struct hash_names {
 };
 struct hash_names valid_hash_names[] = {
   {"lm", HASH_LM},
+  {"md5", HASH_MD5},
   {"netntlmv1", HASH_NETNTLMV1},
   {"ntlm", HASH_NTLM},
 };
