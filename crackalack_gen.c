@@ -431,7 +431,7 @@ void *host_thread(void *ptr) {
 
     /* Most of the parameters need only be set once upon first invokation. */
     if (hash_type_buffer == NULL) {
-      uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN] = {0};
+      uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
       gpu_ulong pspace_total;
       if (args->is_mask)
         pspace_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, pspace_up_to_index);
@@ -807,7 +807,7 @@ int main(int ac, char **av) {
     }
     rc_fclose(f);
   } else {  /* This is a new table. */
-    uint64_t plaintext_space_up_to_index[16] = {0};
+    uint64_t plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
 
 
     start_index = first_generated_chain = total_chains_in_table * part_index;
