@@ -355,6 +355,7 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
   }
   int charset_len = 0;
   if (args->is_mask) {
+    charset_len = 1; /* Metal requires non-zero buffer size; charset unused when is_mask=1 */
     plaintext_space_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, plaintext_space_up_to_index);
   } else {
     if (strcmp(args->charset_name, "byte") == 0) {
@@ -466,6 +467,10 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
         }
 
       	/* Its official: we cracked a hash! */
+
+        /* Skip if this ppi was already cracked by a previous match in this loop. */
+        if (ppi_refs[j]->plaintext != NULL)
+          continue;
 
       	/* Save the plaintext, clear the precomputed end indices list (since its
       	 * no longer useful, save the hash/plaintext combo into the pot file, and
@@ -717,6 +722,7 @@ void *host_thread_false_alarm(void *ptr) {
   /*gpu_ulong debug_ulong[128] = {0};*/
   int charset_len = 0;
   if (args->is_mask) {
+    charset_len = 1; /* Metal requires non-zero buffer size; charset unused when is_mask=1 */
     plaintext_space_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, plaintext_space_up_to_index);
   } else {
     if (strcmp(args->charset_name, "byte") == 0) {
@@ -1006,7 +1012,7 @@ void *host_thread_precompute(void *ptr) {
 
   int charset_len = 0;
   if (args->is_mask) {
-    charset_len = 0;
+    charset_len = 1; /* Metal requires non-zero buffer size; charset unused when is_mask=1 */
   } else if (strcmp(args->charset_name, "byte") == 0) {
     charset_len = 256;
   } else {
