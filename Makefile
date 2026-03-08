@@ -152,6 +152,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_chain_netntlmv1.o \
 	$(OBJDIR)/test_chain_ntlm9.o \
 	$(OBJDIR)/test_hash.o \
+	$(OBJDIR)/test_hash_md5.o \
 	$(OBJDIR)/test_hash_netntlmv1.o \
 	$(OBJDIR)/test_hash_ntlm9.o \
 	$(OBJDIR)/test_hash_to_index.o \
