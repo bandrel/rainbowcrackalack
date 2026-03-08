@@ -4,7 +4,7 @@ Author: [Joe Testa](https://www.positronsecurity.com/company/) ([@therealjoetest
 
 ## About
 
-This project produces open-source code to generate rainbow tables as well as use them to look up password hashes.  While the current release only supports NTLM, future releases may support MD5, SHA-1, SHA-256, and possibly more.  Both Linux and Windows are supported!
+This project produces open-source code to generate rainbow tables as well as use them to look up password hashes.  While the current release only supports NTLM, future releases may support MD5, SHA-1, SHA-256, and possibly more.  Linux, Windows, and macOS (Apple Silicon) are supported!
 
 For more information, see the project website: [https://www.rainbowcrackalack.com/](https://www.rainbowcrackalack.com/)
 
@@ -144,6 +144,16 @@ The NVIDIA GTX & RTX lines of GPU hardware has been well-tested with the Rainbow
 
 However, other modern equipment can work just fine, so you don't necessarily need to purchase something new.  The NVIDIA GTX and AMD Vega product lines are still quite useful for cracking!
 
+## macOS Build (Apple Silicon)
+
+Install prerequisites:
+
+    # brew install libgcrypt
+
+Then build:
+
+    # make clean; make macos
+
 ## Windows Build
 
 A 64-bit Windows build can be achieved on an Ubuntu host machine by installing the following prerequisites:
@@ -169,6 +179,13 @@ Then starting the build with:
     # make clean; make linux
 
 ## Change Log
+### v1.4
+ - Added macOS Apple Silicon support via Metal GPU backend.
+ - Added `crackalack_sort` tool for sorting tables by end index before lookup, with parallel multi-file sorting and automatic worker-count tuning.
+ - Added mask charset support (`?l`, `?u`, `?d`, `?s`, `?a`, `?b`, custom positions) compatible with hashcat mask syntax.
+ - Added `crackalack_plan` tool with `estimate`, `recommend`, and `train` subcommands.
+ - Added Markov model support: `--markov <file>` flag on both `crackalack_gen` and `crackalack_lookup` for probability-biased table generation and lookup.
+
 ### v1.3 (February 26, 2021)
  - Improved speed of NTLM9 precomputation by 9.5x and false alarm checks by 4.5x!
  - Fixed lookup on AMD ROCm.
