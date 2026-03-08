@@ -14,7 +14,7 @@
  */
 inline void index_to_plaintext_markov(
     unsigned long index,
-    __constant char *charset,
+    const char *charset,
     unsigned int charset_len,
     unsigned int plaintext_len,
     __constant unsigned char *sorted_pos0,
@@ -25,19 +25,12 @@ inline void index_to_plaintext_markov(
     unsigned int charset_idx = sorted_pos0[index % charset_len];
     plaintext[0] = charset[charset_idx];
     index /= charset_len;
+    unsigned int prev_charset_idx = charset_idx;
 
     for (unsigned int i = 1; i < plaintext_len; i++) {
-        /* Determine the charset index of the previous character. */
-        unsigned int prev_charset_idx = 0;
-        for (unsigned int j = 0; j < charset_len; j++) {
-            if (charset[j] == plaintext[i - 1]) {
-                prev_charset_idx = j;
-                break;
-            }
-        }
-
         charset_idx = sorted_bigram[prev_charset_idx * charset_len + (index % charset_len)];
         plaintext[i] = charset[charset_idx];
         index /= charset_len;
+        prev_charset_idx = charset_idx;
     }
 }

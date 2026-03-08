@@ -20,6 +20,10 @@ __kernel void crackalack_markov(
     __constant unsigned char *g_sorted_pos0,
     __constant unsigned char *g_sorted_bigram)
 {
+  /* Markov generation uses fixed-length plaintexts (plaintext_len_min == plaintext_len_max,
+   * enforced by the host). g_plaintext_len_min, g_plaintext_space_up_to_index, g_is_mask,
+   * g_mask_charset_data, and g_mask_charset_lens are accepted for ABI compatibility with
+   * crackalack.cl but are not used here. */
     unsigned int hash_type = *g_hash_type;
     char charset[MAX_CHARSET_LEN];
     unsigned int plaintext_len_max = *g_plaintext_len_max;
@@ -45,7 +49,7 @@ __kernel void crackalack_markov(
      * used directly.
      */
     for (; pos < chain_len - 1; pos++) {
-        index_to_plaintext_markov(index, (__constant char *)charset, charset_len,
+        index_to_plaintext_markov(index, charset, charset_len,
                                   plaintext_len_max,
                                   g_sorted_pos0, g_sorted_bigram,
                                   plaintext);
