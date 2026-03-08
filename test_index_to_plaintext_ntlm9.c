@@ -65,7 +65,7 @@ int gpu_test_index_to_plaintext_ntlm9(gpu_device device, gpu_context context, gp
   if (strcmp(expected_plaintext, (char *)plaintext) == 0)
     test_passed = 1;
   else {
-    printf("\n\nGPU error:\n\tIndex: %"PRIu64"\n\tExpected: [%"PRIu64"][%s]\n\tCalculated: [%s]\n\n", index, strlen(expected_plaintext), expected_plaintext, plaintext);
+    printf("\n\nGPU error:\n\tIndex: %"PRIu64"\n\tExpected: [%"PRIu64"][%s]\n\tCalculated: [%s]\n\n", index, (uint64_t)strlen(expected_plaintext), expected_plaintext, plaintext);
   }
 
   CLFREEBUFFER(index_buffer);

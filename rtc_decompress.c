@@ -62,7 +62,7 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, unsigned i
   /*printf("Total chains in table: %u\n", total_chains_in_table);*/
   uncompressed_table = calloc(num_chains, sizeof(uint64_t) * 2);
   if (uncompressed_table == NULL) {
-    fprintf(stderr, "Error: could not allocate %"PRIu64" bytes in memory for uncompressed table.\n", num_chains * sizeof(uint64_t) * 2);
+    fprintf(stderr, "Error: could not allocate %"PRIu64" bytes in memory for uncompressed table.\n", (uint64_t)(num_chains * sizeof(uint64_t) * 2));
     ret = -2;
     goto done;
   }
