@@ -158,6 +158,8 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_hash_to_index_ntlm9.o \
 	$(OBJDIR)/test_index_to_plaintext.o \
 	$(OBJDIR)/test_index_to_plaintext_ntlm9.o \
+	$(OBJDIR)/markov.o \
+	$(OBJDIR)/test_markov.o \
 	$(OBJDIR)/test_mask.o \
 	$(OBJDIR)/test_misc.o \
 	$(OBJDIR)/test_sort.o \
