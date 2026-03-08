@@ -29,8 +29,7 @@ kernel void test_index_to_plaintext(
   unsigned int plaintext_len = *g_plaintext_len;
   unsigned int is_mask = *g_is_mask;
 
-  unsigned int charset_len = *g_charset_len;
-  g_memcpy((thread unsigned char *)charset, (device unsigned char *)g_charset, charset_len);
+  unsigned int charset_len = g_strncpy(charset, g_charset, sizeof(charset));
 
   fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
 

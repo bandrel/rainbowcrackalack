@@ -3,7 +3,6 @@
 
 __kernel void test_chain(
     __global char *g_charset,
-    __global unsigned int *g_charset_len,
     __global unsigned int *g_plaintext_len_min,
     __global unsigned int *g_plaintext_len_max,
     __global unsigned int *g_table_index,
@@ -19,8 +18,8 @@ __kernel void test_chain(
   unsigned int chain_len = *g_chain_len;
   unsigned long start = *g_start;
 
-  unsigned int charset_len = *g_charset_len;
-  g_memcpy((unsigned char *)charset, (unsigned char __global *)g_charset, charset_len);
+  g_strncpy(charset, g_charset, sizeof(charset));
+  unsigned int charset_len = strlen(charset);
   unsigned long plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
   unsigned char plaintext[MAX_PLAINTEXT_LEN];
   unsigned int plaintext_len = 0;
