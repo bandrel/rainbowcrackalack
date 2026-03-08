@@ -50,7 +50,6 @@
 #define CRACKALACK_KERNEL_PATH "crackalack.cl"
 #define CRACKALACK_NTLM8_KERNEL_PATH "crackalack_ntlm8.cl"
 #define CRACKALACK_NTLM9_KERNEL_PATH "crackalack_ntlm9.cl"
-#define CRACKALACK_NETNTLMV1_KERNEL_PATH "crackalack_netntlmv1.cl"
 
 #define VERBOSE 1
 
