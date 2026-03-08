@@ -281,22 +281,28 @@ static int cmd_recommend(int argc, char **argv) {
 }
 
 static int cmd_train(int argc, char **argv) {
-    if (argc < 4) {
-        fprintf(stderr,
-                "Usage: crackalack_plan train <hash> <wordlist> "
-                "<charset_name> <output.markov>\n");
+    if (argc < 1) {
+        fprintf(stderr, "Usage: crackalack_plan train <wordlist>\n");
         return 1;
     }
 
-    /* argv[0]=hash (informational), argv[1]=wordlist, argv[2]=charset,
-     * argv[3]=output path */
-    const char *wordlist_path  = argv[1];
-    const char *charset_name   = argv[2];
-    const char *output_path    = argv[3];
+    const char *wordlist_path = argv[0];
 
-    char *charset_string = validate_charset((char *)charset_name);
+    const char *base = strrchr(wordlist_path, '/');
+    base = base ? base + 1 : wordlist_path;
+
+    char output_path[256];
+    const char *dot = strrchr(base, '.');
+    if (dot && dot != base) {
+        snprintf(output_path, sizeof(output_path), "%.*s.markov",
+                 (int)(dot - base), base);
+    } else {
+        snprintf(output_path, sizeof(output_path), "%s.markov", base);
+    }
+
+    char *charset_string = validate_charset("ascii-32-95");
     if (charset_string == NULL) {
-        fprintf(stderr, "Error: unknown charset '%s'.\n", charset_name);
+        fprintf(stderr, "Error: built-in charset 'ascii-32-95' not found.\n");
         return 1;
     }
 
@@ -327,7 +333,7 @@ static void print_usage(void) {
             "<chain_len> <num_chains>\n"
             "  recommend <hash> <charset_or_mask> <min_len> <max_len> "
             "<target_pct>\n"
-            "  train <hash> <wordlist> <charset_name> <output.markov>\n");
+            "  train <wordlist>\n");
 }
 
 int main(int argc, char **argv) {
