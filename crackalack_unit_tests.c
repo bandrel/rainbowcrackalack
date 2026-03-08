@@ -37,6 +37,7 @@
 #include "test_index_to_plaintext_ntlm9.h"
 #include "test_mask.h"
 #include "test_misc.h"
+#include "test_sort.h"
 #include "version.h"
 
 
@@ -128,6 +129,16 @@ int main(int ac, char **av) {
   /* Mask tests (CPU-only, no kernel needed). */
   printf("Running mask tests... "); fflush(stdout);
   if (!test_mask()) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+
+  /* Sort utility tests (CPU-only, no kernel needed). */
+  printf("Running sort utility tests... "); fflush(stdout);
+  if (!test_sort()) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();

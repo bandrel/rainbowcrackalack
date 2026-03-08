@@ -158,9 +158,11 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_index_to_plaintext_ntlm9.o \
 	$(OBJDIR)/test_mask.o \
 	$(OBJDIR)/test_misc.o \
+	$(OBJDIR)/test_sort.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/rtc_decompress.o \
+	$(OBJDIR)/sort_utils.o \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
@@ -217,6 +219,7 @@ $(OUTDIR)/$(SORT_PROG): \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
+	$(OBJDIR)/sort_utils.o \
 	$(GPU_BACKEND_OBJ)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
