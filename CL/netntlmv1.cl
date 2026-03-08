@@ -3066,7 +3066,7 @@ inline void des_ecb_setkey(uint32_t SK[32], const uchar key[DES_KEY_SIZE])
   }
 }
 
-inline void des_ecb_setkey_56(uint32_t SK[32], generic unsigned char _key[DES_KEY_SIZE - 1]) {
+inline void des_ecb_setkey_56(uint32_t SK[32], unsigned char _key[DES_KEY_SIZE - 1]) {
   uchar key[DES_KEY_SIZE];
 
   
