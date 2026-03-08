@@ -146,14 +146,18 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/test_chain.o \
+	$(OBJDIR)/test_chain_netntlmv1.o \
 	$(OBJDIR)/test_chain_ntlm9.o \
 	$(OBJDIR)/test_hash.o \
+	$(OBJDIR)/test_hash_netntlmv1.o \
 	$(OBJDIR)/test_hash_ntlm9.o \
 	$(OBJDIR)/test_hash_to_index.o \
+	$(OBJDIR)/test_hash_to_index_netntlmv1.o \
 	$(OBJDIR)/test_hash_to_index_ntlm9.o \
 	$(OBJDIR)/test_index_to_plaintext.o \
 	$(OBJDIR)/test_index_to_plaintext_ntlm9.o \
 	$(OBJDIR)/test_mask.o \
+	$(OBJDIR)/test_misc.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/rtc_decompress.o \
