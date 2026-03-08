@@ -172,10 +172,13 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     }
   }
 
-  if (is_mask)
+  unsigned int charset_len = 0;
+  if (is_mask) {
     plaintext_space_total = fill_plaintext_space_table_mask(mask_charset_lens, rt_params.plaintext_len_max, plaintext_space_up_to_index);
-  else
-    plaintext_space_total = fill_plaintext_space_table(strlen(charset), rt_params.plaintext_len_min, rt_params.plaintext_len_max, plaintext_space_up_to_index);
+  } else {
+    charset_len = (strcmp(rt_params.charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(charset);
+    plaintext_space_total = fill_plaintext_space_table(charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, plaintext_space_up_to_index);
+  }
 
   expected_start = (uint64_t)rt_params.num_chains * (uint64_t)rt_params.table_part;
 
@@ -249,7 +252,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
       rc_fread(&actual_end, sizeof(uint64_t), 1, f);
 
       /* Compute the expected end point. */
-      computed_end = generate_rainbow_chain(rt_params.hash_type, charset, strlen(charset), rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
+      computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
 
       /* Ensure that the end point in the file matches what we just computed. */
       if (actual_end != computed_end) {
@@ -332,7 +335,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 	start = rainbow_table[random_chain * 2];
 	actual_end = rainbow_table[(random_chain * 2) + 1];
 
-	computed_end = generate_rainbow_chain(rt_params.hash_type, charset, strlen(charset), rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
+	computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
 
 	if (actual_end != computed_end) {
           _print_chain_error(random_chain, start, actual_end, computed_end);

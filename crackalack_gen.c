@@ -264,7 +264,7 @@ void *host_thread(void *ptr) {
   gpu_queue queue = NULL;
   gpu_kernel kernel = NULL;
 
-  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
+  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
   gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
 
   gpu_uint pos_start = 0;
@@ -448,6 +448,7 @@ void *host_thread(void *ptr) {
 
       CLFREEBUFFER(hash_type_buffer);
       CLFREEBUFFER(charset_buffer);
+      CLFREEBUFFER(charset_len_buffer);
       CLFREEBUFFER(plaintext_len_min_buffer);
       CLFREEBUFFER(plaintext_len_max_buffer);
       CLFREEBUFFER(reduction_offset_buffer);
@@ -486,21 +487,22 @@ void *host_thread(void *ptr) {
         pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
 
       CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
-      CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_len + 1);
-      CLCREATEARG(2, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
-      CLCREATEARG(3, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
-      CLCREATEARG(4, reduction_offset_buffer, CL_RO, args->reduction_offset, sizeof(gpu_uint));
-      CLCREATEARG(5, chain_len_buffer, CL_RO, args->chain_len, sizeof(gpu_uint));
-      CLCREATEARG_ARRAY(6, indices_buffer, CL_RW, start_indices, indices_size * sizeof(gpu_ulong));
-      CLCREATEARG(7, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
-      CLCREATEARG_ARRAY(8, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
-      CLCREATEARG(9, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
-      CLCREATEARG(10, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
-      CLCREATEARG_ARRAY(11, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
-      CLCREATEARG_ARRAY(12, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
+      CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_len);
+      CLCREATEARG(2, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
+      CLCREATEARG(3, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
+      CLCREATEARG(4, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
+      CLCREATEARG(5, reduction_offset_buffer, CL_RO, args->reduction_offset, sizeof(gpu_uint));
+      CLCREATEARG(6, chain_len_buffer, CL_RO, args->chain_len, sizeof(gpu_uint));
+      CLCREATEARG_ARRAY(7, indices_buffer, CL_RW, start_indices, indices_size * sizeof(gpu_ulong));
+      CLCREATEARG(8, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
+      CLCREATEARG_ARRAY(9, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
+      CLCREATEARG(10, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
+      CLCREATEARG(11, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
+      CLCREATEARG_ARRAY(12, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
+      CLCREATEARG_ARRAY(13, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
       if (args->use_markov) {
-        CLCREATEARG_ARRAY(13, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
-        CLCREATEARG_ARRAY(14, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.charset_len * markov.charset_len * sizeof(uint8_t));
+        CLCREATEARG_ARRAY(14, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
+        CLCREATEARG_ARRAY(15, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.charset_len * markov.charset_len * sizeof(uint8_t));
       }
     } else {
       CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
@@ -939,7 +941,7 @@ int main(int ac, char **av) {
   }
 
   /* Print info about how we're generating the table. */
-  printf("Output file:\t\t%s\nHash algorithm:\t\t%s\nCharset name:\t\t%s\nCharset:\t\t%s\nCharset length:\t\t%"PRIu64"\nPlaintext length range: %u - %u\nReduction offset:\t0x%x\nChain length:\t\t%u\nNumber of chains:\t%u\nPart index:\t\t%"PRIu64"\n\n", filename, hash_name, charset_name, charset, (uint64_t)strlen(charset), plaintext_len_min, plaintext_len_max, TABLE_INDEX_TO_REDUCTION_OFFSET(table_index), chain_len, total_chains_in_table, part_index);
+  printf("Output file:\t\t%s\nHash algorithm:\t\t%s\nCharset name:\t\t%s\nCharset:\t\t%s\nCharset length:\t\t%u\nPlaintext length range: %u - %u\nReduction offset:\t0x%x\nChain length:\t\t%u\nNumber of chains:\t%u\nPart index:\t\t%"PRIu64"\n\n", filename, hash_name, charset_name, charset, charset_len, plaintext_len_min, plaintext_len_max, TABLE_INDEX_TO_REDUCTION_OFFSET(table_index), chain_len, total_chains_in_table, part_index);
 
   /* If we found a file to append to, tell the user what's happening. */
   if (resuming_table)

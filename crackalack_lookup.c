@@ -382,7 +382,7 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
     if (strcmp(args->charset_name, "byte") == 0) {
       charset_len = 256;
     } else {
-      charset_len = strlen(args->charset) + 1;
+      charset_len = strlen(args->charset);
     }
     plaintext_space_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
   }
@@ -733,7 +733,7 @@ void *host_thread_false_alarm(void *ptr) {
   int err = 0;
   char *kernel_path = FALSE_ALARM_KERNEL_PATH, *kernel_name = "false_alarm_check";
 
-  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
+  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
   gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
   /*gpu_buffer debug_ulong_buffer = NULL;*/
 
@@ -753,7 +753,7 @@ void *host_thread_false_alarm(void *ptr) {
     if (strcmp(args->charset_name, "byte") == 0) {
       charset_len = 256;
     } else {
-      charset_len = strlen(args->charset) + 1;
+      charset_len = strlen(args->charset);
     }
     plaintext_space_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
   }
@@ -865,30 +865,31 @@ void *host_thread_false_alarm(void *ptr) {
 
   CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_len);
-  CLCREATEARG(2, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
-  CLCREATEARG(3, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
-  CLCREATEARG(4, reduction_offset_buffer, CL_RO, args->reduction_offset, sizeof(gpu_uint));
-  CLCREATEARG(5, plaintext_space_total_buffer, CL_RO, plaintext_space_total, sizeof(gpu_ulong));
-  CLCREATEARG_ARRAY(6, plaintext_space_up_to_index_buffer, CL_RO, plaintext_space_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
-  CLCREATEARG(7, device_num_buffer, CL_RO, gpu->device_number, sizeof(gpu_uint));
-  CLCREATEARG(8, total_devices_buffer, CL_RO, args->total_devices, sizeof(gpu_uint));
-  CLCREATEARG(9, num_start_indices_buffer, CL_RO, num_start_indices, sizeof(gpu_uint));
-  CLCREATEARG_ARRAY(10, start_indices_buffer, CL_RO, start_indices, num_start_indices * sizeof(gpu_ulong));
-  CLCREATEARG_ARRAY(11, start_index_positions_buffer, CL_RO, start_index_positions, num_start_index_positions * sizeof(unsigned int));
-  CLCREATEARG_ARRAY(12, hash_base_indices_buffer, CL_RO, hash_base_indices, num_hash_base_indices * sizeof(gpu_ulong));
-  CLCREATEARG_ARRAY(14, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
-  CLCREATEARG(15, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
-  CLCREATEARG_ARRAY(16, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
-  CLCREATEARG_ARRAY(17, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
+  CLCREATEARG(2, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
+  CLCREATEARG(3, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
+  CLCREATEARG(4, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
+  CLCREATEARG(5, reduction_offset_buffer, CL_RO, args->reduction_offset, sizeof(gpu_uint));
+  CLCREATEARG(6, plaintext_space_total_buffer, CL_RO, plaintext_space_total, sizeof(gpu_ulong));
+  CLCREATEARG_ARRAY(7, plaintext_space_up_to_index_buffer, CL_RO, plaintext_space_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
+  CLCREATEARG(8, device_num_buffer, CL_RO, gpu->device_number, sizeof(gpu_uint));
+  CLCREATEARG(9, total_devices_buffer, CL_RO, args->total_devices, sizeof(gpu_uint));
+  CLCREATEARG(10, num_start_indices_buffer, CL_RO, num_start_indices, sizeof(gpu_uint));
+  CLCREATEARG_ARRAY(11, start_indices_buffer, CL_RO, start_indices, num_start_indices * sizeof(gpu_ulong));
+  CLCREATEARG_ARRAY(12, start_index_positions_buffer, CL_RO, start_index_positions, num_start_index_positions * sizeof(unsigned int));
+  CLCREATEARG_ARRAY(13, hash_base_indices_buffer, CL_RO, hash_base_indices, num_hash_base_indices * sizeof(gpu_ulong));
+  CLCREATEARG_ARRAY(15, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
+  CLCREATEARG(16, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
+  CLCREATEARG_ARRAY(17, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
+  CLCREATEARG_ARRAY(18, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
   if (args->use_markov) {
-    CLCREATEARG_ARRAY(18, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
-    CLCREATEARG_ARRAY(19, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
+    CLCREATEARG_ARRAY(19, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
+    CLCREATEARG_ARRAY(20, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
   }
 
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
     unsigned int exec_block_scaler = exec_block * gws;
 
-    CLCREATEARG(13, exec_block_scaler_buffer, CL_RO, exec_block_scaler, sizeof(gpu_uint));
+    CLCREATEARG(14, exec_block_scaler_buffer, CL_RO, exec_block_scaler, sizeof(gpu_uint));
 
     if (is_amd_gpu) {
       int barrier_ret = pthread_barrier_wait(&barrier);
@@ -961,7 +962,7 @@ void *host_thread_precompute(void *ptr) {
   int err = 0;
   char *kernel_path = PRECOMPUTE_KERNEL_PATH, *kernel_name = "precompute";
 
-  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL, sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL/*, debug_buffer = NULL*/;
+  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL, sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL/*, debug_buffer = NULL*/;
 
   size_t gws = 0;
   gpu_ulong *output = NULL, *output_block = NULL;
@@ -1063,7 +1064,7 @@ void *host_thread_precompute(void *ptr) {
   } else if (strcmp(args->charset_name, "byte") == 0) {
     charset_len = 256;
   } else {
-    charset_len = strlen(args->charset) + 1;
+    charset_len = strlen(args->charset);
   }
 
 
@@ -1071,13 +1072,14 @@ void *host_thread_precompute(void *ptr) {
   CLCREATEARG_ARRAY(1, hash_buffer, CL_RO, hash_binary, hash_binary_len);
   CLCREATEARG(2, hash_len_buffer, CL_RO, hash_binary_len, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(3, charset_buffer, CL_RO, args->charset, charset_len);
-  CLCREATEARG(4, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
-  CLCREATEARG(5, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
-  CLCREATEARG(6, table_index_buffer, CL_RO, args->table_index, sizeof(gpu_uint));
-  CLCREATEARG(7, chain_len_buffer, CL_RO, args->chain_len, sizeof(gpu_ulong));
-  CLCREATEARG(8, device_num_buffer, CL_RO, gpu->device_number, sizeof(gpu_uint));
-  CLCREATEARG(9, total_devices_buffer, CL_RO, args->total_devices, sizeof(gpu_uint));
-  CLCREATEARG_ARRAY(11, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
+  CLCREATEARG(4, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
+  CLCREATEARG(5, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
+  CLCREATEARG(6, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
+  CLCREATEARG(7, table_index_buffer, CL_RO, args->table_index, sizeof(gpu_uint));
+  CLCREATEARG(8, chain_len_buffer, CL_RO, args->chain_len, sizeof(gpu_ulong));
+  CLCREATEARG(9, device_num_buffer, CL_RO, gpu->device_number, sizeof(gpu_uint));
+  CLCREATEARG(10, total_devices_buffer, CL_RO, args->total_devices, sizeof(gpu_uint));
+  CLCREATEARG_ARRAY(12, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
 
   {
     uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
@@ -1085,17 +1087,16 @@ void *host_thread_precompute(void *ptr) {
     if (args->is_mask)
       pspace_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, pspace_up_to_index);
     else {
-      unsigned int actual_charset_len = (strcmp(args->charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(args->charset);
-      pspace_total = fill_plaintext_space_table(actual_charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
+      pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
     }
-    CLCREATEARG_ARRAY(12, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
-    CLCREATEARG(13, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
-    CLCREATEARG(14, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
-    CLCREATEARG_ARRAY(15, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
-    CLCREATEARG_ARRAY(16, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
+    CLCREATEARG_ARRAY(13, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
+    CLCREATEARG(14, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
+    CLCREATEARG(15, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
+    CLCREATEARG_ARRAY(16, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
+    CLCREATEARG_ARRAY(17, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
     if (args->use_markov) {
-      CLCREATEARG_ARRAY(17, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
-      CLCREATEARG_ARRAY(18, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
+      CLCREATEARG_ARRAY(18, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
+      CLCREATEARG_ARRAY(19, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
     }
   }
 
@@ -1103,7 +1104,7 @@ void *host_thread_precompute(void *ptr) {
     unsigned int exec_block_scaler = exec_block * gws;
 
 
-    CLCREATEARG(10, exec_block_scaler_buffer, CL_RO, exec_block_scaler, sizeof(gpu_uint));
+    CLCREATEARG(11, exec_block_scaler_buffer, CL_RO, exec_block_scaler, sizeof(gpu_uint));
 
     if (is_amd_gpu) {
       int barrier_ret = pthread_barrier_wait(&barrier);
