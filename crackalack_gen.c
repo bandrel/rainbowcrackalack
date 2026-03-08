@@ -830,7 +830,7 @@ int main(int ac, char **av) {
 
   /* If the file size implies that it is already complete, run the verifier on it. */
   if (file_size == (total_chains_in_table * CHAIN_SIZE)) {
-    if (verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, -1)) {
+    if (verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1)) {
       /* The table is complete, so tell the user and exit. */
       printf("Table in \"%s\" already appears to be complete.  Terminating...\n", filename);
       exit(0);
@@ -852,7 +852,7 @@ int main(int ac, char **av) {
   if (file_size > 0) {
     printf("\n  !! WARNING !!\n\nIt appears that the output table is partially generated.  An attempt to resume generation will be made, but know that this is experimental and may end up failing after hours of work.  A near-future release will further refine this feature.\n\n"); fflush(stdout);
 
-    verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, -1);
+    verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1);
 
     /* fopen()'s modes are weird.  Its easier to just re-open the file for reading
      * at this point, rather than change the code above and re-use the open handle. */
@@ -1038,7 +1038,7 @@ int main(int ac, char **av) {
     /* Verify that the new table is valid. */
     printf("Now verifying rainbow table... ");
     fflush(stdout);
-    if (!verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, -1)) {
+    if (!verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1)) {
       char log_filename[256] = {0};
 
       get_rt_log_filename(log_filename, sizeof(log_filename), filename);
