@@ -51,6 +51,29 @@ The arguments are designed to be comparable to those of the original (and now cl
 |67108864    |The number of chains per table (= 64M)|
 |0 |The table part index.  Keep all other args the same, and increment this field to generate a single set of tables.|
 
+#### Generating tables with mask charsets
+
+In addition to named charsets (e.g. `ascii-32-95`), `crackalack_gen` accepts hashcat-style mask strings that define a per-position character set:
+
+| Specifier | Characters |
+|-----------|------------|
+| `?l` | a-z (26) |
+| `?u` | A-Z (26) |
+| `?d` | 0-9 (10) |
+| `?s` | printable non-alphanumeric ASCII: ` !"#$%&'()*+,-./:;<=>?@[\]^_{|}~` (33) |
+| `?a` | `?l + ?u + ?d + ?s` (95) |
+| `?b` | all 256 byte values |
+
+Literal characters are also supported (e.g. `P?d?d?d` covers P000-P999).
+
+Example - generate a table covering all 4-character passwords matching `[A-Z][a-z][0-9][symbol]`:
+
+    # ./crackalack_gen ntlm '?u?l?d?s' 4 4 0 10000 223080 0
+
+**Note:** mask characters (`?`) are stored as `%` in the output filename to keep filenames shell-safe (e.g. `?u?l?d?s` → `ntlm_%u%l%d%s#4-4_...`).
+
+**Note:** `crackalack_verify -q` (quick mode) skips CPU chain verification for mask tables.
+
 #### Table lookups against NTLM 8-character hashes
 
 The following command shows how to look up a file of NTLM hashes (one per line) against the NTLM 8-character tables:
