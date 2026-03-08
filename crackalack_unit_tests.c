@@ -50,7 +50,6 @@ int main(int ac, char **av) {
   gpu_context context;
   gpu_program program;
   gpu_kernel kernel;
-  int err = 0;
   gpu_uint num_platforms = 0, num_devices = 0;
 
   int ret = 0;
@@ -72,10 +71,13 @@ int main(int ac, char **av) {
     exit(-1);
   }
 #else
-  context = rc_clCreateContext(NULL, num_devices, devices, context_callback, NULL, &err);
-  if (err < 0) {
-    fprintf(stderr, "Failed to create context: %d\n", err);
-    exit(-1);
+  {
+    int err = 0;
+    context = rc_clCreateContext(NULL, num_devices, devices, context_callback, NULL, &err);
+    if (err < 0) {
+      fprintf(stderr, "Failed to create context: %d\n", err);
+      exit(-1);
+    }
   }
 #endif
 

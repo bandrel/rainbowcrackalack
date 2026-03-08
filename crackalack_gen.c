@@ -320,13 +320,13 @@ void *host_thread(void *ptr) {
    * use the driver's work group size multiplied by the preferred multiple. */
   if (user_provided_gws > 0) {
     gws = user_provided_gws;
-    printf("GPU #%u is using user-provided GWS value of %"PRIu64"\n", gpu->device_number, gws);
+    printf("GPU #%u is using user-provided GWS value of %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
   } else if (get_optimal_gws(gpu->device) > 0) {
     gws = get_optimal_gws(gpu->device);
-    printf("GPU #%u is using optimized GWS: %"PRIu64"\n", gpu->device_number, gws);
+    printf("GPU #%u is using optimized GWS: %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
   } else {
     gws = kernel_work_group_size * kernel_preferred_work_group_size_multiple;
-    printf("GPU #%u is using dynamic GWS: %"PRIu64" (work group) x %"PRIu64" (pref. multiple) = %"PRIu64"\n", gpu->device_number, kernel_work_group_size, kernel_preferred_work_group_size_multiple, gws);
+    printf("GPU #%u is using dynamic GWS: %"PRIu64" (work group) x %"PRIu64" (pref. multiple) = %"PRIu64"\n", gpu->device_number, (uint64_t)kernel_work_group_size, (uint64_t)kernel_preferred_work_group_size_multiple, (uint64_t)gws);
   }
   fflush(stdout);
 
@@ -816,7 +816,7 @@ int main(int ac, char **av) {
     /* Ensure our plaintext_space_up_to_index array is large enough to call
      * fill_plaintext_space_table() with. */
     if (plaintext_len_max > (sizeof(plaintext_space_up_to_index) + 1)) {
-      fprintf(stderr, "\n  !! Warning: plaintext length max is too large (%u > %"PRIu64").  Skipping start index safety check.\n\n", plaintext_len_max, sizeof(plaintext_space_up_to_index) + 1);  fflush(stderr);
+      fprintf(stderr, "\n  !! Warning: plaintext length max is too large (%u > %"PRIu64").  Skipping start index safety check.\n\n", plaintext_len_max, (uint64_t)(sizeof(plaintext_space_up_to_index) + 1));  fflush(stderr);
     } else {
 
       uint64_t plaintext_space_total;
@@ -866,7 +866,7 @@ int main(int ac, char **av) {
   }
 
   /* Print info about how we're generating the table. */
-  printf("Output file:\t\t%s\nHash algorithm:\t\t%s\nCharset name:\t\t%s\nCharset:\t\t%s\nCharset length:\t\t%"PRIu64"\nPlaintext length range: %u - %u\nReduction offset:\t0x%x\nChain length:\t\t%u\nNumber of chains:\t%u\nPart index:\t\t%"PRIu64"\n\n", filename, hash_name, charset_name, charset, strlen(charset), plaintext_len_min, plaintext_len_max, TABLE_INDEX_TO_REDUCTION_OFFSET(table_index), chain_len, total_chains_in_table, part_index);
+  printf("Output file:\t\t%s\nHash algorithm:\t\t%s\nCharset name:\t\t%s\nCharset:\t\t%s\nCharset length:\t\t%"PRIu64"\nPlaintext length range: %u - %u\nReduction offset:\t0x%x\nChain length:\t\t%u\nNumber of chains:\t%u\nPart index:\t\t%"PRIu64"\n\n", filename, hash_name, charset_name, charset, (uint64_t)strlen(charset), plaintext_len_min, plaintext_len_max, TABLE_INDEX_TO_REDUCTION_OFFSET(table_index), chain_len, total_chains_in_table, part_index);
 
   /* If we found a file to append to, tell the user what's happening. */
   if (resuming_table)
