@@ -4,7 +4,7 @@ Author: [Joe Testa](https://www.positronsecurity.com/company/) ([@therealjoetest
 
 ## About
 
-This project produces open-source code to generate rainbow tables as well as use them to look up password hashes.  While the current release only supports NTLM, future releases may support MD5, SHA-1, SHA-256, and possibly more.  Linux, Windows, and macOS (Apple Silicon) are supported!
+This project produces open-source code to generate rainbow tables as well as use them to look up password hashes.  Currently supports NTLM and MD5.  Future releases may support SHA-1, SHA-256, and possibly more.  Linux, Windows, and macOS (Apple Silicon) are supported!
 
 For more information, see the project website: [https://www.rainbowcrackalack.com/](https://www.rainbowcrackalack.com/)
 
@@ -43,7 +43,7 @@ The arguments are designed to be comparable to those of the original (and now cl
 
 |Argument    |Meaning   |
 |------------|----------|
-|ntlm        |The hash algorithm to use.  Currently only "ntlm" is supported.|
+|ntlm        |The hash algorithm to use.  Supported values: "ntlm", "md5".|
 |ascii-32-95 |The character set to use.  This effectively means "all available characters on the US keyboard".|
 |9           |The minimum plaintext character length.|
 |9           |The maximum plaintext character length.|
@@ -51,6 +51,17 @@ The arguments are designed to be comparable to those of the original (and now cl
 |803000      |The chain length for a single rainbow chain.|
 |67108864    |The number of chains per table (= 64M)|
 |0 |The table part index.  Keep all other args the same, and increment this field to generate a single set of tables.|
+
+#### Generating MD5 tables
+
+MD5 8-character and 9-character tables use the same arguments as NTLM:
+
+    # ./crackalack_gen md5 ascii-32-95 8 8 0 422000 67108864 0
+    # ./crackalack_gen md5 ascii-32-95 9 9 0 803000 67108864 0
+
+The `--markov` flag works with MD5 the same way it does with NTLM:
+
+    # ./crackalack_gen md5 ascii-32-95 8 8 0 422000 67108864 0 --markov md5_rockyou.markov
 
 #### Generating tables with mask charsets
 

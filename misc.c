@@ -245,6 +245,28 @@ unsigned int is_ntlm9(unsigned int hash_type, char *charset, unsigned int plaint
 }
 
 
+/* Returns 1 if the parameters form the MD5 8-character ascii-32-95 set, otherwise 0. */
+unsigned int is_md5_8(unsigned int hash_type, char *charset,
+                       unsigned int plaintext_len_min,
+                       unsigned int plaintext_len_max) {
+  return (hash_type == HASH_MD5)
+      && (strcmp(charset, CHARSET_ASCII_32_95) == 0)
+      && (plaintext_len_min == 8)
+      && (plaintext_len_max == 8);
+}
+
+
+/* Returns 1 if the parameters form the MD5 9-character ascii-32-95 set, otherwise 0. */
+unsigned int is_md5_9(unsigned int hash_type, char *charset,
+                       unsigned int plaintext_len_min,
+                       unsigned int plaintext_len_max) {
+  return (hash_type == HASH_MD5)
+      && (strcmp(charset, CHARSET_ASCII_32_95) == 0)
+      && (plaintext_len_min == 9)
+      && (plaintext_len_max == 9);
+}
+
+
 /* Given a filename for a rainbow table, parse its parameters.  On success the
  * rt_parameters' parsed flag is set to 1, otherwise it is zero. */
 void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
