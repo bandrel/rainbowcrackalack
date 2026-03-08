@@ -41,6 +41,10 @@ static struct h2i_test netntlmv1_h2i_tests[] = {
      * different modular reduction path compared to the ascii-32-95 vectors. */
     {"aabbccddeeff0011", 10, 7, 7, 0,   5},
     {"deadbeefcafe1234", 10, 7, 7, 2,  50},
+    /* Large pos values: push (ret + reduction_offset + pos) toward real table
+     * usage.  NTLM9 tables have chain_len=803000, so pos can reach 802999. */
+    {"aabbccddeeff0011", 95, 7, 7, 0, 65535},
+    {"deadbeefcafe1234", 95, 7, 7, 0, 802999},
 };
 
 
@@ -64,6 +68,12 @@ static int gpu_test_netntlmv1_h2i(gpu_device device, gpu_context context,
     gpu_ulong *index_ptr = NULL;
     unsigned char *debug_ptr = NULL;
 
+    index_ptr = calloc(1, sizeof(gpu_ulong));
+    if (!index_ptr) {
+        fprintf(stderr, "Error allocating index buffer in test_hash_to_index_netntlmv1\n");
+        exit(-1);
+    }
+
     queue = CLCREATEQUEUE(context, device);
 
     hash_len = hex_to_bytes((char *)t->hash, sizeof(hash_bytes), hash_bytes);
@@ -83,12 +93,6 @@ static int gpu_test_netntlmv1_h2i(gpu_device device, gpu_context context,
     CLRUNKERNEL(queue, kernel, &global_work_size);
     CLFLUSH(queue);
     CLWAIT(queue);
-
-    index_ptr = calloc(1, sizeof(gpu_ulong));
-    if (!index_ptr) {
-        fprintf(stderr, "Error allocating index buffer in test_hash_to_index_netntlmv1\n");
-        exit(-1);
-    }
 
     CLREADBUFFER(index_buffer, sizeof(gpu_ulong), index_ptr);
 

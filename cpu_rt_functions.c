@@ -30,6 +30,11 @@
 
 
 
+/* Fills the pspace table for a mask charset.
+ * Invariant: pspace[0..mask_length-1] are always 0; pspace[mask_length] is the
+ * total keyspace.  index_to_plaintext_mask relies on pspace[mask_length-1]==0
+ * so that index_x = index - 0 = index.  Do not change this layout without
+ * updating index_to_plaintext_mask. */
 uint64_t fill_plaintext_space_table_mask(unsigned int *mask_lens, unsigned int mask_length, uint64_t *plaintext_space_up_to_index) {
   uint64_t product = 1;
   int i;
@@ -120,6 +125,9 @@ void index_to_plaintext_mask(uint64_t index, unsigned int *mask_lens, char *mask
   *plaintext_len = mask_length;
   plaintext[mask_length] = '\0';
 
+  /* pspace[mask_length-1] is always 0 (see fill_plaintext_space_table_mask
+   * invariant), so index_x == index.  Do not remove the subtraction: it is
+   * the documented interface with fill_plaintext_space_table_mask. */
   index_x = index - plaintext_space_up_to_index[mask_length - 1];
   for (i = (int)mask_length - 1; i >= 0; i--) {
     unsigned int sz = mask_lens[i];

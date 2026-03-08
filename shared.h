@@ -16,7 +16,9 @@
 
 #define DEBUG_LEN 32
 
-/* Converts a table index to a reduction offset. */
+/* Converts a table index to a reduction offset.
+ * reduction_offset is unsigned int (32-bit).  table_index must be <= 65535;
+ * values >= 65536 cause silent 32-bit unsigned overflow. */
 #define TABLE_INDEX_TO_REDUCTION_OFFSET(_table_index) (_table_index * 65536)
 
 #endif

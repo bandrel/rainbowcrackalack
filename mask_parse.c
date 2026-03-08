@@ -119,6 +119,10 @@ int mask_parse(const char *mask_str, Mask *out,
 }
 
 
+/* Returns the total keyspace of a mask (product of all position sizes).
+ * Precondition: m->length > 0.  A zero-length mask returns 1 (not 0) because
+ * mask_parse rejects empty masks before this function is called.  Callers that
+ * construct a Mask struct directly must ensure m->length > 0. */
 uint64_t mask_keyspace(const Mask *m) {
     uint64_t product = 1;
     int i;
