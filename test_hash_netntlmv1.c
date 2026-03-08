@@ -80,8 +80,7 @@ static int gpu_test_netntlmv1_hash(gpu_device device, gpu_context context,
     queue = CLCREATEQUEUE(context, device);
 
     output = calloc(MAX_HASH_OUTPUT_LEN, sizeof(unsigned char));
-    debug_ptr = calloc(DEBUG_LEN, sizeof(unsigned char));
-    if (!output || !debug_ptr) {
+    if (!output) {
         fprintf(stderr, "Error allocating buffers in test_hash_netntlmv1\n");
         exit(-1);
     }
