@@ -15,6 +15,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <errno.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,7 +24,8 @@
 
 #include "charset.h"
 #include "mask_parse.h"
-#include "shared.h"
+
+#define MAX_PLAINTEXT_LEN 16
 
 /* Compute keyspace for a named charset across [min_len, max_len]. */
 static int charset_keyspace(const char *name, unsigned int min_len,
@@ -41,8 +43,19 @@ static int charset_keyspace(const char *name, unsigned int min_len,
     uint64_t keyspace = 0;
     for (unsigned int l = min_len; l <= max_len; l++) {
         uint64_t power = 1;
-        for (unsigned int i = 0; i < l; i++)
+        for (unsigned int i = 0; i < l; i++) {
+            if (power > UINT64_MAX / clen) {
+                fprintf(stderr,
+                        "Error: keyspace overflows uint64_t at length %u.\n",
+                        l);
+                return -1;
+            }
             power *= clen;
+        }
+        if (keyspace > UINT64_MAX - power) {
+            fprintf(stderr, "Error: total keyspace overflows uint64_t.\n");
+            return -1;
+        }
         keyspace += power;
     }
     *out_keyspace = keyspace;
@@ -86,8 +99,29 @@ static double file_size_mb(uint64_t num_chains) {
     return (double)num_chains * 16.0 / (1024.0 * 1024.0);
 }
 
+/* Parse a plaintext length argument in [1, MAX_PLAINTEXT_LEN].
+ * Returns -1 on error (message already printed). */
+static int parse_len(const char *s, const char *name, unsigned int *out) {
+    char *end;
+    errno = 0;
+    long v = strtol(s, &end, 10);
+    if (errno != 0 || end == s || *end != '\0') {
+        fprintf(stderr, "Error: %s must be a valid integer, got '%s'.\n",
+                name, s);
+        return -1;
+    }
+    if (v < 1 || v > MAX_PLAINTEXT_LEN) {
+        fprintf(stderr,
+                "Error: %s must be in [1, %d], got %ld.\n",
+                name, MAX_PLAINTEXT_LEN, v);
+        return -1;
+    }
+    *out = (unsigned int)v;
+    return 0;
+}
+
 static int cmd_estimate(int argc, char **argv) {
-    if (argc < 5) {
+    if (argc < 6) {
         fprintf(stderr,
                 "Usage: crackalack_plan estimate <hash> <charset_or_mask> "
                 "<min_len> <max_len> <chain_len> <num_chains>\n");
@@ -97,15 +131,13 @@ static int cmd_estimate(int argc, char **argv) {
     /* argv[0] = hash (informational only), argv[1] = charset/mask,
      * argv[2] = min_len, argv[3] = max_len,
      * argv[4] = chain_len, argv[5] = num_chains */
-    if (argc < 6) {
-        fprintf(stderr, "Error: not enough arguments for estimate.\n");
-        return 1;
-    }
-
     const char *hash_name      = argv[0];
     const char *charset_or_mask = argv[1];
-    unsigned int min_len       = (unsigned int)atoi(argv[2]);
-    unsigned int max_len       = (unsigned int)atoi(argv[3]);
+    unsigned int min_len, max_len;
+    if (parse_len(argv[2], "min_len", &min_len) != 0)
+        return 1;
+    if (parse_len(argv[3], "max_len", &max_len) != 0)
+        return 1;
     uint64_t chain_len         = (uint64_t)strtoull(argv[4], NULL, 10);
     uint64_t num_chains        = (uint64_t)strtoull(argv[5], NULL, 10);
 
@@ -142,7 +174,7 @@ static int cmd_estimate(int argc, char **argv) {
 }
 
 static int cmd_recommend(int argc, char **argv) {
-    if (argc < 4) {
+    if (argc < 5) {
         fprintf(stderr,
                 "Usage: crackalack_plan recommend <hash> <charset_or_mask> "
                 "<min_len> <max_len> <target_pct>\n");
@@ -151,8 +183,11 @@ static int cmd_recommend(int argc, char **argv) {
 
     const char *hash_name       = argv[0];
     const char *charset_or_mask = argv[1];
-    unsigned int min_len        = (unsigned int)atoi(argv[2]);
-    unsigned int max_len        = (unsigned int)atoi(argv[3]);
+    unsigned int min_len, max_len;
+    if (parse_len(argv[2], "min_len", &min_len) != 0)
+        return 1;
+    if (parse_len(argv[3], "max_len", &max_len) != 0)
+        return 1;
     const char *target_str      = argv[4];
 
     /* Parse target percentage - strip trailing '%' if present. */
@@ -162,7 +197,15 @@ static int cmd_recommend(int argc, char **argv) {
     size_t tlen = strlen(target_buf);
     if (tlen > 0 && target_buf[tlen - 1] == '%')
         target_buf[tlen - 1] = '\0';
-    double target_pct = atof(target_buf);
+    char *end;
+    errno = 0;
+    double target_pct = strtod(target_buf, &end);
+    if (errno != 0 || end == target_buf || *end != '\0') {
+        fprintf(stderr,
+                "Error: target coverage must be a number, got '%s'.\n",
+                target_str);
+        return 1;
+    }
     double target = target_pct / 100.0;
 
     if (target <= 0.0 || target >= 1.0) {
