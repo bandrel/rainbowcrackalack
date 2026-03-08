@@ -74,6 +74,22 @@ Example - generate a table covering all 4-character passwords matching `[A-Z][a-
 
 **Note:** `crackalack_verify -q` (quick mode) skips CPU chain verification for mask tables.
 
+#### Sorting tables before lookup
+
+Tables must be sorted by end index before they can be used with `crackalack_lookup`. Pass one or more `.rt` files:
+
+    # ./crackalack_sort ntlm_ascii-32-95#8-8_0_422000x67108864_0.rt
+
+To sort an entire directory of tables in parallel, pass all files at once. The tool auto-detects the number of parallel workers based on available RAM and CPU cores:
+
+    # ./crackalack_sort /export/ntlm8_tables/*.rt
+
+To override the worker count explicitly:
+
+    # ./crackalack_sort --jobs 4 /export/ntlm8_tables/*.rt
+
+`--jobs 0` (or omitting `--jobs`) uses automatic detection. Files that are already sorted are skipped without being rewritten.
+
 #### Table lookups against NTLM 8-character hashes
 
 The following command shows how to look up a file of NTLM hashes (one per line) against the NTLM 8-character tables:
