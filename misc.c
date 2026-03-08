@@ -311,7 +311,7 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
 	    (validate_charset(rt_params->charset_name) != NULL || is_mask_string(rt_params->charset_name)) && \
 	    (rt_params->plaintext_len_min > 0) && \
 	    (rt_params->plaintext_len_min <= rt_params->plaintext_len_max) && \
-	    (rt_params->plaintext_len_max < MAX_PLAINTEXT_LEN) && \
+	    (rt_params->plaintext_len_max <= MAX_PLAINTEXT_LEN) && \
 	    (rt_params->chain_len > 0) && \
 	    (rt_params->num_chains > 0))
 	  rt_params->parsed = 1;
