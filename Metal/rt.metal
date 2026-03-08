@@ -1,6 +1,7 @@
 #include "shared.h"
 #include "ntlm.metal"
 #include "netntlmv1.metal"
+#include "md5.metal"
 
 inline void index_to_plaintext(ulong index, thread char *charset, unsigned int charset_len, unsigned int is_mask, device char *mask_charset_data, device unsigned int *mask_charset_lens, unsigned int plaintext_len_min, unsigned int plaintext_len_max, thread ulong *plaintext_space_up_to_index, thread unsigned char *plaintext, thread unsigned int *plaintext_len) {
 
@@ -38,6 +39,9 @@ inline void do_hash(unsigned int hash_type, thread unsigned char *plaintext, uns
   uint32_t SK[32];
   netntlmv1_hash(SK, plaintext, hash_value);
   *hash_len = 8;
+#elif HASH_TYPE == HASH_MD5
+  md5_hash(plaintext, plaintext_len, hash_value);
+  *hash_len = 16;
 #endif
 
   return;
