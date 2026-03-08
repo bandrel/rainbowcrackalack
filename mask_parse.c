@@ -1,6 +1,7 @@
 #include "mask_parse.h"
 
 #include <stdio.h>
+#include <stddef.h>
 #include <string.h>
 
 /* Hashcat built-in charsets */
@@ -121,6 +122,39 @@ uint64_t mask_keyspace(const Mask *m) {
         product *= m->positions[i].size;
 
     return product;
+}
+
+
+void mask_encode_for_filename(const char *src, char *dst, size_t dst_len) {
+    size_t j = 0;
+    if (!src || !dst || dst_len == 0)
+        return;
+    for (size_t i = 0; src[i] != '\0' && j + 1 < dst_len; i++) {
+        if (src[i] == '?') {
+            dst[j++] = '%';
+        } else {
+            dst[j++] = src[i];
+        }
+    }
+    dst[j] = '\0';
+}
+
+
+void mask_decode_from_filename(char *s) {
+    static const char valid[] = "ludsab1234";
+    char *r = s, *w = s;
+    if (!s)
+        return;
+    while (*r) {
+        if (*r == '%' && *(r + 1) != '\0' && strchr(valid, *(r + 1))) {
+            *w++ = '?';
+            r++;
+            *w++ = *r++;
+        } else {
+            *w++ = *r++;
+        }
+    }
+    *w = '\0';
 }
 
 

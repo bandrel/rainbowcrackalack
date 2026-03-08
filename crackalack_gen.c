@@ -605,6 +605,7 @@ int main(int ac, char **av) {
   gpu_device devices[MAX_NUM_DEVICES] = {0};
   pthread_t threads[MAX_NUM_DEVICES] = {0};
   char filename[256] = {0}, time_str[128] = {0};
+  char charset_name_safe[256] = {0}; /* charset_name with '?' replaced by '%' for filename */
 
   FILE *f = NULL;
   unsigned int file_size = 0;
@@ -666,8 +667,11 @@ int main(int ac, char **av) {
   CHECK_MEMORY_SIZE();
 
 
+  /* Encode '?' as '%' in mask names so filenames are shell-safe. */
+  mask_encode_for_filename(charset_name, charset_name_safe, sizeof(charset_name_safe));
+
   /* Format the filename based on the user options. */
-  snprintf(filename, sizeof(filename) - 1, "%s_%s#%u-%u_%u_%ux%u_%"PRIu64".rt", hash_name, charset_name, plaintext_len_min, plaintext_len_max, table_index, chain_len, total_chains_in_table, part_index);
+  snprintf(filename, sizeof(filename) - 1, "%s_%s#%u-%u_%u_%ux%u_%"PRIu64".rt", hash_name, charset_name_safe, plaintext_len_min, plaintext_len_max, table_index, chain_len, total_chains_in_table, part_index);
 
 
   /* If the user provided an invalid hash name, dump the valid options and
