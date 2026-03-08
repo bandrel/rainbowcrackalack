@@ -96,6 +96,11 @@ int mask_parse(const char *mask_str, Mask *out,
                 return -1;
             i += 2;
         } else {
+            /* Trailing bare '?' with no specifier is an error. */
+            if (mask_str[i] == '?') {
+                fprintf(stderr, "mask_parse: trailing '?' with no specifier\n");
+                return -1;
+            }
             /* Literal character - single-char position */
             out->positions[pos].chars[0] = mask_str[i];
             out->positions[pos].size = 1;
@@ -126,11 +131,14 @@ uint64_t mask_keyspace(const Mask *m) {
 
 
 void mask_encode_for_filename(const char *src, char *dst, size_t dst_len) {
+    static const char valid[] = "ludsab1234";
     size_t j = 0;
     if (!src || !dst || dst_len == 0)
         return;
     for (size_t i = 0; src[i] != '\0' && j + 1 < dst_len; i++) {
-        if (src[i] == '?') {
+        /* Only encode '?' when followed by a valid specifier so that
+         * mask_decode_from_filename is its exact inverse. */
+        if (src[i] == '?' && src[i + 1] != '\0' && strchr(valid, src[i + 1])) {
             dst[j++] = '%';
         } else {
             dst[j++] = src[i];
