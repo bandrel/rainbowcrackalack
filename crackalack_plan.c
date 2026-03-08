@@ -302,9 +302,11 @@ static int cmd_train(int argc, char **argv) {
 
     unsigned int charset_len = (unsigned int)strlen(charset_string);
 
-    markov_model model;
-    if (markov_train(wordlist_path, charset_string, charset_len, &model) != 0)
+    markov_model model = {0};
+    if (markov_train(wordlist_path, charset_string, charset_len, &model) != 0) {
+        markov_free(&model);
         return 1;
+    }
 
     if (markov_save(output_path, &model) != 0) {
         markov_free(&model);
