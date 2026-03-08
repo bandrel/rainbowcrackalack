@@ -486,8 +486,9 @@ void *host_thread(void *ptr) {
       else
         pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
 
+      unsigned int charset_buf_size = charset_len > 0 ? charset_len : 1;
       CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
-      CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_len);
+      CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_buf_size);
       CLCREATEARG(2, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
       CLCREATEARG(3, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
       CLCREATEARG(4, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
