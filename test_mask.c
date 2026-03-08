@@ -556,6 +556,53 @@ static int group_f(void)
 }
 
 
+/* --- Group G: mask_encode_for_filename / mask_decode_from_filename --- */
+static int group_g(void)
+{
+    int ok = 1;
+    char buf[64];
+
+    /* ME-01: basic specifiers replaced */
+    mask_encode_for_filename("?l?d", buf, sizeof(buf));
+    if (strcmp(buf, "%l%d") != 0)
+        { fprintf(stderr, "ME-01 failed: got \"%s\"\n", buf); ok = 0; }
+
+    /* ME-02: literal prefix preserved */
+    mask_encode_for_filename("admin?d?d?d", buf, sizeof(buf));
+    if (strcmp(buf, "admin%d%d%d") != 0)
+        { fprintf(stderr, "ME-02 failed: got \"%s\"\n", buf); ok = 0; }
+
+    /* ME-03: no specifiers - string unchanged */
+    mask_encode_for_filename("nospecifiers", buf, sizeof(buf));
+    if (strcmp(buf, "nospecifiers") != 0)
+        { fprintf(stderr, "ME-03 failed: got \"%s\"\n", buf); ok = 0; }
+
+    /* ME-04 through ME-13: round-trip for all built-in specifiers */
+    const char *specifiers[] = {"?l","?u","?d","?s","?a","?b","?1","?2","?3","?4"};
+    unsigned int n = (unsigned int)(sizeof(specifiers) / sizeof(specifiers[0]));
+    for (unsigned int i = 0; i < n; i++) {
+        char encoded[8];
+        char decoded[8];
+        mask_encode_for_filename(specifiers[i], encoded, sizeof(encoded));
+        strncpy(decoded, encoded, sizeof(decoded));
+        mask_decode_from_filename(decoded);
+        if (strcmp(decoded, specifiers[i]) != 0) {
+            fprintf(stderr, "ME-%02u round-trip failed: \"%s\" -> \"%s\" -> \"%s\"\n",
+                    4 + i, specifiers[i], encoded, decoded);
+            ok = 0;
+        }
+    }
+
+    /* ME-14: unknown specifier in decode - left unchanged */
+    strncpy(buf, "%xinvalid", sizeof(buf));
+    mask_decode_from_filename(buf);
+    if (strcmp(buf, "%xinvalid") != 0)
+        { fprintf(stderr, "ME-14 failed: got \"%s\"\n", buf); ok = 0; }
+
+    return ok;
+}
+
+
 int test_mask(void)
 {
     int ok = 1;
@@ -566,6 +613,7 @@ int test_mask(void)
     ok &= group_d();
     ok &= group_e();
     ok &= group_f();
+    ok &= group_g();
 
     return ok;
 }
