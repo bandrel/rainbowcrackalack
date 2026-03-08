@@ -186,6 +186,16 @@ static int group_c(void)
         fprintf(stderr, "PE-07 failed: expected -1 for unset custom charset ?4\n"); ok = 0;
     }
 
+    /* PE-08: trailing bare '?' with no specifier */
+    if (mask_parse("?l?", &m, NULL, NULL, NULL, NULL) != -1) {
+        fprintf(stderr, "PE-08 failed: expected -1 for trailing bare '?'\n"); ok = 0;
+    }
+
+    /* PE-09: mask that is only a bare '?' */
+    if (mask_parse("?", &m, NULL, NULL, NULL, NULL) != -1) {
+        fprintf(stderr, "PE-09 failed: expected -1 for lone '?'\n"); ok = 0;
+    }
+
     return ok;
 }
 
