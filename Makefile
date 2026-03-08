@@ -230,6 +230,7 @@ $(OUTDIR)/$(PLAN_PROG): \
 	$(OBJDIR)/crackalack_plan.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/markov.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o
 	$(CC) $(LDFLAGS) $^ -o $@ -lgcrypt -lm
