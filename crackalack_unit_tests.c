@@ -25,14 +25,18 @@
 
 #include "shared.h"
 #include "test_chain.h"
+#include "test_chain_netntlmv1.h"
 #include "test_chain_ntlm9.h"
 #include "test_hash.h"
+#include "test_hash_netntlmv1.h"
 #include "test_hash_ntlm9.h"
 #include "test_hash_to_index.h"
+#include "test_hash_to_index_netntlmv1.h"
 #include "test_hash_to_index_ntlm9.h"
 #include "test_index_to_plaintext.h"
 #include "test_index_to_plaintext_ntlm9.h"
 #include "test_mask.h"
+#include "test_misc.h"
 #include "version.h"
 
 
@@ -107,6 +111,16 @@ int main(int ac, char **av) {
   CLRELEASEKERNEL(kernel);
   CLRELEASEPROGRAM(program);
   */
+
+
+  /* Misc tests (CPU-only, no kernel needed). */
+  printf("Running misc tests... "); fflush(stdout);
+  if (!test_misc()) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
 
 
   /* Mask tests (CPU-only, no kernel needed). */
@@ -271,6 +285,51 @@ int main(int ac, char **av) {
   /*load_kernel(context, num_devices, devices, "test_chain_ntlm9.cl", "test_chain_ntlm9", &program, &kernel, hash_type);*/
   load_kernel(context, num_devices, devices, "crackalack_ntlm9.cl", "crackalack_ntlm9", &program, &kernel, hash_type);
   if (!test_chain_ntlm9(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* NetNTLMv1 hash tests. */
+  printf("Running NetNTLMv1 hash tests... "); fflush(stdout);
+  hash_type = HASH_NETNTLMV1;
+  load_kernel(context, num_devices, devices, "test_hash.cl", "test_hash", &program, &kernel, hash_type);
+  if (!test_hash_netntlmv1(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* NetNTLMv1 hash_to_index tests. */
+  printf("Running NetNTLMv1 hash_to_index() tests... "); fflush(stdout);
+  hash_type = HASH_NETNTLMV1;
+  load_kernel(context, num_devices, devices, "test_hash_to_index.cl", "test_hash_to_index", &program, &kernel, hash_type);
+  if (!test_h2i_netntlmv1(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* NetNTLMv1 chain tests. */
+  printf("Running NetNTLMv1 chain tests... "); fflush(stdout);
+  hash_type = HASH_NETNTLMV1;
+  load_kernel(context, num_devices, devices, "crackalack.cl", "crackalack", &program, &kernel, hash_type);
+  if (!test_chain_netntlmv1(devices[0], context, kernel)) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
