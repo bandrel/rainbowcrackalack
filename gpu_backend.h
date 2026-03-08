@@ -211,6 +211,8 @@ extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 #define CLCREATEARG(_arg_index, _buffer, _flags, _arg, _arg_size) \
   _CLCREATEARG(_arg_index, _buffer, _flags, &_arg, _arg_size);
 
+/* CLCREATEARG_DEBUG allocates *_debug_ptr internally via calloc.
+ * Do NOT pre-allocate _debug_ptr before calling this macro. */
 #define CLCREATEARG_DEBUG(_arg_index, _debug_buffer, _debug_ptr) \
   { _debug_ptr = calloc(DEBUG_LEN, sizeof(unsigned char)); \
     CLCREATEARG_ARRAY(_arg_index, _debug_buffer, GPU_RW, _debug_ptr, DEBUG_LEN); }
@@ -268,6 +270,8 @@ extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 #define CLCREATEARG(_arg_index, _buffer, _flags, _arg, _arg_size) \
   _CLCREATEARG(_arg_index, _buffer, _flags, &_arg, _arg_size);
 
+/* CLCREATEARG_DEBUG allocates *_debug_ptr internally via calloc.
+ * Do NOT pre-allocate _debug_ptr before calling this macro. */
 #define CLCREATEARG_DEBUG(_arg_index, _debug_buffer, _debug_ptr) \
   { _debug_ptr = calloc(DEBUG_LEN, sizeof(unsigned char)); \
     CLCREATEARG_ARRAY(_arg_index, _debug_buffer, CL_MEM_READ_WRITE, _debug_ptr, DEBUG_LEN); }

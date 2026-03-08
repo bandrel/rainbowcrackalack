@@ -74,6 +74,8 @@ static uint64_t cpu_netntlmv1_chain(uint64_t start, unsigned int chain_len,
                            7, 7, pspace_up_to, plaintext, &plaintext_len);
         setup_des_key(plaintext, key);
         netntlmv1_hash(key, 8, hash);
+        /* pos is the 0-based intra-chain step; reduction_offset carries the
+         * table-level offset (table_index * 65536).  Both are separate. */
         index = hash_to_index(hash, 8, reduction_offset, pspace_total, pos);
     }
 

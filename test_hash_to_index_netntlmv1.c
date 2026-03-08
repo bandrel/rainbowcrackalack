@@ -37,6 +37,10 @@ static struct h2i_test netntlmv1_h2i_tests[] = {
     {"deadbeefcafe1234", 95, 7, 7, 3,   0},
     {"0102030405060708", 95, 7, 7, 5, 750},
     {"ffeeddccbbaa9988", 95, 7, 7, 0,   0},
+    /* digits-only charset (len=10): exercises a smaller pspace_total and
+     * different modular reduction path compared to the ascii-32-95 vectors. */
+    {"aabbccddeeff0011", 10, 7, 7, 0,   5},
+    {"deadbeefcafe1234", 10, 7, 7, 2,  50},
 };
 
 
