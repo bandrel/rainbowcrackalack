@@ -62,6 +62,7 @@
 #define PRECOMPUTE_NTLM8_KERNEL_PATH "precompute_ntlm8.cl"
 #define PRECOMPUTE_NTLM9_KERNEL_PATH "precompute_ntlm9.cl"
 #define PRECOMPUTE_NETNTLMV1_KERNEL_PATH "precompute_netntlmv1.cl"
+#define PRECOMPUTE_MD5_8_KERNEL_PATH "precompute_md5_8.cl"
 #ifdef USE_METAL
 #define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.metal"
 #else
@@ -72,6 +73,7 @@
 #define FALSE_ALARM_NTLM8_KERNEL_PATH "false_alarm_check_ntlm8.cl"
 #define FALSE_ALARM_NTLM9_KERNEL_PATH "false_alarm_check_ntlm9.cl"
 #define FALSE_ALARM_NETNTLMV1_KERNEL_PATH "false_alarm_check_netntlv1.cl"
+#define FALSE_ALARM_MD5_8_KERNEL_PATH "false_alarm_check_md5_8.cl"
 #ifdef USE_METAL
 #define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.metal"
 #else
@@ -787,6 +789,13 @@ void *host_thread_false_alarm(void *ptr) {
       printf("\nNote: optimized NTLM9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
       printed_false_alarm_optimized_message = 1;
     }
+  } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+    kernel_path = FALSE_ALARM_MD5_8_KERNEL_PATH;
+    kernel_name = "false_alarm_check_md5_8";
+    if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
+      printf("\nNote: optimized MD5_8 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+      printed_false_alarm_optimized_message = 1;
+    }
   }
 
   /* When --markov is active, override with the Markov false alarm kernel. */
@@ -996,6 +1005,13 @@ void *host_thread_precompute(void *ptr) {
     kernel_name = "precompute_ntlm9";
     if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
       printf("\nNote: optimized NTLM9 kernel will be used for precomputation.\n\n"); fflush(stdout);
+      printed_precompute_optimized_message = 1;
+    }
+  } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+    kernel_path = PRECOMPUTE_MD5_8_KERNEL_PATH;
+    kernel_name = "precompute_md5_8";
+    if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
+      printf("\nNote: optimized MD5_8 kernel will be used for precomputation.\n\n"); fflush(stdout);
       printed_precompute_optimized_message = 1;
     }
   }
