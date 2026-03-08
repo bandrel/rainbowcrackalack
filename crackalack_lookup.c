@@ -317,7 +317,7 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
   pthread_t threads[MAX_NUM_DEVICES] = {0};
   char time_str[128] = {0};
   struct timespec start_time = {0};
-  gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN] = {0};
+  gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
 
   unsigned int num_potential_start_indices = 0, i = 0, j = 0; // init to -1 since 0 is possible index
   unsigned int total_devices = args[0].total_devices;
@@ -717,7 +717,7 @@ void *host_thread_false_alarm(void *ptr) {
 
   unsigned int num_start_indices = 0, num_start_index_positions = 0, num_hash_base_indices = 0, num_plaintext_indices = 0, num_exec_blocks = 0, output_block_len = 0, exec_block = 0, output_block_index = 0, plaintext_indicies_index = 0;
   uint64_t plaintext_space_total = 0;
-  gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN] = {0};
+  gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
   size_t gws = 0, kernel_work_group_size = 0, kernel_preferred_work_group_size_multiple = 0;
   /*gpu_ulong debug_ulong[128] = {0};*/
   int charset_len = 0;
@@ -1033,7 +1033,7 @@ void *host_thread_precompute(void *ptr) {
   CLCREATEARG_ARRAY(11, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
 
   {
-    uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN] = {0};
+    uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
     gpu_ulong pspace_total;
     if (args->is_mask)
       pspace_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, pspace_up_to_index);
@@ -1403,7 +1403,10 @@ void _preloading_thread(char *rt_dir) {
 	/* If the table is uncompressed (*.rt), then there's a possibility its unsorted on accident.  We will
 	 * verify them first to make sure. */
 	if (is_uncompressed_table == 1) {
-	  if (!verify_rainbowtable(rainbow_table, num_chains, VERIFY_TABLE_TYPE_LOOKUP, 0, 0, NULL, 0)) {
+	  rt_parameters pt_params = {0};
+	  parse_rt_params(&pt_params, filepath);
+	  unsigned int file_is_mask = pt_params.parsed && is_mask_string(pt_params.charset_name);
+	  if (!verify_rainbowtable(rainbow_table, num_chains, VERIFY_TABLE_TYPE_LOOKUP, 0, 0, NULL, file_is_mask)) {
 	    fprintf(stderr, "\nError: %s is not a valid table suitable for lookups!  (Hint: it may not be sorted.)  Skipping...\n\n", filepath);  fflush(stderr);
 	    FREE(rainbow_table);
 	    skip_table = 1; /* Skip further processing on this table only. */

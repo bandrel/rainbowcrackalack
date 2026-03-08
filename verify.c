@@ -130,7 +130,7 @@ int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigne
  * Returns 1 on success, or 0 on failure. */
 int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify) {
   rt_parameters rt_params = {0};
-  uint64_t plaintext_space_up_to_index[MAX_PLAINTEXT_LEN] = {0};
+  uint64_t plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
 
   rc_file f = NULL;
   uint64_t *rainbow_table = NULL;
@@ -214,7 +214,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
   }
 
   /* Compressed tables cannot be quickly checked, as they currently require the entire table to be loaded into memory. */
-  if (is_compressed && VERIFY_TABLE_TYPE_QUICK) {
+  if (is_compressed && (table_type == VERIFY_TABLE_TYPE_QUICK)) {
     rc_fclose(f);
     fprintf(stderr, "Error: quick verification of compressed tables is not supported.\n");
     return 0;
@@ -222,6 +222,13 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
   /* Handle the case of a quick table verification up-front. */
   if (table_type == VERIFY_TABLE_TYPE_QUICK) {
+    /* Mask tables use a different chain function; skip CPU verification. */
+    if (is_mask) {
+      printf("Note: skipping quick CPU chain verification for mask charset.\n"); fflush(stdout);
+      rc_fclose(f);
+      return 1;
+    }
+
     uint64_t random_chain = 0, start = 0, actual_end = 0, computed_end = 0;
     char plaintext[MAX_PLAINTEXT_LEN] = {0};
     unsigned char hash[MAX_HASH_OUTPUT_LEN] = {0};

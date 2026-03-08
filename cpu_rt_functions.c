@@ -34,7 +34,7 @@ uint64_t fill_plaintext_space_table_mask(unsigned int *mask_lens, unsigned int m
   uint64_t product = 1;
   int i;
 
-  for (i = 0; i <= MAX_PLAINTEXT_LEN; i++)
+  for (i = 0; i <= (int)mask_length; i++)
     plaintext_space_up_to_index[i] = 0;
 
   for (i = 0; i < (int)mask_length; i++)
