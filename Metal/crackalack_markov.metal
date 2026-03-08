@@ -24,6 +24,10 @@ kernel void crackalack_markov(
     constant unsigned char *g_sorted_bigram [[buffer(14)]],
     uint gid [[thread_position_in_grid]])
 {
+  /* Markov generation uses fixed-length plaintexts (plaintext_len_min == plaintext_len_max,
+   * enforced by the host). g_plaintext_len_min, g_plaintext_space_up_to_index, g_is_mask,
+   * g_mask_charset_data, and g_mask_charset_lens are accepted for ABI compatibility with
+   * crackalack.cl but are not used here. */
     unsigned int hash_type = *g_hash_type;
     char charset[MAX_CHARSET_LEN];
     unsigned int plaintext_len_max = *g_plaintext_len_max;
