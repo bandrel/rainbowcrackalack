@@ -198,6 +198,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/crackalack_lookup.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/markov.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
