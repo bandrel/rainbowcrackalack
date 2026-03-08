@@ -13,6 +13,7 @@
 #include "mask_parse.h"
 #include "shared.h"
 #include "test_mask.h"
+#include "verify.h"
 
 
 /* Parse mask, fill GPU buffers, fill pspace, convert index to plaintext,
@@ -437,6 +438,124 @@ static int group_e(void)
 }
 
 
+/* --- Group F: verify_rainbowtable with mask tables --- */
+static int group_f(void)
+{
+    int ok = 1;
+    unsigned int error_chain = 0;
+
+    /* VR-01: valid mask table with end=0 in first chain must not be rejected.
+     * For ?d?d?d?d the keyspace is 10,000.  Index 0 ("0000") is a legitimate
+     * endpoint, so is_mask=1 must suppress the end==0 check. */
+    uint64_t table_end0[4] = { 0, 0,   /* chain 0: start=0, end=0 */
+                                1, 5 }; /* chain 1: start=1, end=5 */
+    error_chain = 0;
+    if (!verify_rainbowtable(table_end0, 2, VERIFY_TABLE_TYPE_GENERATED,
+                             0, 10000, &error_chain, 1)) {
+        fprintf(stderr, "VR-01 failed: mask table with end=0 incorrectly rejected\n");
+        ok = 0;
+    }
+
+    /* VR-02: non-mask table with end=0 must still be rejected. */
+    uint64_t table_end0_plain[2] = { 0, 0 }; /* start=0, end=0 */
+    error_chain = 0;
+    if (verify_rainbowtable(table_end0_plain, 1, VERIFY_TABLE_TYPE_GENERATED,
+                            0, 10000, &error_chain, 0)) {
+        fprintf(stderr, "VR-02 failed: non-mask table with end=0 should be rejected\n");
+        ok = 0;
+    }
+    if (error_chain != 0) {
+        fprintf(stderr, "VR-02b: error_chain expected 0, got %u\n", error_chain);
+        ok = 0;
+    }
+
+    /* VR-03: mask table where every chain ends at 0 (degenerate but valid).
+     * Happens when the full keyspace reduces to the same endpoint. */
+    uint64_t all_zero_ends[6] = { 0, 0,   1, 0,   2, 0 };
+    error_chain = 99;
+    if (!verify_rainbowtable(all_zero_ends, 3, VERIFY_TABLE_TYPE_GENERATED,
+                             0, 10000, &error_chain, 1)) {
+        fprintf(stderr, "VR-03 failed: mask table with all end=0 incorrectly rejected\n");
+        ok = 0;
+    }
+
+    /* VR-04: mask table with first chain at end=0 and non-sequential start
+     * must still be caught by the start-index check. */
+    uint64_t bad_start[2] = { 5, 0 }; /* start should be 0 for part_index=0 */
+    error_chain = 99;
+    if (verify_rainbowtable(bad_start, 1, VERIFY_TABLE_TYPE_GENERATED,
+                            0, 10000, &error_chain, 1)) {
+        fprintf(stderr, "VR-04 failed: wrong start index should be rejected\n");
+        ok = 0;
+    }
+    if (error_chain != 0) {
+        fprintf(stderr, "VR-04b: error_chain expected 0, got %u\n", error_chain);
+        ok = 0;
+    }
+
+    /* VR-05: mask table with start index out of bounds must be rejected. */
+    uint64_t oob[2] = { 10000, 1 }; /* start >= plaintext_space_total */
+    error_chain = 99;
+    if (verify_rainbowtable(oob, 1, VERIFY_TABLE_TYPE_GENERATED,
+                            10000, 10000, &error_chain, 1)) {
+        fprintf(stderr, "VR-05 failed: start >= pspace_total should be rejected\n");
+        ok = 0;
+    }
+
+    /* VR-06: mask table for lookup type - sorted ascending ends including 0. */
+    uint64_t lookup_with_zero[4] = { 7, 0,   3, 5 }; /* ends: 0, 5 - sorted */
+    error_chain = 99;
+    if (!verify_rainbowtable(lookup_with_zero, 2, VERIFY_TABLE_TYPE_LOOKUP,
+                             0, 10000, &error_chain, 1)) {
+        fprintf(stderr, "VR-06 failed: lookup mask table with end=0 first should pass\n");
+        ok = 0;
+    }
+
+    /* VR-07: mask table for lookup type - unsorted ends must be rejected. */
+    uint64_t unsorted_lookup[4] = { 7, 5,   3, 3 }; /* ends: 5, 3 - not sorted */
+    error_chain = 99;
+    if (verify_rainbowtable(unsorted_lookup, 2, VERIFY_TABLE_TYPE_LOOKUP,
+                            0, 10000, &error_chain, 1)) {
+        fprintf(stderr, "VR-07 failed: unsorted lookup table should be rejected\n");
+        ok = 0;
+    }
+
+    /* VR-08: non-mask generated table with valid (non-zero) ends must pass. */
+    uint64_t valid_gen[4] = { 0, 42,   1, 99 };
+    error_chain = 99;
+    if (!verify_rainbowtable(valid_gen, 2, VERIFY_TABLE_TYPE_GENERATED,
+                             0, 10000, &error_chain, 0)) {
+        fprintf(stderr, "VR-08 failed: valid non-mask table incorrectly rejected\n");
+        ok = 0;
+    }
+
+    /* VR-09: mask table - end out of bounds must be rejected. */
+    uint64_t end_oob[2] = { 0, 10000 }; /* end >= plaintext_space_total */
+    error_chain = 99;
+    if (verify_rainbowtable(end_oob, 1, VERIFY_TABLE_TYPE_GENERATED,
+                            0, 10000, &error_chain, 1)) {
+        fprintf(stderr, "VR-09 failed: end >= pspace_total should be rejected\n");
+        ok = 0;
+    }
+
+    /* VR-10: non-mask table - second chain has end=0, not first.
+     * error_chain must point to chain 1. */
+    uint64_t second_zero[4] = { 0, 5,   1, 0 };
+    error_chain = 99;
+    if (verify_rainbowtable(second_zero, 2, VERIFY_TABLE_TYPE_GENERATED,
+                            0, 10000, &error_chain, 0)) {
+        fprintf(stderr, "VR-10 failed: non-mask table with second chain end=0 should be rejected\n");
+        ok = 0;
+    }
+    if (error_chain != 1) {
+        fprintf(stderr, "VR-10b: error_chain expected 1, got %u\n", error_chain);
+        ok = 0;
+    }
+
+    return ok;
+}
+
+
 int test_mask(void)
 {
     int ok = 1;
@@ -446,6 +565,7 @@ int test_mask(void)
     ok &= group_c();
     ok &= group_d();
     ok &= group_e();
+    ok &= group_f();
 
     return ok;
 }

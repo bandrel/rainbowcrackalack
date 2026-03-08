@@ -155,7 +155,9 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_index_to_plaintext_ntlm9.o \
 	$(OBJDIR)/test_mask.o \
 	$(OBJDIR)/test_shared.o \
-	$(OBJDIR)/file_lock.o
+	$(OBJDIR)/file_lock.o \
+	$(OBJDIR)/rtc_decompress.o \
+	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 $(OUTDIR)/$(GETCHAIN_PROG): $(OBJDIR)/get_chain.o
