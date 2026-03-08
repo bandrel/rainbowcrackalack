@@ -49,3 +49,16 @@ inline ulong hash_md5_8(thread unsigned char *plaintext) {
 inline ulong hash_to_index_md5_8(ulong hash, unsigned int pos) {
   return (hash + pos) % 6634204312890625UL;  /* 95^8 */
 }
+
+
+inline ulong hash_char_to_index_md5_8(device unsigned char *hash_value, unsigned int pos) {
+  ulong ret = hash_value[7]; ret <<= 8;
+  ret |= hash_value[6]; ret <<= 8;
+  ret |= hash_value[5]; ret <<= 8;
+  ret |= hash_value[4]; ret <<= 8;
+  ret |= hash_value[3]; ret <<= 8;
+  ret |= hash_value[2]; ret <<= 8;
+  ret |= hash_value[1]; ret <<= 8;
+  ret |= hash_value[0];
+  return (ret + pos) % 6634204312890625UL;
+}
