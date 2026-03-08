@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "markov.h"
 #include "test_markov.h"
@@ -157,8 +158,12 @@ static int group_b(void)
 static int group_c(void)
 {
     int ok = 1;
-    const char *corpus_path = "/tmp/test_markov_corpus_rca.txt";
-    const char *model_path  = "/tmp/test_markov_rt_rca.markov";
+    char corpus_path[128];
+    char model_path[128];
+    snprintf(corpus_path, sizeof(corpus_path),
+             "/tmp/test_markov_corpus_%d.txt", (int)getpid());
+    snprintf(model_path, sizeof(model_path),
+             "/tmp/test_markov_rt_%d.markov", (int)getpid());
 
     /* Write synthetic corpus: "ab" x5, "ac" x1, "bc" x3 */
     FILE *fp = fopen(corpus_path, "w");
@@ -175,6 +180,9 @@ static int group_c(void)
     memset(&m, 0, sizeof(m));
     if (markov_train(corpus_path, "abc", 3, &m) != 0) {
         fprintf(stderr, "MT: markov_train failed\n");
+        remove(corpus_path);
+        /* markov_train zeroes the model on failure, so markov_free is safe but a no-op. */
+        markov_free(&m);
         return 0;
     }
 
@@ -249,7 +257,9 @@ static int group_d(void)
 
     /* ME-02: load file with wrong magic returns -1
      * Write 12 bytes: "XXXX" + version(1) as uint32 + charset_len(3) as uint32 */
-    const char *bad_path = "/tmp/test_markov_bad_rca.markov";
+    char bad_path[128];
+    snprintf(bad_path, sizeof(bad_path),
+             "/tmp/test_markov_bad_%d.markov", (int)getpid());
     FILE *fp = fopen(bad_path, "wb");
     if (!fp) {
         fprintf(stderr, "ME-02: cannot create bad markov file\n");
@@ -271,7 +281,9 @@ static int group_d(void)
     }
 
     /* ME-03: train on empty file returns -1 */
-    const char *empty_path = "/tmp/test_markov_empty_rca.txt";
+    char empty_path[128];
+    snprintf(empty_path, sizeof(empty_path),
+             "/tmp/test_markov_empty_%d.txt", (int)getpid());
     fp = fopen(empty_path, "w");
     if (!fp) {
         fprintf(stderr, "ME-03: cannot create empty file\n");
