@@ -150,6 +150,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/test_chain.o \
 	$(OBJDIR)/test_chain_md5_8.o \
+	$(OBJDIR)/test_chain_md5_9.o \
 	$(OBJDIR)/test_chain_netntlmv1.o \
 	$(OBJDIR)/test_chain_ntlm9.o \
 	$(OBJDIR)/test_hash.o \
