@@ -49,6 +49,12 @@ static int group_b(void)
     str_to_lowercase(buf);
     if (strcmp(buf, "already") != 0) { fprintf(stderr, "STL-03 failed: got \"%s\"\n", buf); ok = 0; }
 
+    /* STL-04: empty string - strlen("") == 0 so loop never executes; safe.
+     * Note: str_to_lowercase has no NULL guard; passing NULL would crash. */
+    strncpy(buf, "", sizeof(buf));
+    str_to_lowercase(buf);
+    if (strcmp(buf, "") != 0) { fprintf(stderr, "STL-04 failed: got \"%s\"\n", buf); ok = 0; }
+
     return ok;
 }
 
@@ -58,13 +64,16 @@ static int group_c(void)
 {
     int ok = 1;
 
-    /* is_ntlm8 */
+    /* is_ntlm8 - reduction_offset==0 is part of the fast-path check; non-zero
+     * reduction_offset means a non-zero table_index, which uses the generic path. */
     if (is_ntlm8(HASH_NTLM, CHARSET_ASCII_32_95, 8, 8, 0, 422000) != 1)
         { fprintf(stderr, "IN8-01 failed\n"); ok = 0; }
     if (is_ntlm8(HASH_NTLM, CHARSET_ASCII_32_95, 8, 8, 0, 100000) != 0)
         { fprintf(stderr, "IN8-02 failed: wrong chain_len accepted\n"); ok = 0; }
     if (is_ntlm8(HASH_NTLM, CHARSET_NUMERIC, 8, 8, 0, 422000) != 0)
         { fprintf(stderr, "IN8-03 failed: wrong charset accepted\n"); ok = 0; }
+    if (is_ntlm8(HASH_NTLM, CHARSET_ASCII_32_95, 8, 8, 65536, 422000) != 0)
+        { fprintf(stderr, "IN8-04 failed: non-zero reduction_offset accepted\n"); ok = 0; }
 
     /* is_ntlm9 */
     if (is_ntlm9(HASH_NTLM, CHARSET_ASCII_32_95, 9, 9, 0, 803000) != 1)
@@ -73,6 +82,8 @@ static int group_c(void)
         { fprintf(stderr, "IN9-02 failed: wrong plaintext_len accepted\n"); ok = 0; }
     if (is_ntlm9(HASH_LM, CHARSET_ASCII_32_95, 9, 9, 0, 803000) != 0)
         { fprintf(stderr, "IN9-03 failed: wrong hash_type accepted\n"); ok = 0; }
+    if (is_ntlm9(HASH_NTLM, CHARSET_ASCII_32_95, 9, 9, 65536, 803000) != 0)
+        { fprintf(stderr, "IN9-04 failed: non-zero reduction_offset accepted\n"); ok = 0; }
 
     return ok;
 }
@@ -87,6 +98,12 @@ static int group_d(void)
     get_rt_log_filename(result, sizeof(result), "foo.rt");
     if (strcmp(result, "foo.rt.log") != 0)
         { fprintf(stderr, "GRLF-01 failed: got \"%s\"\n", result); ok = 0; }
+
+    /* GRLF-02: path with directory separators. */
+    memset(result, 0, sizeof(result));
+    get_rt_log_filename(result, sizeof(result), "/path/to/table.rt");
+    if (strcmp(result, "/path/to/table.rt.log") != 0)
+        { fprintf(stderr, "GRLF-02 failed: got \"%s\"\n", result); ok = 0; }
 
     return ok;
 }
@@ -214,6 +231,15 @@ static int group_h(void)
     parse_rt_params(&p, fn);
     if (p.parsed)
         { fprintf(stderr, "PRP-08 failed: zero chain_len accepted\n"); ok = 0; }
+
+    /* PRP-09: plaintext_len_max == MAX_PLAINTEXT_LEN (16) - regression for
+     * bug where '<' was used instead of '<=' in parse_rt_params validation. */
+    strncpy(fn, "ntlm_ascii-32-95#16-16_0_100000x67108864_0.rt", sizeof(fn));
+    parse_rt_params(&p, fn);
+    if (!p.parsed)
+        { fprintf(stderr, "PRP-09 failed: plaintext_len_max==16 rejected\n"); ok = 0; }
+    else if (p.plaintext_len_max != 16)
+        { fprintf(stderr, "PRP-09b failed: plaintext_len_max=%u\n", p.plaintext_len_max); ok = 0; }
 
     return ok;
 }

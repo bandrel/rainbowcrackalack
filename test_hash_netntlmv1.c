@@ -30,13 +30,17 @@
 #include "test_hash_netntlmv1.h"
 
 
-/* 7-byte plaintexts used as DES keys in NetNTLMv1 tables. */
+/* 7-byte plaintexts used as DES keys in NetNTLMv1 tables.
+ * "\x01\x01\x01\x01\x01\x01\x01" exercises a zero byte in the expanded DES
+ * key (setup_des_key maps 0x01 to key[0]=0x00) without triggering the smoke
+ * test's false-positive guard for identical raw/expanded keys. */
 static const char *netntlmv1_test_inputs[] = {
     "abcdefg",
     "1234567",
     "ABCDEFG",
     "passwd1",
     " !#$%&(",
+    "\x01\x01\x01\x01\x01\x01\x01",
 };
 
 

@@ -220,8 +220,11 @@ extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 #define CLCREATECONTEXT(_context_callback, _device_ptr) \
   gpu_create_context(*(_device_ptr))
 
+/* Suppress -Wunused-variable for 'err' (defined in CLMAKETESTVARS): Metal's
+ * gpu_create_queue returns the queue directly rather than setting an error
+ * code, so err is only written later by CLRUNKERNEL/CLFLUSH/CLWAIT. */
 #define CLCREATEQUEUE(_context, _device) \
-  gpu_create_queue(_context, _device)
+  ((void)err, gpu_create_queue(_context, _device))
 
 #define CLRUNKERNEL(_queue, _kernel, _gws_ptr) \
   { err = gpu_enqueue_kernel(_queue, _kernel, 1, _gws_ptr); if (err != 0) { fprintf(stderr, "gpu_enqueue_kernel failed: %d\n", err); exit(-1); } }
