@@ -26,8 +26,11 @@
 #include "shared.h"
 #include "test_chain.h"
 #include "test_chain_netntlmv1.h"
+#include "test_chain_md5_8.h"
+#include "test_chain_md5_9.h"
 #include "test_chain_ntlm9.h"
 #include "test_hash.h"
+#include "test_hash_md5.h"
 #include "test_hash_netntlmv1.h"
 #include "test_hash_ntlm9.h"
 #include "test_hash_to_index.h"
@@ -319,11 +322,54 @@ int main(int ac, char **av) {
   CLRELEASEPROGRAM(program);
 
 
+  printf("Running MD5 8-char chain tests... "); fflush(stdout);
+  hash_type = HASH_MD5;
+  load_kernel(context, num_devices, devices, "crackalack_md5_8.cl", "crackalack_md5_8", &program, &kernel, hash_type);
+  if (!test_chain_md5_8(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  printf("Running MD5 9-char chain tests... "); fflush(stdout);
+  hash_type = HASH_MD5;
+  load_kernel(context, num_devices, devices, "crackalack_md5_9.cl", "crackalack_md5_9", &program, &kernel, hash_type);
+  if (!test_chain_md5_9(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
   /* NetNTLMv1 hash tests. */
   printf("Running NetNTLMv1 hash tests... "); fflush(stdout);
   hash_type = HASH_NETNTLMV1;
   load_kernel(context, num_devices, devices, "test_hash.cl", "test_hash", &program, &kernel, hash_type);
   if (!test_hash_netntlmv1(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* MD5 hash tests. */
+  printf("Running MD5 hash tests... "); fflush(stdout);
+  hash_type = HASH_MD5;
+  load_kernel(context, num_devices, devices, "test_hash.cl", "test_hash", &program, &kernel, hash_type);
+  if (!test_hash_md5(devices[0], context, kernel)) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
