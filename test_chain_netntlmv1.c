@@ -26,25 +26,37 @@ struct netntlmv1_chain_test {
     uint64_t start;
     unsigned int chain_len;
     unsigned int table_index;
+    const char *charset;
+    unsigned int charset_len;
+    unsigned int plaintext_len; /* min == max for NetNTLMv1 tables */
 };
 
-/* Short chains using ascii-32-95 with 7-char plaintexts.
- * Includes low table_index values (0, 1) for basic coverage and high
- * table_index values (100, 1000) to exercise large reduction offsets
- * (table_index * 65536) which stress the hash_to_index modular reduction. */
+/* ascii-32-95 7-char chain tests.
+ * Includes low table_index (0, 1) for basic coverage and high table_index
+ * (100, 1000) to exercise large reduction offsets (table_index * 65536).
+ * chain_len=1 is a degenerate case: 0 hash+reduce steps, end==start.
+ * The high start index (69833729609374) is pspace_total-1 for 7-char
+ * ascii-32-95 (95^7), exercising the upper plaintext space boundary. */
 static struct netntlmv1_chain_test netntlmv1_chain_tests[] = {
-    {0UL,   100, 0},
-    {999UL, 100, 0},
-    {0UL,   200, 1},
-    {0UL,   100, 100},
-    {500UL, 150, 1000},
+    {0UL,              100,  0, CHARSET_ASCII_32_95, CHARSET_ASCII_32_95_LEN, 7},
+    {999UL,            100,  0, CHARSET_ASCII_32_95, CHARSET_ASCII_32_95_LEN, 7},
+    {0UL,              200,  1, CHARSET_ASCII_32_95, CHARSET_ASCII_32_95_LEN, 7},
+    {0UL,              100,  100, CHARSET_ASCII_32_95, CHARSET_ASCII_32_95_LEN, 7},
+    {500UL,            150,  1000, CHARSET_ASCII_32_95, CHARSET_ASCII_32_95_LEN, 7},
+    /* chain_len=1: loop runs 0 iterations, end must equal start */
+    {42UL,               1,    0, CHARSET_ASCII_32_95, CHARSET_ASCII_32_95_LEN, 7},
+    /* high start near top of 7-char ascii-32-95 space (95^7 - 1) */
+    {69833729609374UL, 100,    0, CHARSET_ASCII_32_95, CHARSET_ASCII_32_95_LEN, 7},
+    /* digits-only, 3-char plaintexts: pspace=1000, different modular reduction */
+    {0UL,               50,    0, CHARSET_NUMERIC, CHARSET_NUMERIC_LEN, 3},
+    {500UL,             50,    1, CHARSET_NUMERIC, CHARSET_NUMERIC_LEN, 3},
 };
 
 
 /*
  * CPU reference NetNTLMv1 chain generator.
- * Mirrors the GPU crackalack kernel for HASH_NETNTLMV1 with ascii-32-95 7-char
- * tables using index_to_plaintext + setup_des_key + netntlmv1_hash + hash_to_index.
+ * Mirrors the GPU crackalack kernel for HASH_NETNTLMV1 using
+ * index_to_plaintext + setup_des_key + netntlmv1_hash + hash_to_index.
  *
  * The loop runs chain_len-1 iterations (not chain_len) because a rainbow chain
  * of length N has N links but only N-1 hash+reduce steps: the start point is
@@ -53,7 +65,10 @@ static struct netntlmv1_chain_test netntlmv1_chain_tests[] = {
  * crackalack kernel which also iterates from pos_start to chain_len-1.
  */
 static uint64_t cpu_netntlmv1_chain(uint64_t start, unsigned int chain_len,
-                                     unsigned int table_index)
+                                     unsigned int table_index,
+                                     const char *charset,
+                                     unsigned int charset_len,
+                                     unsigned int plaintext_len_val)
 {
     uint64_t pspace_up_to[MAX_PLAINTEXT_LEN] = {0};
     uint64_t pspace_total;
@@ -61,17 +76,20 @@ static uint64_t cpu_netntlmv1_chain(uint64_t start, unsigned int chain_len,
     unsigned int pos;
     unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(table_index);
 
-    pspace_total = fill_plaintext_space_table(CHARSET_ASCII_32_95_LEN, 7, 7,
+    pspace_total = fill_plaintext_space_table(charset_len,
+                                              plaintext_len_val,
+                                              plaintext_len_val,
                                               pspace_up_to);
 
     for (pos = 0; pos < chain_len - 1; pos++) {
         char plaintext[MAX_PLAINTEXT_LEN] = {0};
-        unsigned int plaintext_len = 0;
+        unsigned int pl = 0;
         unsigned char key[8] = {0};
         unsigned char hash[8] = {0};
 
-        index_to_plaintext(index, CHARSET_ASCII_32_95, CHARSET_ASCII_32_95_LEN,
-                           7, 7, pspace_up_to, plaintext, &plaintext_len);
+        index_to_plaintext(index, (char *)charset, charset_len,
+                           plaintext_len_val, plaintext_len_val,
+                           pspace_up_to, plaintext, &pl);
         setup_des_key(plaintext, key);
         netntlmv1_hash(key, 8, hash);
         /* pos is the 0-based intra-chain step; reduction_offset carries the
@@ -93,7 +111,8 @@ static int gpu_test_netntlmv1_chain(gpu_device device, gpu_context context,
     int test_passed = 0;
 
     gpu_uint hash_type = HASH_NETNTLMV1;
-    gpu_uint plaintext_len_min = 7, plaintext_len_max = 7;
+    gpu_uint plaintext_len_min = t->plaintext_len;
+    gpu_uint plaintext_len_max = t->plaintext_len;
     gpu_uint reduction_offset =
         TABLE_INDEX_TO_REDUCTION_OFFSET(t->table_index);
     gpu_uint chain_len = t->chain_len;
@@ -105,8 +124,9 @@ static int gpu_test_netntlmv1_chain(gpu_device device, gpu_context context,
     gpu_ulong pspace_total = 0;
     {
         uint64_t tmp[MAX_PLAINTEXT_LEN] = {0};
-        uint64_t tot = fill_plaintext_space_table(CHARSET_ASCII_32_95_LEN,
-                                                   7, 7, tmp);
+        uint64_t tot = fill_plaintext_space_table(t->charset_len,
+                                                   t->plaintext_len,
+                                                   t->plaintext_len, tmp);
         int k;
         for (k = 0; k < MAX_PLAINTEXT_LEN; k++)
             pspace_up_to[k] = (gpu_ulong)tmp[k];
@@ -136,7 +156,7 @@ static int gpu_test_netntlmv1_chain(gpu_device device, gpu_context context,
 
     CLCREATEARG(0, hash_type_buf, CL_RO, hash_type, sizeof(hash_type));
     CLCREATEARG_ARRAY(1, charset_buf, CL_RO,
-                      CHARSET_ASCII_32_95, CHARSET_ASCII_32_95_LEN + 1);
+                      t->charset, t->charset_len + 1);
     CLCREATEARG(2, len_min_buf, CL_RO, plaintext_len_min, sizeof(plaintext_len_min));
     CLCREATEARG(3, len_max_buf, CL_RO, plaintext_len_max, sizeof(plaintext_len_max));
     CLCREATEARG(4, reduc_buf, CL_RO, reduction_offset, sizeof(reduction_offset));
@@ -198,7 +218,9 @@ int test_chain_netntlmv1(gpu_device device, gpu_context context, gpu_kernel kern
     for (i = 0; i < num_tests; i++) {
         const struct netntlmv1_chain_test *t = &netntlmv1_chain_tests[i];
         uint64_t cpu_end = cpu_netntlmv1_chain(t->start, t->chain_len,
-                                                t->table_index);
+                                                t->table_index,
+                                                t->charset, t->charset_len,
+                                                t->plaintext_len);
         tests_passed &= gpu_test_netntlmv1_chain(device, context, kernel,
                                                   t, cpu_end);
     }

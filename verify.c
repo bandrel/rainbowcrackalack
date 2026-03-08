@@ -86,6 +86,7 @@ int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigne
 */
       if (end < last_end) {
 	fprintf(stderr, "Error: table end indices are not sorted.  Current end index (at chain #%u) is not greater or equal to last end index.\n\n\tCurrent end index: %"PRIu64"\n\tLast end index:    %"PRIu64"\n\n", i, end, last_end);
+	*error_chain_num = i;
 	return 0;
       }
 
