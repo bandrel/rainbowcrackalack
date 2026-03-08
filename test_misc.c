@@ -8,6 +8,7 @@
 #include <stdlib.h>
 
 #include "charset.h"
+#include "hash_validate.h"
 #include "misc.h"
 #include "shared.h"
 #include "test_misc.h"
@@ -110,7 +111,7 @@ static int group_e(void)
 }
 
 
-/* --- Group F: hash_str_to_type (declared in misc.h) --- */
+/* --- Group F: hash_str_to_type (declared in hash_validate.h) --- */
 static int group_f(void)
 {
     int ok = 1;
