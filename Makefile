@@ -67,6 +67,7 @@ LOOKUP_PROG   := crackalack_lookup$(EXE)
 PERFECTIFY    := perfectify$(EXE)
 ENUMERATE     := enumerate_chain$(EXE)
 SORT_PROG     := crackalack_sort$(EXE)
+PLAN_PROG     := crackalack_plan$(EXE)
 
 BINARIES := \
 	$(OUTDIR)/$(GEN_PROG) \
@@ -77,7 +78,8 @@ BINARIES := \
 	$(OUTDIR)/$(LOOKUP_PROG) \
 	$(OUTDIR)/$(PERFECTIFY) \
 	$(OUTDIR)/$(ENUMERATE) \
-	$(OUTDIR)/$(SORT_PROG)
+	$(OUTDIR)/$(SORT_PROG) \
+	$(OUTDIR)/$(PLAN_PROG)
 
 .PHONY: all linux macos windows clean strip \
         prep_opencl_headers prep_none \
@@ -223,6 +225,15 @@ $(OUTDIR)/$(SORT_PROG): \
 	$(GPU_BACKEND_OBJ)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
+$(OUTDIR)/$(PLAN_PROG): \
+	$(OBJDIR)/charset.o \
+	$(OBJDIR)/crackalack_plan.o \
+	$(OBJDIR)/file_lock.o \
+	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/mask_parse.o \
+	$(OBJDIR)/misc.o
+	$(CC) $(LDFLAGS) $^ -o $@ -lgcrypt -lm
+
 bundle_windows:
 	@echo "Bundling runtime DLLs into $(OUTDIR)..."
 	@set -e; \
@@ -257,5 +268,5 @@ bundle_windows:
 clean:
 	rm -rf build
 	rm -f *.exe \
-	      crackalack_gen crackalack_unit_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_lookup perfectify enumerate_chain crackalack_sort \
+	      crackalack_gen crackalack_unit_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_lookup perfectify enumerate_chain crackalack_sort crackalack_plan \
 	      libgcrypt-20.dll libgpg-error-0.dll libwinpthread-1.dll
