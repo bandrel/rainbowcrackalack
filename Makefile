@@ -204,8 +204,15 @@ $(OUTDIR)/$(ENUMERATE): \
 	$(OBJDIR)/test_shared.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
-$(OUTDIR)/$(SORT_PROG): $(OBJDIR)/crackalack_sort.o
-	$(CC) $(LDFLAGS) $^ -o $@
+$(OUTDIR)/$(SORT_PROG): \
+	$(OBJDIR)/crackalack_sort.o \
+	$(OBJDIR)/charset.o \
+	$(OBJDIR)/file_lock.o \
+	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/mask_parse.o \
+	$(OBJDIR)/misc.o \
+	$(GPU_BACKEND_OBJ)
+	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 bundle_windows:
 	@echo "Bundling runtime DLLs into $(OUTDIR)..."
