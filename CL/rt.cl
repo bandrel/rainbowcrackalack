@@ -1,6 +1,7 @@
 #include "shared.h"
 #include "ntlm.cl"
 #include "netntlmv1.cl"
+#include "md5.cl"
 
 /*
 #ifdef USE_DES_BITSLICE
@@ -49,6 +50,9 @@ inline void do_hash(unsigned int hash_type, unsigned char *plaintext, unsigned i
   for (int _i = (int)plaintext_len; _i < 7; _i++) plaintext[_i] = 0;
   netntlmv1_hash(SK, plaintext, hash_value /*, g_debug*/);
   *hash_len = 8;
+#elif HASH_TYPE == HASH_MD5
+  md5_hash(plaintext, plaintext_len, hash_value);
+  *hash_len = 16;
 #endif
 
   return;

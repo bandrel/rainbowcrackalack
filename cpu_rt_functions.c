@@ -156,12 +156,17 @@ uint64_t generate_rainbow_chain(
   unsigned int pos = 0;
 
 
-  if (hash_type != HASH_NTLM)
-    fprintf(stderr, "\n\tWARNING: only NTLM hashes are currently supported!\n\n");
+  if (hash_type != HASH_NTLM && hash_type != HASH_MD5)
+    fprintf(stderr, "\n\tWARNING: only NTLM and MD5 hashes are currently supported!\n\n");
 
   for (; pos < chain_len - 1; pos++) {
     index_to_plaintext(index, charset, charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, plaintext_len);
-    ntlm_hash(plaintext, *plaintext_len, hash);
+    if (hash_type == HASH_MD5) {
+      md5_hash(plaintext, *plaintext_len, hash);
+      *hash_len = 16;
+    } else {
+      ntlm_hash(plaintext, *plaintext_len, hash);
+    }
     index = hash_to_index(hash, *hash_len, reduction_offset, plaintext_space_total, pos);
   }
   return index;
@@ -376,4 +381,9 @@ void netntlmv1_hash(unsigned char *plaintext, unsigned int plaintext_len, unsign
 
     // Clean up
     gcry_cipher_close(handle);
+}
+
+
+void md5_hash(char *plaintext, unsigned int plaintext_len, unsigned char *hash) {
+  gcry_md_hash_buffer(GCRY_MD_MD5, hash, plaintext, plaintext_len);
 }
