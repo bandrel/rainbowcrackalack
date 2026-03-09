@@ -31,6 +31,8 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 #include "gpu_backend.h"
 
@@ -343,6 +345,25 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
 }
 
 
+/* Parses a CLI argument as a non-negative unsigned int.
+ * Exits with an error message if the value is not a valid integer or
+ * overflows unsigned int range. */
+unsigned int parse_uint_arg(const char *s, const char *name) {
+  char *end;
+  errno = 0;
+  unsigned long val = strtoul(s, &end, 10);
+  if (errno != 0 || end == s || *end != '\0') {
+    fprintf(stderr, "Error: %s must be a valid non-negative integer, got '%s'.\n", name, s);
+    exit(-1);
+  }
+  if (val > UINT32_MAX) {
+    fprintf(stderr, "Error: %s value %lu exceeds maximum (%u).\n", name, val, UINT32_MAX);
+    exit(-1);
+  }
+  return (unsigned int)val;
+}
+
+
 /* Combines realloc() with calloc(). */
 void *recalloc(void *ptr, size_t new_size, size_t old_size) {
   ptr = realloc(ptr, new_size);
@@ -351,7 +372,7 @@ void *recalloc(void *ptr, size_t new_size, size_t old_size) {
     exit(-1);
   }
 
-  memset(ptr + old_size, 0, new_size - old_size);
+  memset((unsigned char *)ptr + old_size, 0, new_size - old_size);
   return ptr;
 }
 
