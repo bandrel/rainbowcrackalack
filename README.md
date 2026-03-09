@@ -4,7 +4,7 @@ Author: [Joe Testa](https://www.positronsecurity.com/company/) ([@therealjoetest
 
 ## About
 
-This project produces open-source code to generate rainbow tables as well as use them to look up password hashes.  Currently supports NTLM and MD5.  Future releases may support SHA-1, SHA-256, and possibly more.  Linux, Windows, and macOS (Apple Silicon) are supported!
+This project produces open-source code to generate rainbow tables as well as use them to look up password hashes.  Currently supports NTLM, MD5, and Net-NTLMv1.  Future releases may support SHA-1, SHA-256, and possibly more.  Linux, Windows, and macOS (Apple Silicon) are supported!
 
 For more information, see the project website: [https://www.rainbowcrackalack.com/](https://www.rainbowcrackalack.com/)
 
@@ -43,7 +43,7 @@ The arguments are designed to be comparable to those of the original (and now cl
 
 |Argument    |Meaning   |
 |------------|----------|
-|ntlm        |The hash algorithm to use.  Supported values: "ntlm", "md5".|
+|ntlm        |The hash algorithm to use.  Supported values: "ntlm", "md5", "netntlmv1".|
 |ascii-32-95 |The character set to use.  This effectively means "all available characters on the US keyboard".|
 |9           |The minimum plaintext character length.|
 |9           |The maximum plaintext character length.|
@@ -144,6 +144,18 @@ A 10% coverage Markov table covers 10% of the most probable password space rathe
 Pass the same `--markov` flag to `crackalack_lookup` when looking up hashes against tables that were generated with `--markov`:
 
     # ./crackalack_lookup /export/ntlm8_tables/ /home/user/hashes.txt --markov ntlm_rockyou.markov
+
+#### Generating NetNTLMv1 tables
+
+NetNTLMv1 rainbow tables cover the 7-byte DES key fragments used in the Net-NTLMv1 challenge-response protocol. Each fragment is a raw byte value (charset `byte`, length 7), so the keyspace is 256^7 per fragment.
+
+    # ./crackalack_gen netntlmv1 byte 7 7 0 803000 67108864 0
+
+Looking up captured Net-NTLMv1 hashes works the same as NTLM:
+
+    # ./crackalack_lookup /export/netntlmv1_tables/ /home/user/hashes.txt
+
+The hash file should contain 16-hex-character DES fragments (one per line). A full 48-character Net-NTLMv1 response must be split into three 16-character fragments before lookup.
 
 #### Table lookups against NTLM 8-character hashes
 
