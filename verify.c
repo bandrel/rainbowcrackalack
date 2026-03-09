@@ -38,9 +38,11 @@ void _print_chain_error(uint64_t random_chain, uint64_t start, uint64_t actual_e
 
 /* Verifies a rainbow table already loaded from disk. */
 int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, unsigned int *error_chain_num, unsigned int is_mask) {
-  unsigned int i = 0;
+  unsigned int i = 0, dummy_error_chain = 0;
   uint64_t start = 0, end = 0;
 
+  if (error_chain_num == NULL)
+    error_chain_num = &dummy_error_chain;
 
   if (table_type == VERIFY_TABLE_TYPE_GENERATED) {
     /* Newly-generated tables must have sequential start indices, and end indices that are not zero. */
@@ -328,10 +330,9 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
     if (is_mask) {
       printf("Note: skipping CPU chain verification for mask charset.\n"); fflush(stdout);
-    } else if (rt_params.hash_type == HASH_NTLM) {
+    } else if (rt_params.hash_type == HASH_NTLM || rt_params.hash_type == HASH_MD5) {
       for (i = 0; i < num_chains_to_verify; i++) {
 	random_chain = get_random(actual_num_chains);
-	/*printf("  Verifying chain #%"PRIu64"...\n", random_chain);*/
 
 	start = rainbow_table[random_chain * 2];
 	actual_end = rainbow_table[(random_chain * 2) + 1];
@@ -344,7 +345,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 	}
       }
     } else {
-      printf("Note: skipping CPU chain verification since hash type is not NTLM.\n"); fflush(stdout);
+      printf("Note: skipping CPU chain verification since hash type is not supported.\n"); fflush(stdout);
     }
   }
 
