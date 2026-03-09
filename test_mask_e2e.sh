@@ -76,7 +76,7 @@ run_test() {
     fi
 
     # Move generated table to test dir (encode mask ? as % to match filename convention)
-    local encoded_mask="${mask//?/%}"
+    local encoded_mask="${mask//\?/%}"
     mv "$BINDIR"/ntlm_"${encoded_mask}"*"#${pt_len}-${pt_len}"_*.rt "$table_dir/" 2>/dev/null || true
 
     # Sort
