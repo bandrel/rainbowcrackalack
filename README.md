@@ -100,7 +100,9 @@ To override the worker count explicitly:
 
     # ./crackalack_sort --jobs 4 /export/ntlm8_tables/*.rt
 
-`--jobs 0` (or omitting `--jobs`) uses automatic detection. Files that are already sorted are skipped without being rewritten.
+`--jobs 0` (or omitting `--jobs`) uses automatic detection, measuring available RAM and CPU cores to pick the largest worker count that fits each table into RAM simultaneously. Override with `--jobs N` to reserve resources for other concurrent processes.
+
+Files that are already sorted are detected and skipped automatically. It is safe to pass an entire directory glob even if some tables were previously sorted.
 
 #### Estimating table size and coverage
 
