@@ -30,8 +30,8 @@ typedef struct {
   uint64_t     *pos0_freq;          /* [charset_len] - position-0 counts */
   uint64_t     *bigram_freq;        /* [charset_len * charset_len] - bigram counts */
   /* Sorted lookup tables for GPU (built after load/train) */
-  uint8_t      *sorted_pos0;        /* [charset_len] - char indices sorted by freq desc */
-  uint8_t      *sorted_bigram;      /* [charset_len * charset_len] - per-prev sorted indices */
+  uint8_t      *sorted_pos0;        /* [charset_len] - char indices sorted by freq desc (max charset_len 255) */
+  uint8_t      *sorted_bigram;      /* [charset_len * charset_len] - per-prev sorted indices (max charset_len 255) */
 } markov_model;
 
 /* Train a model from a wordlist file.
