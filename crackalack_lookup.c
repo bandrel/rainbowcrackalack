@@ -474,6 +474,15 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
       	    /*printf("Found super false positive!: NTLM('%s') != %s\n", plaintext, ppi_refs[j]->hash);*/
       	    continue;
       	  }
+      	} else if (args[i].hash_type == HASH_MD5) {
+      	  unsigned char hash[16] = {0};
+      	  char hash_hex[(sizeof(hash) * 2) + 1] = {0};
+
+      	  md5_hash(plaintext, plaintext_len, hash);
+      	  if (!bytes_to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex)) || \
+      	      (strcmp(hash_hex, ppi_refs[j]->hash) != 0)) {
+      	    continue;
+      	  }
       	} else if (args[i].hash_type == HASH_NETNTLMV1) {
 
           unsigned char hash[8] = {0};
@@ -1842,7 +1851,7 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
  * is set to the *.index cache file. */
 gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size) {
   char buf[256] = {0};
-  int file_size = 0;
+  long file_size = 0;
   DIR *d = NULL;
   struct dirent *de = NULL;
   FILE *f = NULL;
@@ -1898,7 +1907,7 @@ gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, 
 	file_size = get_file_size(f);
 
 	if (file_size % sizeof(gpu_ulong) != 0) {
-	  fprintf(stderr, "Precomputed indices file is not a multiple of %"PRIu64": %u\n", (uint64_t)sizeof(gpu_ulong), file_size);
+	  fprintf(stderr, "Precomputed indices file is not a multiple of %"PRIu64": %ld\n", (uint64_t)sizeof(gpu_ulong), file_size);
 	  exit(-1);
 	}
 
@@ -2071,9 +2080,9 @@ int main(int ac, char **av) {
   /* Parse optional flags (everything after the first two positional args). */
   for (i = 3; i < (unsigned int)ac; i++) {
     if ((strcmp(av[i], "-gws") == 0) && (i + 1 < (unsigned int)ac)) {
-      user_provided_gws = (unsigned int)atoi(av[++i]);
+      user_provided_gws = parse_uint_arg(av[++i], "-gws");
     } else if ((strcmp(av[i], "-disable-platform") == 0) && (i + 1 < (unsigned int)ac)) {
-      disable_platform = (unsigned int)atoi(av[++i]);
+      disable_platform = parse_uint_arg(av[++i], "-disable-platform");
     } else if ((strcmp(av[i], "--markov") == 0) && (i + 1 < (unsigned int)ac)) {
       use_markov = 1;
       strncpy(markov_path, av[++i], sizeof(markov_path) - 1);
