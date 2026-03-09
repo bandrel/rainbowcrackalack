@@ -110,9 +110,6 @@ void index_to_plaintext(uint64_t index, char *charset, unsigned int charset_len,
   for (i = plaintext_len_max - 1; i >= plaintext_len_min - 1; i--) {
     if (index >= plaintext_space_up_to_index[i]) {
       *plaintext_len = i + 1;
-      if (*plaintext_len >= MAX_PLAINTEXT_LEN)
-	return;
-
       plaintext[*plaintext_len] = '\0';
       break;
     }
