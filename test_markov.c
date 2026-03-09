@@ -309,6 +309,101 @@ static int group_d(void)
 
 
 /* -------------------------------------------------------------------------
+ * Group E: markov_train edge cases
+ * Tests ME-04 through ME-07
+ * ------------------------------------------------------------------------- */
+
+static int group_e(void)
+{
+    int ok = 1;
+    markov_model m;
+
+    /* ME-04: charset_len == 0 returns -1 */
+    memset(&m, 0, sizeof(m));
+    if (markov_train("/dev/null", "abc", 0, &m) != -1) {
+        fprintf(stderr, "ME-04 failed: expected -1 for charset_len==0\n");
+        ok = 0;
+    }
+
+    /* ME-05: charset_len > 256 returns -1 */
+    memset(&m, 0, sizeof(m));
+    if (markov_train("/dev/null", "abc", 257, &m) != -1) {
+        fprintf(stderr, "ME-05 failed: expected -1 for charset_len==257\n");
+        ok = 0;
+    }
+
+    /* ME-06: all words outside charset returns -1 */
+    {
+        char path[128];
+        snprintf(path, sizeof(path),
+                 "/tmp/test_markov_oob_%d.txt", (int)getpid());
+        FILE *fp = fopen(path, "w");
+        if (!fp) {
+            fprintf(stderr, "ME-06: cannot create file\n");
+            ok = 0;
+        } else {
+            fprintf(fp, "XYZ\n999\n");
+            fclose(fp);
+
+            memset(&m, 0, sizeof(m));
+            if (markov_train(path, "abc", 3, &m) != -1) {
+                fprintf(stderr, "ME-06 failed: expected -1 for all-OOB corpus\n");
+                ok = 0;
+            } else {
+                fprintf(stderr, " (expected)\n");
+            }
+            remove(path);
+        }
+    }
+
+    /* ME-07: single-character words produce valid model */
+    {
+        char path[128];
+        snprintf(path, sizeof(path),
+                 "/tmp/test_markov_single_%d.txt", (int)getpid());
+        FILE *fp = fopen(path, "w");
+        if (!fp) {
+            fprintf(stderr, "ME-07: cannot create file\n");
+            ok = 0;
+        } else {
+            for (int i = 0; i < 10; i++) fprintf(fp, "a\n");
+            for (int i = 0; i < 5; i++) fprintf(fp, "b\n");
+            fclose(fp);
+
+            memset(&m, 0, sizeof(m));
+            if (markov_train(path, "abc", 3, &m) != 0) {
+                fprintf(stderr, "ME-07 failed: markov_train returned error\n");
+                ok = 0;
+            } else {
+                /* 'a' should be most frequent at pos0 (10+1=11 vs 5+1=6 vs 0+1=1) */
+                if (m.sorted_pos0[0] != 0) {
+                    fprintf(stderr, "ME-07 failed: sorted_pos0[0]=%u, expected 0 ('a')\n",
+                            (unsigned)m.sorted_pos0[0]);
+                    ok = 0;
+                }
+                /* All bigram counts should be exactly 1 (Laplace only, no observed bigrams) */
+                int bigrams_ok = 1;
+                for (unsigned int i = 0; i < 9; i++) {
+                    if (m.bigram_freq[i] != 1) {
+                        bigrams_ok = 0;
+                        break;
+                    }
+                }
+                if (!bigrams_ok) {
+                    fprintf(stderr, "ME-07 failed: expected uniform bigram freq (all 1)\n");
+                    ok = 0;
+                }
+                markov_free(&m);
+            }
+            remove(path);
+        }
+    }
+
+    return ok;
+}
+
+
+/* -------------------------------------------------------------------------
  * test_markov - entry point
  * ------------------------------------------------------------------------- */
 
@@ -320,6 +415,7 @@ int test_markov(void)
     ok &= group_b();
     ok &= group_c();
     ok &= group_d();
+    ok &= group_e();
 
     return ok;
 }
