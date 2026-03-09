@@ -54,13 +54,11 @@ void delete_rt_log(char *rt_filename) {
 
 /* Joins two file paths together in a platform-independent way. */
 void filepath_join(char *filepath_result, unsigned int filepath_result_size, const char *path1, const char *path2) {
-  strncpy(filepath_result, path1, filepath_result_size);
 #ifdef _WIN32
-  strncat(filepath_result, "\\", filepath_result_size);
+  snprintf(filepath_result, filepath_result_size, "%s\\%s", path1, path2);
 #else
-  strncat(filepath_result, "/", filepath_result_size);
+  snprintf(filepath_result, filepath_result_size, "%s/%s", path1, path2);
 #endif
-  strncat(filepath_result, path2, filepath_result_size);
 }
 
 
