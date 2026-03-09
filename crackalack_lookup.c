@@ -307,7 +307,7 @@ void add_potential_start_index_and_position(precomputed_and_potential_indices *p
   /* Initialize the potential_start_indices buffer if it isn't already. */
   if (ppi->potential_start_indices == NULL) {
     ppi->potential_start_indices = calloc(POTENTIAL_START_INDICES_INITIAL_SIZE, sizeof(gpu_ulong));
-    ppi->potential_start_index_positions = calloc(POTENTIAL_START_INDICES_INITIAL_SIZE, sizeof(gpu_ulong));
+    ppi->potential_start_index_positions = calloc(POTENTIAL_START_INDICES_INITIAL_SIZE, sizeof(unsigned int));
     if ((ppi->potential_start_indices == NULL) || (ppi->potential_start_index_positions == NULL)) {
       fprintf(stderr, "Failed to initialize potential_start_indices / potential_start_index_positions buffer.\n");
       exit(-1);
@@ -321,7 +321,7 @@ void add_potential_start_index_and_position(precomputed_and_potential_indices *p
 
     /*printf("Resizing array from %u to %u.\n", ppi->potential_start_indices_size, new_size_in_ulongs);*/
     ppi->potential_start_indices = recalloc(ppi->potential_start_indices, new_size_in_ulongs * sizeof(gpu_ulong), ppi->potential_start_indices_size * sizeof(gpu_ulong));
-    ppi->potential_start_index_positions = recalloc(ppi->potential_start_index_positions, new_size_in_ulongs * sizeof(gpu_ulong), ppi->potential_start_indices_size * sizeof(gpu_ulong));
+    ppi->potential_start_index_positions = recalloc(ppi->potential_start_index_positions, new_size_in_ulongs * sizeof(unsigned int), ppi->potential_start_indices_size * sizeof(unsigned int));
     if ((ppi->potential_start_indices == NULL) || (ppi->potential_start_index_positions == NULL)) {
       fprintf(stderr, "Failed to re-allocate potential_start_indices/potential_start_index_positions buffer to %u.\n", new_size_in_ulongs);
       exit(-1);
@@ -369,7 +369,7 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
 
   /* Allocate a buffer to hold them all. */
   potential_start_indices = calloc(num_potential_start_indices, sizeof(gpu_ulong));
-  potential_start_index_positions = calloc(num_potential_start_indices, sizeof(gpu_ulong));
+  potential_start_index_positions = calloc(num_potential_start_indices, sizeof(unsigned int));
   hash_base_indices = calloc(num_potential_start_indices, sizeof(gpu_ulong));
   ppi_refs = calloc(num_potential_start_indices, sizeof(precomputed_and_potential_indices *));
   if ((potential_start_indices == NULL) || (potential_start_index_positions == NULL) || (hash_base_indices == NULL) || (ppi_refs == NULL)) {
@@ -510,16 +510,19 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
       	/* Save the plaintext, clear the precomputed end indices list (since its
       	 * no longer useful, save the hash/plaintext combo into the pot file, and
       	 * tell the user. */
-      	ppi_refs[j]->plaintext = strdup(plaintext);
+      	if (args[i].hash_type == HASH_NETNTLMV1) {
+          char ptxt_hex[(7 * 2) + 1] = {0};
+          bytes_to_hex((unsigned char*)plaintext, 7, ptxt_hex, sizeof(ptxt_hex));
+          ppi_refs[j]->plaintext = strdup(ptxt_hex);
+        } else {
+          ppi_refs[j]->plaintext = strdup(plaintext);
+        }
       	ppi_refs[j]->num_precomputed_end_indices = 0;
       	FREE(ppi_refs[j]->precomputed_end_indices);
 
       	save_cracked_hash(ppi_refs[j], args[i].hash_type);
         if (args[i].hash_type == HASH_NETNTLMV1) {
-          char ptxt_hex[(sizeof(plaintext) * 2) + 1] = {0};
-          bytes_to_hex((unsigned char*)plaintext, 7, ptxt_hex, sizeof(ptxt_hex));
-
-          printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, ppi_refs[j]->hash, ptxt_hex, CLR);
+          printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, ppi_refs[j]->hash, ppi_refs[j]->plaintext, CLR);
           fflush(stdout);
         } else {
           printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, (ppi_refs[j]->username != NULL) ? ppi_refs[j]->username : ppi_refs[j]->hash, plaintext, CLR);  fflush(stdout);
@@ -681,7 +684,7 @@ void find_rt_params(char *dir_name, rt_parameters *rt_params) {
       /* Try to parse them from this file name.  On success, return immediately
        * (no further processing needed), otherwise continue searching until the
        * first valid set of parameters is found. */
-      parse_rt_params(rt_params, de->d_name);
+      parse_rt_params(rt_params, filepath);
       if (rt_params->parsed) {
 	closedir(dir); dir = NULL;
 	return;
@@ -1347,7 +1350,7 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
     FCLOSE(f);
 
     /* Now create the rcracki.precalc.?.index file. */
-    strncat(filename, ".index", sizeof(filename) - 1);
+    strncat(filename, ".index", sizeof(filename) - strlen(filename) - 1);
     f = fopen(filename, "wb");
     if (f == NULL) {
       fprintf(stderr, "Error while creating file: %s\n", filename);
@@ -1763,15 +1766,8 @@ void rt_binary_search(gpu_ulong *rainbow_table, unsigned int num_chains, precomp
 
 void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash_type) {
   FILE *jtr_file = fopen(jtr_pot_filename, "ab"), *hashcat_file = fopen(hashcat_pot_filename, "ab");
-  unsigned int hash_len = 0, plaintext_len = 0;
-  if (hash_type == HASH_NETNTLMV1) {
-    hash_len = 8;
-    plaintext_len = 8;
-  }
-  else {
-    hash_len = strlen(ppi->hash);
-    plaintext_len = strlen(ppi->plaintext);
-  }
+  unsigned int hash_len = strlen(ppi->hash);
+  unsigned int plaintext_len = strlen(ppi->plaintext);
   char *dot_pos = strrchr(ppi->index_filename, '.');
 
 
@@ -2475,6 +2471,8 @@ int main(int ac, char **av) {
   start_timer(&search_start_time);
   search_tables(total_tables, ppi_head, args);
 
+  pthread_join(preload_thread_id, NULL);
+
   seconds_to_human_time(time_precomp_str, sizeof(time_precomp_str), time_precomp);
   seconds_to_human_time(time_io_str, sizeof(time_io_str), time_io);
   seconds_to_human_time(time_searching_str, sizeof(time_searching_str), time_searching);
@@ -2494,15 +2492,7 @@ int main(int ac, char **av) {
     ppi_cur = ppi_head;
     while(ppi_cur != NULL) {
       if (ppi_cur->plaintext != NULL) {
-        if (sizeof(ppi_cur->hash) == 8) {
-          char ptxt_hex[(sizeof(ppi_cur->plaintext) * 2) + 1] = {0};
-          bytes_to_hex((unsigned char*)ppi_cur->plaintext, 7, ptxt_hex, sizeof(ptxt_hex));
-	  printf(" %s  %s\n", (ppi_cur->username != NULL) ? ppi_cur->username : ppi_cur->hash, ptxt_hex);
-
-        }
-        else {
 	  printf(" %s  %s\n", (ppi_cur->username != NULL) ? ppi_cur->username : ppi_cur->hash, ppi_cur->plaintext);
-        }
       }
 
       ppi_cur = ppi_cur->next;
