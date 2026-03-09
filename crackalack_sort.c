@@ -20,7 +20,7 @@
 #else
 #  include <unistd.h>
 #  ifdef __APPLE__
-#    include <sys/sysctl.h>
+#    include <mach/mach.h>
 #  endif
 #endif
 #include <errno.h>
@@ -39,6 +39,16 @@
 #define CHAIN_SIZE (unsigned int)(sizeof(uint64_t) * 2)
 #define SORT_KERNEL_PATH "sort.cl"
 
+#ifdef _WIN32
+#  define RT_FSEEK(f, o, w) _fseeki64(f, o, w)
+#  define RT_FTELL(f)        _ftelli64(f)
+typedef __int64 rt_off_t;
+#else
+#  define RT_FSEEK(f, o, w) fseeko(f, o, w)
+#  define RT_FTELL(f)        ftello(f)
+typedef off_t rt_off_t;
+#endif
+
 
 static uint64_t get_free_ram(void) {
 #ifdef _WIN32
@@ -47,10 +57,15 @@ static uint64_t get_free_ram(void) {
   GlobalMemoryStatusEx(&ms);
   return (uint64_t)ms.ullAvailPhys;
 #elif defined(__APPLE__)
-  uint64_t total = 0;
-  size_t len = sizeof(total);
-  sysctlbyname("hw.memsize", &total, &len, NULL, 0);
-  return total * 4 / 10;  /* 40% of total as conservative available */
+  mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+  vm_statistics64_data_t vmstat;
+  if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+                        (host_info64_t)&vmstat, &count) != KERN_SUCCESS)
+    return 0;
+  {
+    uint64_t page_sz = (uint64_t)vm_kernel_page_size;
+    return ((uint64_t)vmstat.free_count + (uint64_t)vmstat.inactive_count) * page_sz;
+  }
 #else
   long pages = sysconf(_SC_AVPHYS_PAGES);
   long page_size = sysconf(_SC_PAGE_SIZE);
@@ -120,7 +135,7 @@ static int gpu_sort(uint64_t *data, unsigned int num_chains) {
   gpu_kernel kernel = NULL;
   gpu_buffer data_buf = NULL, k_buf = NULL, j_buf = NULL;
   uint64_t *padded_data = NULL;
-  unsigned int n_padded = 1;
+  uint64_t n_padded = 1;
   unsigned int i = 0;
   size_t data_size = 0;
   size_t gws = 0;
@@ -132,8 +147,12 @@ static int gpu_sort(uint64_t *data, unsigned int num_chains) {
   if (num_devices == 0)
     return -1;
 
-  while (n_padded < num_chains)
+  while (n_padded < (uint64_t)num_chains)
     n_padded <<= 1;
+
+  if (n_padded > (uint64_t)(SIZE_MAX / (2 * sizeof(uint64_t)))) {
+    return -1;  /* table too large to sort on GPU */
+  }
 
   padded_data = malloc((size_t)n_padded * 2 * sizeof(uint64_t));
   if (padded_data == NULL)
@@ -147,6 +166,14 @@ static int gpu_sort(uint64_t *data, unsigned int num_chains) {
 
   context = CLCREATECONTEXT(context_callback, &devices[0]);
   queue   = CLCREATEQUEUE(context, devices[0]);
+
+  if (access(SORT_KERNEL_PATH, R_OK) != 0) {
+    CLRELEASEQUEUE(queue);
+    CLRELEASECONTEXT(context);
+    free(padded_data);
+    return -1;
+  }
+
   load_kernel(context, 1, &devices[0], SORT_KERNEL_PATH, "bitonic_sort_step",
               &program, &kernel, 0);
 
@@ -187,7 +214,7 @@ static int gpu_sort(uint64_t *data, unsigned int num_chains) {
 static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex) {
   FILE *f = NULL;
   uint64_t *data = NULL;
-  long file_size = 0;
+  rt_off_t file_size = 0;
   unsigned int num_chains = 0;
   int ret = -1;
 
@@ -197,10 +224,18 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex) {
     return -1;
   }
 
-  fseek(f, 0, SEEK_END);
-  file_size = ftell(f);
+  if (RT_FSEEK(f, 0, SEEK_END) != 0) {
+    fprintf(stderr, "%sError: failed to seek in %s: %s%s\n", REDB, filename, strerror(errno), CLR);
+    goto done;
+  }
+  file_size = RT_FTELL(f);
 
-  if (file_size <= 0) {
+  if (file_size < 0) {
+    fprintf(stderr, "%sError: failed to get size of %s: %s%s\n", REDB, filename, strerror(errno), CLR);
+    goto done;
+  }
+
+  if (file_size == 0) {
     fprintf(stderr, "%sError: %s is empty or unreadable.%s\n", REDB, filename, CLR);
     goto done;
   }
@@ -220,7 +255,10 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex) {
     goto done;
   }
 
-  fseek(f, 0, SEEK_SET);
+  if (RT_FSEEK(f, 0, SEEK_SET) != 0) {
+    fprintf(stderr, "%sError: failed to seek in %s: %s%s\n", REDB, filename, strerror(errno), CLR);
+    goto done;
+  }
   if (fread(data, CHAIN_SIZE, num_chains, f) != num_chains) {
     fprintf(stderr, "%sError: failed to read %s: %s%s\n", REDB, filename, strerror(errno), CLR);
     goto done;
@@ -306,9 +344,20 @@ int main(int ac, char **av) {
     return 0;
   }
 
-  if (ac >= 3 && strcmp(av[1], "--jobs") == 0) {
-    num_jobs = atoi(av[2]);
-    if (num_jobs < 0) num_jobs = 0;
+  if (strcmp(av[1], "--jobs") == 0) {
+    if (ac < 3) {
+      fprintf(stderr, "%sError: --jobs requires an argument.%s\n", REDB, CLR);
+      return 1;
+    }
+    {
+      char *endptr = NULL;
+      long val = strtol(av[2], &endptr, 10);
+      if (endptr == av[2] || *endptr != '\0') {
+        fprintf(stderr, "%sError: --jobs requires a non-negative integer.%s\n", REDB, CLR);
+        return 1;
+      }
+      num_jobs = (val < 0) ? 0 : (int)val;
+    }
     first_file = 3;
   }
 
@@ -326,9 +375,16 @@ int main(int ac, char **av) {
   memset(&q, 0, sizeof(q));
   q.files     = av + first_file;
   q.num_files = num_files;
-  pthread_mutex_init(&q.queue_mutex,    NULL);
-  pthread_mutex_init(&q.gpu_mutex,      NULL);
-  pthread_mutex_init(&q.failures_mutex, NULL);
+  {
+    int mrc;
+    if ((mrc = pthread_mutex_init(&q.queue_mutex, NULL)) != 0 ||
+        (mrc = pthread_mutex_init(&q.gpu_mutex, NULL)) != 0 ||
+        (mrc = pthread_mutex_init(&q.failures_mutex, NULL)) != 0) {
+      fprintf(stderr, "%sError: mutex init failed: %s%s\n", REDB, strerror(mrc), CLR);
+      ret = 1;
+      goto done;
+    }
+  }
 
   threads = malloc((size_t)num_jobs * sizeof(pthread_t));
   if (!threads) {
@@ -337,10 +393,19 @@ int main(int ac, char **av) {
     goto done;
   }
 
-  for (i = 0; i < num_jobs; i++)
-    pthread_create(&threads[i], NULL, sort_worker, &q);
-  for (i = 0; i < num_jobs; i++)
-    pthread_join(threads[i], NULL);
+  {
+    int started = 0;
+    for (i = 0; i < num_jobs; i++) {
+      int rc = pthread_create(&threads[i], NULL, sort_worker, &q);
+      if (rc != 0) {
+        fprintf(stderr, "%sError: pthread_create failed: %s%s\n", REDB, strerror(rc), CLR);
+        break;
+      }
+      started++;
+    }
+    for (i = 0; i < started; i++)
+      pthread_join(threads[i], NULL);
+  }
 
   if (q.failures > 0) {
     fprintf(stderr, "\n%s%d file(s) failed to sort.%s\n", REDB, q.failures, CLR);

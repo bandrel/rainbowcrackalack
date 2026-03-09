@@ -25,7 +25,12 @@ int compute_sort_jobs_from_params(uint64_t free_ram, uint64_t max_file_size,
   if (max_file_size == 0 || free_ram == 0)
     return 1;
 
-  jobs = (int)((free_ram * 8 / 10) / max_file_size);
+  {
+    uint64_t slots = free_ram / max_file_size;
+    uint64_t cap = (uint64_t)cpu_cores * 2 + 2;
+    if (slots > cap) slots = cap;
+    jobs = (int)(slots * 8 / 10);
+  }
   if (jobs > cpu_cores) jobs = cpu_cores;
   if (jobs > num_files) jobs = num_files;
   if (jobs < 1)         jobs = 1;

@@ -70,6 +70,18 @@ static int group_a(void)
     if (is_sorted_rt(data, 2) != 1)
         { fprintf(stderr, "ISR-09 failed\n"); ok = 0; }
 
+    /* ISR-10: all endpoints == 0 is a valid sorted state. */
+    data[0] = 5; data[1] = 0;
+    data[2] = 9; data[3] = 0;
+    if (is_sorted_rt(data, 2) != 1)
+        { fprintf(stderr, "ISR-10 failed\n"); ok = 0; }
+
+    /* ISR-11: all endpoints == UINT64_MAX is a valid sorted state. */
+    data[0] = 0; data[1] = UINT64_MAX;
+    data[2] = 0; data[3] = UINT64_MAX;
+    if (is_sorted_rt(data, 2) != 1)
+        { fprintf(stderr, "ISR-11 failed\n"); ok = 0; }
+
     return ok;
 }
 
@@ -112,6 +124,22 @@ static int group_b(void)
      * (10 * 0.8) / 1 = 8 jobs; capped by 6 cores -> 6. */
     if (compute_sort_jobs_from_params(10*gb, gb, 6, 20) != 6)
         { fprintf(stderr, "JSP-08 failed\n"); ok = 0; }
+
+    /* JSP-09: cpu_cores == 0 is clamped to 1. */
+    if (compute_sort_jobs_from_params(8*gb, gb, 0, 5) != 1)
+        { fprintf(stderr, "JSP-09 failed\n"); ok = 0; }
+
+    /* JSP-10: max_file_size > free_ram -> 1. */
+    if (compute_sort_jobs_from_params(gb, 2*gb, 8, 5) != 1)
+        { fprintf(stderr, "JSP-10 failed\n"); ok = 0; }
+
+    /* JSP-11: single CPU core -> 1 regardless of RAM. */
+    if (compute_sort_jobs_from_params(64*gb, gb, 1, 100) != 1)
+        { fprintf(stderr, "JSP-11 failed\n"); ok = 0; }
+
+    /* JSP-12: near-overflow free_ram must not wrap to 0 or below. */
+    if (compute_sort_jobs_from_params(UINT64_MAX / 4, (uint64_t)1 << 30, 16, 20) < 1)
+        { fprintf(stderr, "JSP-12 failed\n"); ok = 0; }
 
     return ok;
 }
