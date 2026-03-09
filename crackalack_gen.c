@@ -593,7 +593,7 @@ void *host_thread(void *ptr) {
 /* Writes the chains given by the kernel to the file. */
 void write_chains(char *filename, unsigned int chains_per_work_unit, gpu_ulong *start_indices, unsigned int start_indices_size, gpu_ulong *end_indices, unsigned int end_indices_size, unsigned int thread_id) {
   int i = 0, j = 0;
-  unsigned int file_size = 0;
+  uint64_t file_size = 0;
   gpu_ulong start = 0;
   rc_file f = rc_fopen(filename, 0), l = NULL;
   char log_filename[256] = {0};
@@ -630,7 +630,7 @@ void write_chains(char *filename, unsigned int chains_per_work_unit, gpu_ulong *
    * placeholders until we get to the point where our data starts. */
   file_size = rc_ftell(f);
 
-  rt_log(l, "Thread #%u: file size at start is %u (%u chains)\n", thread_id, file_size, file_size / CHAIN_SIZE);
+  rt_log(l, "Thread #%u: file size at start is %"PRIu64" (%"PRIu64" chains)\n", thread_id, file_size, file_size / CHAIN_SIZE);
 
   empty_chains = (int)((((start_indices[0] - first_generated_chain) * CHAIN_SIZE) - file_size) / CHAIN_SIZE);
 
@@ -677,7 +677,7 @@ int main(int ac, char **av) {
   char charset_name_safe[256] = {0}; /* charset_name with '?' replaced by '%' for filename */
 
   FILE *f = NULL;
-  unsigned int file_size = 0;
+  uint64_t file_size = 0;
   thread_args *args = NULL;
   char *hash_name = NULL, *charset_name = NULL, *charset = NULL;
   unsigned int plaintext_len_min = 0, plaintext_len_max = 0, total_chains_in_table = 0, table_index = 0, benchmark_mode = 0;
@@ -711,11 +711,15 @@ int main(int ac, char **av) {
   /* Read command-line arguments. */
   hash_name = av[1];
   charset_name = av[2];
-  plaintext_len_min = (unsigned int)atoi(av[3]);
-  plaintext_len_max = (unsigned int)atoi(av[4]);
-  table_index = (unsigned int)atoi(av[5]);
-  chain_len = (unsigned int)atoi(av[6]);
-  total_chains_in_table = (unsigned int)atoi(av[7]);
+  plaintext_len_min = parse_uint_arg(av[3], "plaintext_len_min");
+  plaintext_len_max = parse_uint_arg(av[4], "plaintext_len_max");
+  table_index = parse_uint_arg(av[5], "table_index");
+  if (table_index >= 65536) {
+    fprintf(stderr, "Error: table_index must be < 65536 to avoid reduction_offset overflow, got %u.\n", table_index);
+    exit(-1);
+  }
+  chain_len = parse_uint_arg(av[6], "chain_len");
+  total_chains_in_table = parse_uint_arg(av[7], "total_chains_in_table");
 
   /* See if the user wants to run the benchmarks. */
   if (strcmp(av[8], "-bench") == 0) {
@@ -723,7 +727,7 @@ int main(int ac, char **av) {
     printf("Benchmarks have been disabled in this release due to inconsistent results.  They may be re-implemented in a future release.\n\nIn the meantime, a rough benchmark can be achieved by generating the following table:\n\n  %s ntlm ascii-32-95 8 8 0 422000 1000000 0\n\n", av[0]);
     exit(-1);
   } else
-    part_index = (unsigned int)atoi(av[8]);
+    part_index = (uint64_t)parse_uint_arg(av[8], "part_index");
 
   /* Parse optional flags: -gws GWS and --markov FILE (in any order after arg 8). */
   for (i = 9; i < ac; i++) {
@@ -733,7 +737,7 @@ int main(int ac, char **av) {
         return -1;
       }
       i++;
-      user_provided_gws = (unsigned int)atoi(av[i]);
+      user_provided_gws = parse_uint_arg(av[i], "-gws");
     } else if (strcmp(av[i], "--markov") == 0) {
       if (i + 1 >= ac) {
         fprintf(stderr, "--markov requires a filename\n");
@@ -846,7 +850,7 @@ int main(int ac, char **av) {
   rc_fclose(f);
 
   /* If the file size implies that it is already complete, run the verifier on it. */
-  if (file_size == (total_chains_in_table * CHAIN_SIZE)) {
+  if (file_size == ((uint64_t)total_chains_in_table * CHAIN_SIZE)) {
     if (verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1)) {
       /* The table is complete, so tell the user and exit. */
       printf("Table in \"%s\" already appears to be complete.  Terminating...\n", filename);

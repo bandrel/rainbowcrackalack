@@ -141,7 +141,8 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
   char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
   unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
 
-  unsigned int file_size = 0, actual_num_chains = 0, error_chain_num = 0, is_compressed = 0;
+  uint64_t file_size = 0;
+  unsigned int actual_num_chains = 0, error_chain_num = 0, is_compressed = 0;
   uint64_t expected_start = 0, plaintext_space_total = 0;
 
   memset(&mask, 0, sizeof(mask));
@@ -206,14 +207,14 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     fprintf(stderr, "Error: file is empty!\n");
     return 0;
   /* If the table should be complete, then ensure its file size is what we'd expect.  Skip compressed files. */
-  } else if ((table_should_be_complete == VERIFY_TABLE_IS_COMPLETE) && (file_size != (rt_params.num_chains * CHAIN_SIZE)) && !is_compressed) {
+  } else if ((table_should_be_complete == VERIFY_TABLE_IS_COMPLETE) && (file_size != ((uint64_t)rt_params.num_chains * CHAIN_SIZE)) && !is_compressed) {
     rc_fclose(f);
-    fprintf(stderr, "Error: table is expected to be complete, but file size does not match expected value.  Expected: %u; actual: %u\n", rt_params.num_chains * CHAIN_SIZE, file_size);
+    fprintf(stderr, "Error: table is expected to be complete, but file size does not match expected value.  Expected: %"PRIu64"; actual: %"PRIu64"\n", (uint64_t)rt_params.num_chains * CHAIN_SIZE, file_size);
     return 0;
   /* If the table is incomplete, ensure that the file size is a multiple of CHAIN_SIZE. */
   } else if (((file_size % CHAIN_SIZE) != 0) && !is_compressed) {
     rc_fclose(f);
-    fprintf(stderr, "Error: file size is not aligned to %u bytes: %u\n", CHAIN_SIZE, file_size);
+    fprintf(stderr, "Error: file size is not aligned to %u bytes: %"PRIu64"\n", CHAIN_SIZE, file_size);
     return 0;
   }
 
@@ -240,7 +241,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
 
     /* The actual number of chains in the file. */
-    actual_num_chains = file_size / CHAIN_SIZE;
+    actual_num_chains = (unsigned int)(file_size / CHAIN_SIZE);
 
     /* Only verify 5 chains. */
     for (i = 0; i < 5; i++) {
@@ -282,7 +283,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
       printf("\n!! WARNING: table is compressed, yet is supposedly unsorted!  Only sorted tables should be compressed...\n\n");
 
   } else { /* Simply load uncompressed RT files. */
-    actual_num_chains = file_size / CHAIN_SIZE;
+    actual_num_chains = (unsigned int)(file_size / CHAIN_SIZE);
     rainbow_table = calloc(actual_num_chains * 2, sizeof(uint64_t));
     if (rainbow_table == NULL) {
       fprintf(stderr, "Error while creating buffer to read file.\n");
