@@ -2,6 +2,7 @@
 #define _MISC_H
 
 #include <inttypes.h>
+#include <stdio.h>
 
 /* The quote format specifier (which on UNIX prints numbers with commas in the thousanth's place, i.e.: %'u") can cause crashes in Windows. */
 #ifdef _WIN32
@@ -68,7 +69,7 @@ typedef struct _rt_parameters rt_parameters;
 
 void delete_rt_log(char *rt_filename);
 void filepath_join(char *filepath_result, unsigned int filepath_result_size, const char *path1, const char *path2);
-long get_file_size(FILE *f);
+int64_t get_file_size(FILE *f);
 char *get_os_name();
 uint64_t get_random(uint64_t max);
 void get_rt_log_filename(char *log_filename, size_t log_filename_size, char *rt_filename);
