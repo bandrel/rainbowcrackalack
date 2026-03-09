@@ -3,6 +3,7 @@
  * CPU-only unit tests for markov.h / markov.c.
  */
 
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,8 +23,8 @@ static int group_a(void)
 {
     int ok = 1;
 
-    uint32_t pos0_freq[3]    = {10, 30, 20};
-    uint32_t bigram_freq[9]  = {
+    uint64_t pos0_freq[3]    = {10, 30, 20};
+    uint64_t bigram_freq[9]  = {
         5, 15, 10,   /* prev='a'(0): b most likely */
         1,  1, 50,   /* prev='b'(1): c most likely */
         8,  2,  4    /* prev='c'(2): a most likely */
@@ -93,8 +94,8 @@ static int group_b(void)
 {
     int ok = 1;
 
-    uint32_t pos0_freq[3]   = {10, 30, 20};
-    uint32_t bigram_freq[9] = {
+    uint64_t pos0_freq[3]   = {10, 30, 20};
+    uint64_t bigram_freq[9] = {
         5, 15, 10,
         1,  1, 50,
         8,  2,  4
@@ -188,7 +189,7 @@ static int group_c(void)
 
     /* MT-01: Laplace-smoothed a->b count (5+1=6) > a->c count (1+1=2) */
     if (m.bigram_freq[0 * 3 + 1] <= m.bigram_freq[0 * 3 + 2]) {
-        fprintf(stderr, "MT-01 failed: a->b freq=%u, a->c freq=%u\n",
+        fprintf(stderr, "MT-01 failed: a->b freq=%"PRIu64", a->c freq=%"PRIu64"\n",
                 m.bigram_freq[0 * 3 + 1], m.bigram_freq[0 * 3 + 2]);
         ok = 0;
     }
@@ -217,12 +218,12 @@ static int group_c(void)
                 ok = 0;
             }
             if (memcmp(m2.pos0_freq, m.pos0_freq,
-                       m.charset_len * sizeof(uint32_t)) != 0) {
+                       m.charset_len * sizeof(uint64_t)) != 0) {
                 fprintf(stderr, "MT-03 failed: pos0_freq mismatch\n");
                 ok = 0;
             }
             if (memcmp(m2.bigram_freq, m.bigram_freq,
-                       (size_t)m.charset_len * m.charset_len * sizeof(uint32_t)) != 0) {
+                       (size_t)m.charset_len * m.charset_len * sizeof(uint64_t)) != 0) {
                 fprintf(stderr, "MT-03 failed: bigram_freq mismatch\n");
                 ok = 0;
             }
@@ -253,8 +254,6 @@ static int group_d(void)
     if (markov_load("/tmp/no_such_file_rca_xyz.markov", &m) != -1) {
         fprintf(stderr, "ME-01 failed: expected -1 for missing file\n");
         ok = 0;
-    } else {
-        fprintf(stderr, " (expected)\n");
     }
 
     /* ME-02: load file with wrong magic returns -1
@@ -278,8 +277,6 @@ static int group_d(void)
         if (markov_load(bad_path, &m) != -1) {
             fprintf(stderr, "ME-02 failed: expected -1 for bad magic\n");
             ok = 0;
-        } else {
-            fprintf(stderr, " (expected)\n");
         }
         remove(bad_path);
     }
@@ -298,8 +295,6 @@ static int group_d(void)
         if (markov_train(empty_path, "abc", 3, &m) != -1) {
             fprintf(stderr, "ME-03 failed: expected -1 for empty corpus\n");
             ok = 0;
-        } else {
-            fprintf(stderr, " (expected)\n");
         }
         remove(empty_path);
     }
@@ -349,8 +344,6 @@ static int group_e(void)
             if (markov_train(path, "abc", 3, &m) != -1) {
                 fprintf(stderr, "ME-06 failed: expected -1 for all-OOB corpus\n");
                 ok = 0;
-            } else {
-                fprintf(stderr, " (expected)\n");
             }
             remove(path);
         }
@@ -404,6 +397,108 @@ static int group_e(void)
 
 
 /* -------------------------------------------------------------------------
+ * Group F: index_to_plaintext_markov_cpu boundary tests
+ * Tests IMP-03 through IMP-06
+ * ------------------------------------------------------------------------- */
+
+static int group_f(void)
+{
+    int ok = 1;
+
+    uint64_t pos0_freq[3]   = {10, 30, 20};
+    uint64_t bigram_freq[9] = {
+        5, 15, 10,
+        1,  1, 50,
+        8,  2,  4
+    };
+
+    markov_model m;
+    memset(&m, 0, sizeof(m));
+    m.charset_len   = 3;
+    memcpy(m.charset, "abc", 3);
+    m.pos0_freq     = pos0_freq;
+    m.bigram_freq   = bigram_freq;
+    m.sorted_pos0   = malloc(3 * sizeof(uint8_t));
+    m.sorted_bigram = malloc(9 * sizeof(uint8_t));
+
+    if (!m.sorted_pos0 || !m.sorted_bigram) {
+        fprintf(stderr, "group_f: out of memory\n");
+        free(m.sorted_pos0);
+        free(m.sorted_bigram);
+        return 0;
+    }
+
+    markov_build_sorted(&m);
+
+    unsigned char pt[4];
+
+    /* IMP-03: last valid 2-char index (n*n - 1 = 8) wraps correctly */
+    memset(pt, 0, sizeof(pt));
+    index_to_plaintext_markov_cpu(8, &m, 2, pt);
+    /* index=8: pos0=sorted_pos0[8%3]=sorted_pos0[2]; index=8/3=2
+     *          pos1=sorted_bigram[prev*3 + 2%3] */
+    if (pt[0] == 0 || pt[1] == 0) {
+        fprintf(stderr, "IMP-03 failed: got null chars for max 2-char index\n");
+        ok = 0;
+    }
+
+    /* IMP-04: index 0 with length 1 -> single most probable char */
+    memset(pt, 0, sizeof(pt));
+    index_to_plaintext_markov_cpu(0, &m, 1, pt);
+    if (pt[0] != 'b') {
+        fprintf(stderr, "IMP-04 failed: got '%c', expected 'b'\n", (char)pt[0]);
+        ok = 0;
+    }
+
+    /* IMP-05: 3-char plaintext at index 0 -> most probable trigram */
+    memset(pt, 0, sizeof(pt));
+    index_to_plaintext_markov_cpu(0, &m, 3, pt);
+    /* pos0: sorted_pos0[0]=1 -> 'b'
+     * pos1: prev='b'(1), sorted_bigram[1*3+0]=2 -> 'c'
+     * pos2: prev='c'(2), sorted_bigram[2*3+0]=0 -> 'a' */
+    if (pt[0] != 'b' || pt[1] != 'c' || pt[2] != 'a') {
+        fprintf(stderr, "IMP-05 failed: got \"%c%c%c\", expected \"bca\"\n",
+                (char)pt[0], (char)pt[1], (char)pt[2]);
+        ok = 0;
+    }
+
+    /* IMP-06: all indices [0, n^2) produce unique 2-char plaintexts */
+    unsigned int seen[9];
+    memset(seen, 0, sizeof(seen));
+    int unique = 1;
+    for (uint64_t idx = 0; idx < 9; idx++) {
+        memset(pt, 0, sizeof(pt));
+        index_to_plaintext_markov_cpu(idx, &m, 2, pt);
+        /* Hash the 2-char result to check uniqueness */
+        unsigned int key = 0;
+        for (unsigned int ci = 0; ci < 3; ci++) {
+            if ((unsigned char)m.charset[ci] == pt[0]) {
+                for (unsigned int cj = 0; cj < 3; cj++) {
+                    if ((unsigned char)m.charset[cj] == pt[1]) {
+                        key = ci * 3 + cj;
+                    }
+                }
+            }
+        }
+        if (seen[key]) {
+            fprintf(stderr, "IMP-06 failed: duplicate at index %llu\n",
+                    (unsigned long long)idx);
+            unique = 0;
+            break;
+        }
+        seen[key] = 1;
+    }
+    if (!unique) ok = 0;
+
+    m.pos0_freq   = NULL;
+    m.bigram_freq = NULL;
+    markov_free(&m);
+
+    return ok;
+}
+
+
+/* -------------------------------------------------------------------------
  * test_markov - entry point
  * ------------------------------------------------------------------------- */
 
@@ -416,6 +511,7 @@ int test_markov(void)
     ok &= group_c();
     ok &= group_d();
     ok &= group_e();
+    ok &= group_f();
 
     return ok;
 }
