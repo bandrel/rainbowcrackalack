@@ -120,7 +120,7 @@ if _got != _expected:
 for line in sys.stdin:
     print(ntlm(line.rstrip('\n')))
 PYEOF
-python3 "$TMPDIR/ntlm_hash.py" < "$TMPDIR/passwords.txt" > "$TMPDIR/hashes.txt"
+uv run python3 "$TMPDIR/ntlm_hash.py" < "$TMPDIR/passwords.txt" > "$TMPDIR/hashes.txt"
 
 # --- Standard table ---
 echo ""
@@ -154,9 +154,17 @@ echo "Looking up hashes against Markov table..."
 markov_output=$("$BINDIR/crackalack_lookup" "$TMPDIR/markov_tables/" "$TMPDIR/hashes.txt" 2>&1) || true
 
 # --- Parse results ---
-# Summary line: "Of the N hashes loaded, M were cracked, or PP.PP%."
-standard_cracked=$(echo "$standard_output" | awk '/were cracked, or/{print $6}')
-markov_cracked=$(echo "$markov_output" | awk '/were cracked, or/{print $6}')
+# When num_cracked > 0: "   Of the N hashes loaded, M were cracked, or PP.PP%."
+# When num_cracked == 0: "No hashes were cracked.  :("
+parse_cracked() {
+    awk '/were cracked, or/{print $6} /No hashes were cracked/{print "0"}'
+}
+parse_pct() {
+    awk '/were cracked, or/{gsub(/%\.?$/,"",$NF); print $NF} /No hashes were cracked/{print "0.00"}'
+}
+
+standard_cracked=$(echo "$standard_output" | parse_cracked)
+markov_cracked=$(echo "$markov_output" | parse_cracked)
 
 if [ -z "$standard_cracked" ] || [ -z "$markov_cracked" ]; then
     echo ""
@@ -170,8 +178,8 @@ if [ -z "$standard_cracked" ] || [ -z "$markov_cracked" ]; then
     exit 1
 fi
 
-standard_pct=$(echo "$standard_output" | awk '/were cracked, or/{gsub(/%\.?/,"",$NF); print $NF}')
-markov_pct=$(echo "$markov_output" | awk '/were cracked, or/{gsub(/%\.?/,"",$NF); print $NF}')
+standard_pct=$(echo "$standard_output" | parse_pct)
+markov_pct=$(echo "$markov_output" | parse_pct)
 
 diff_count=$((markov_cracked - standard_cracked))
 diff_pct=$(awk "BEGIN{printf \"%.2f\", ($markov_cracked - $standard_cracked) * 100.0 / $actual_count}")
