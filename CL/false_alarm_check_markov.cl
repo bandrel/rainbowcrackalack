@@ -41,7 +41,7 @@ __kernel void false_alarm_check_markov(
   unsigned int plaintext_len_max = *g_plaintext_len_max;
   unsigned int reduction_offset = *g_reduction_offset;
   unsigned long plaintext_space_total = *g_plaintext_space_total;
-  unsigned long plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
+  unsigned long plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1];
 
   copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index);
 
