@@ -444,21 +444,23 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
   //printf("********************************** host_thread_false_alarm joined\n");
 
   /* Search for valid results, and update the ppi with the plaintext. */
+  j = 0;
   for (i = 0; i < total_devices; i++) {
-    for (j = 0; j < args[i].num_results; j++) {
-      if (args[i].results[j] != UINT64_MAX) {
+    unsigned int r;
+    for (r = 0; r < args[i].num_results; r++, j++) {
+      if (args[i].results[r] != UINT64_MAX) {
       	char plaintext[MAX_PLAINTEXT_LEN] = {0};
       	unsigned int plaintext_len = 0;
         unsigned char real_key[8] = {0};
 
 
       	if (args[i].use_markov) {
-          index_to_plaintext_markov_cpu(args[i].results[j], &g_markov, args[i].plaintext_len_max, (unsigned char *)plaintext);
+          index_to_plaintext_markov_cpu(args[i].results[r], &g_markov, args[i].plaintext_len_max, (unsigned char *)plaintext);
           plaintext_len = args[i].plaintext_len_max;
         } else if (args[i].is_mask)
-          index_to_plaintext_mask(args[i].results[j], args[i].mask_charset_lens, args[i].mask_charset_data, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
+          index_to_plaintext_mask(args[i].results[r], args[i].mask_charset_lens, args[i].mask_charset_data, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
         else
-          index_to_plaintext(args[i].results[j], args[i].charset, charset_len, args[i].plaintext_len_min, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
+          index_to_plaintext(args[i].results[r], args[i].charset, charset_len, args[i].plaintext_len_min, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
 
       	/* Double check NTLM results to weed out super false alarms. */
       	if (args[i].hash_type == HASH_NTLM) {
@@ -540,8 +542,10 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
   FREE(potential_start_index_positions);
   FREE(hash_base_indices);
   FREE(ppi_refs);
-  FREE(args->results);
-  args->num_results = 0;
+  for (i = 0; i < total_devices; i++) {
+    FREE(args[i].results);
+    args[i].num_results = 0;
+  }
 }
 
 
@@ -1230,7 +1234,7 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
 
 
   /* Set the index data we're looking for (or will create later). */
-  snprintf(index_data, sizeof(index_data) - 1, "%s_%s#%d-%d_%d_%d:%s\n", args->hash_name, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->table_index, args->chain_len, args->hash); /*ntlm_loweralpha#8-8_0_100:49e5bfaab1be72a6c5236f15736a3e15*/
+  snprintf(index_data, sizeof(index_data) - 1, "%s_%s#%u-%u_%u_%u:%s\n", args->hash_name, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->table_index, args->chain_len, args->hash); /*ntlm_loweralpha#8-8_0_100:49e5bfaab1be72a6c5236f15736a3e15*/
 
   /* Search through the cache and see if we already precomputed the indices for this
    * hash. */
@@ -1888,14 +1892,16 @@ gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, 
       /* We found an index file that matches all our parameters.  Open its related
        * file containing precomputed indices. */
       if (strcmp(index_data, buf) == 0) {
+	char data_filename[512] = {0};
 
 	/* Set the filename to the *.index file for the caller. */
 	strncpy(filename, de->d_name, filename_size - 1);
-	de->d_name[strlen(de->d_name) - 6] = '\0';
+	strncpy(data_filename, de->d_name, sizeof(data_filename) - 1);
+	data_filename[strlen(data_filename) - 6] = '\0';
 
-	f = fopen(de->d_name, "rb");
+	f = fopen(data_filename, "rb");
 	if (f == NULL) {
-	  fprintf(stderr, "Failed to open precomputed index file: %s\n", de->d_name);
+	  fprintf(stderr, "Failed to open precomputed index file: %s\n", data_filename);
 	  exit(-1);
 	}
 
