@@ -139,8 +139,21 @@ static int cmd_estimate(int argc, char **argv) {
         return 1;
     if (parse_len(argv[3], "max_len", &max_len) != 0)
         return 1;
-    uint64_t chain_len         = (uint64_t)strtoull(argv[4], NULL, 10);
-    uint64_t num_chains        = (uint64_t)strtoull(argv[5], NULL, 10);
+    char *end_cl, *end_nc;
+    errno = 0;
+    uint64_t chain_len = (uint64_t)strtoull(argv[4], &end_cl, 10);
+    if (errno != 0 || end_cl == argv[4] || *end_cl != '\0') {
+        fprintf(stderr, "Error: chain_len must be a valid integer, got '%s'.\n",
+                argv[4]);
+        return 1;
+    }
+    errno = 0;
+    uint64_t num_chains = (uint64_t)strtoull(argv[5], &end_nc, 10);
+    if (errno != 0 || end_nc == argv[5] || *end_nc != '\0') {
+        fprintf(stderr, "Error: num_chains must be a valid integer, got '%s'.\n",
+                argv[5]);
+        return 1;
+    }
 
     uint64_t keyspace = 0;
 
