@@ -32,6 +32,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "gpu_backend.h"
@@ -63,27 +64,39 @@ void filepath_join(char *filepath_result, unsigned int filepath_result_size, con
 }
 
 
-/* Returns an open file's size. */
-long get_file_size(FILE *f) {
-  long ret = 0;
-  long original_pos = ftell(f);  /* Save the file pointer's current position. */
+/* Returns an open file's size. Uses 64-bit seek/tell on all platforms to
+ * handle files larger than 2 GB. */
+int64_t get_file_size(FILE *f) {
+#ifdef _WIN32
+#define FS_FSEEK(f, o, w) _fseeki64(f, o, w)
+#define FS_FTELL(f)        _ftelli64(f)
+#else
+#define FS_FSEEK(f, o, w) fseeko(f, o, w)
+#define FS_FTELL(f)        ftello(f)
+#endif
+
+  int64_t ret = 0;
+  int64_t original_pos = FS_FTELL(f);  /* Save the file pointer's current position. */
 
 
   /* Seek to the end of the file. */
-  if (fseek(f, 0, SEEK_END) < 0) {
+  if (FS_FSEEK(f, 0, SEEK_END) < 0) {
     fprintf(stderr, "Failed to seeking in file.\n");
     exit(-1);
   }
 
-  ret = ftell(f);
+  ret = FS_FTELL(f);
 
   /* Restore the file pointer to its original position. */
-  if (fseek(f, original_pos, SEEK_SET) < 0) {
+  if (FS_FSEEK(f, original_pos, SEEK_SET) < 0) {
     fprintf(stderr, "Failed to seeking in file.\n");
     exit(-1);
   }
 
   return ret;
+
+#undef FS_FSEEK
+#undef FS_FTELL
 }
 
 
