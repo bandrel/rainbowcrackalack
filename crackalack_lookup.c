@@ -61,7 +61,6 @@
 #define PRECOMPUTE_KERNEL_PATH "precompute.cl"
 #define PRECOMPUTE_NTLM8_KERNEL_PATH "precompute_ntlm8.cl"
 #define PRECOMPUTE_NTLM9_KERNEL_PATH "precompute_ntlm9.cl"
-#define PRECOMPUTE_NETNTLMV1_KERNEL_PATH "precompute_netntlmv1.cl"
 #define PRECOMPUTE_MD5_8_KERNEL_PATH "precompute_md5_8.cl"
 #define PRECOMPUTE_MD5_9_KERNEL_PATH "precompute_md5_9.cl"
 #ifdef USE_METAL
@@ -73,7 +72,6 @@
 #define FALSE_ALARM_KERNEL_PATH "false_alarm_check.cl"
 #define FALSE_ALARM_NTLM8_KERNEL_PATH "false_alarm_check_ntlm8.cl"
 #define FALSE_ALARM_NTLM9_KERNEL_PATH "false_alarm_check_ntlm9.cl"
-#define FALSE_ALARM_NETNTLMV1_KERNEL_PATH "false_alarm_check_netntlv1.cl"
 #define FALSE_ALARM_MD5_8_KERNEL_PATH "false_alarm_check_md5_8.cl"
 #define FALSE_ALARM_MD5_9_KERNEL_PATH "false_alarm_check_md5_9.cl"
 #ifdef USE_METAL
@@ -1467,7 +1465,7 @@ void _preloading_thread(char *rt_dir) {
 	start_timer(&start_time_io);    /* For loading the table only. */
 	f = fopen(filepath, "rb");
 	if (f != NULL) {
-	  long file_size = get_file_size(f);
+	  int64_t file_size = get_file_size(f);
 
 	  if ((file_size % (sizeof(gpu_ulong) * 2) == 0) && (file_size > 0)) {
 	    unsigned int num_longs = file_size / sizeof(gpu_ulong);
@@ -1486,7 +1484,7 @@ void _preloading_thread(char *rt_dir) {
 	    time_io += get_elapsed(&start_time_io);
 	    num_chains = num_longs / 2;
 	  } else
-	    fprintf(stderr, "Rainbow table size is not a multiple of %"PRIu64": %ld\n", (uint64_t)(sizeof(gpu_ulong) * 2), file_size);
+	    fprintf(stderr, "Rainbow table size is not a multiple of %"PRIu64": %"PRId64"\n", (uint64_t)(sizeof(gpu_ulong) * 2), file_size);
 
 	  FCLOSE(f);
 	} else
@@ -1835,10 +1833,11 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
 
   /* Truncate the ".index" off the end of the filename; this forms the precomputation
    * filename. */
-  *dot_pos = '\0';
-  if (unlink(ppi->index_filename) != 0) {
-    fprintf(stderr, "Error while deleting precompute file: %s: %s\n", ppi->index_filename, strerror(errno));
-    /*exit(-1);*/
+  if (dot_pos != NULL) {
+    *dot_pos = '\0';
+    if (unlink(ppi->index_filename) != 0) {
+      fprintf(stderr, "Error while deleting precompute file: %s: %s\n", ppi->index_filename, strerror(errno));
+    }
   }
 
   num_cracked++;
@@ -1851,7 +1850,7 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
  * is set to the *.index cache file. */
 gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size) {
   char buf[256] = {0};
-  long file_size = 0;
+  int64_t file_size = 0;
   DIR *d = NULL;
   struct dirent *de = NULL;
   FILE *f = NULL;
@@ -1907,7 +1906,7 @@ gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, 
 	file_size = get_file_size(f);
 
 	if (file_size % sizeof(gpu_ulong) != 0) {
-	  fprintf(stderr, "Precomputed indices file is not a multiple of %"PRIu64": %ld\n", (uint64_t)sizeof(gpu_ulong), file_size);
+	  fprintf(stderr, "Precomputed indices file is not a multiple of %"PRIu64": %"PRId64"\n", (uint64_t)sizeof(gpu_ulong), file_size);
 	  exit(-1);
 	}
 
@@ -2136,7 +2135,7 @@ int main(int ac, char **av) {
    * already cracked. */
   f = fopen(jtr_pot_filename, "rb");
   if (f) {
-    unsigned long file_size = get_file_size(f);
+    int64_t file_size = get_file_size(f);
 
     pot_file_data = calloc(file_size, sizeof(char));
     if (pot_file_data == NULL) {
