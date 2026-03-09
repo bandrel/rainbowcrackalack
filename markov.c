@@ -32,7 +32,7 @@
  * ------------------------------------------------------------------------- */
 
 typedef struct {
-  const uint32_t *freq;
+  const uint64_t *freq;
 } sort_ctx;
 
 #ifdef __APPLE__
@@ -122,9 +122,9 @@ int markov_train(const char *wordlist_path, const char *charset,
   model->charset_len = charset_len;
   memcpy(model->charset, charset, charset_len);
 
-  model->pos0_freq    = calloc(charset_len, sizeof(uint32_t));
+  model->pos0_freq    = calloc(charset_len, sizeof(uint64_t));
   model->bigram_freq  = calloc((size_t)charset_len * charset_len,
-                                sizeof(uint32_t));
+                                sizeof(uint64_t));
   model->sorted_pos0  = calloc(charset_len, sizeof(uint8_t));
   model->sorted_bigram = calloc((size_t)charset_len * charset_len,
                                  sizeof(uint8_t));
@@ -238,13 +238,13 @@ int markov_save(const char *path, const markov_model *model)
     goto write_error;
 
   /* pos0_freq array */
-  if (fwrite(model->pos0_freq, sizeof(uint32_t), model->charset_len, fp)
+  if (fwrite(model->pos0_freq, sizeof(uint64_t), model->charset_len, fp)
       != model->charset_len)
     goto write_error;
 
   /* bigram_freq array */
   size_t bigram_count = (size_t)model->charset_len * model->charset_len;
-  if (fwrite(model->bigram_freq, sizeof(uint32_t), bigram_count, fp)
+  if (fwrite(model->bigram_freq, sizeof(uint64_t), bigram_count, fp)
       != bigram_count)
     goto write_error;
 
@@ -310,8 +310,8 @@ int markov_load(const char *path, markov_model *model)
   }
 
   /* Allocate arrays */
-  model->pos0_freq     = calloc(clen, sizeof(uint32_t));
-  model->bigram_freq   = calloc((size_t)clen * clen, sizeof(uint32_t));
+  model->pos0_freq     = calloc(clen, sizeof(uint64_t));
+  model->bigram_freq   = calloc((size_t)clen * clen, sizeof(uint64_t));
   model->sorted_pos0   = calloc(clen, sizeof(uint8_t));
   model->sorted_bigram = calloc((size_t)clen * clen, sizeof(uint8_t));
 
@@ -324,7 +324,7 @@ int markov_load(const char *path, markov_model *model)
   }
 
   /* pos0_freq */
-  if (fread(model->pos0_freq, sizeof(uint32_t), clen, fp) != clen) {
+  if (fread(model->pos0_freq, sizeof(uint64_t), clen, fp) != clen) {
     fprintf(stderr, "markov_load: truncated pos0_freq in '%s'\n", path);
     fclose(fp);
     markov_free(model);
@@ -333,7 +333,7 @@ int markov_load(const char *path, markov_model *model)
 
   /* bigram_freq */
   size_t bigram_count = (size_t)clen * clen;
-  if (fread(model->bigram_freq, sizeof(uint32_t), bigram_count, fp)
+  if (fread(model->bigram_freq, sizeof(uint64_t), bigram_count, fp)
       != bigram_count) {
     fprintf(stderr, "markov_load: truncated bigram_freq in '%s'\n", path);
     fclose(fp);
