@@ -36,7 +36,7 @@ kernel void precompute_markov(
   }
 
   char charset[MAX_CHARSET_LEN];
-  ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
+  ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1];
   unsigned char hash[MAX_HASH_OUTPUT_LEN];
   unsigned char plaintext[MAX_PLAINTEXT_LEN];
   unsigned int plaintext_len = 0;
