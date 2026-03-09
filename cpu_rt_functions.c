@@ -24,18 +24,20 @@
 #define GCRY_MODE GCRY_CIPHER_MODE_ECB  // Use ECB mode
 #define KEY_SIZE 8                      // DES key size in bytes
 #define BLOCK_SIZE 8                    // DES block size in bytes
+#include <pthread.h>
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
-static int gcrypt_initialized = 0;
+static pthread_once_t gcrypt_once = PTHREAD_ONCE_INIT;
+
+static void gcrypt_init_once(void) {
+  gcry_control(GCRYCTL_DISABLE_SECMEM, 0);
+  gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
+}
 
 static void ensure_gcrypt_init(void) {
-  if (!gcrypt_initialized) {
-    gcry_control(GCRYCTL_DISABLE_SECMEM, 0);
-    gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
-    gcrypt_initialized = 1;
-  }
+  pthread_once(&gcrypt_once, gcrypt_init_once);
 }
 
 
