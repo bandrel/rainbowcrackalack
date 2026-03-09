@@ -112,8 +112,8 @@ void markov_build_sorted(markov_model *model)
 int markov_train(const char *wordlist_path, const char *charset,
                  unsigned int charset_len, markov_model *model)
 {
-  if (charset_len == 0 || charset_len > 256) {
-    fprintf(stderr, "markov_train: charset_len %u out of range [1, 256]\n",
+  if (charset_len == 0 || charset_len > 255) {
+    fprintf(stderr, "markov_train: charset_len %u out of range [1, 255] (uint8_t indices cannot represent 256)\n",
             charset_len);
     return -1;
   }
@@ -295,7 +295,7 @@ int markov_load(const char *path, markov_model *model)
 
   /* Charset length */
   uint32_t clen;
-  if (fread(&clen, sizeof(uint32_t), 1, fp) != 1 || clen == 0 || clen > 256) {
+  if (fread(&clen, sizeof(uint32_t), 1, fp) != 1 || clen == 0 || clen > 255) {
     fprintf(stderr, "markov_load: invalid charset_len in '%s'\n", path);
     fclose(fp);
     return -1;
