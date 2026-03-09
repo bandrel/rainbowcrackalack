@@ -28,6 +28,15 @@
 #include <windows.h>
 #endif
 
+static int gcrypt_initialized = 0;
+
+static void ensure_gcrypt_init(void) {
+  if (!gcrypt_initialized) {
+    gcry_control(GCRYCTL_DISABLE_SECMEM, 0);
+    gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
+    gcrypt_initialized = 1;
+  }
+}
 
 
 /* Fills the pspace table for a mask charset.
@@ -182,7 +191,6 @@ void ntlm_hash(char *plaintext, unsigned int plaintext_len, unsigned char *hash)
 
 
   if (plaintext_len > 27) {
-    plaintext[27] = 0;
     plaintext_len = 27;
   }
 
@@ -347,8 +355,7 @@ void HashNetNTLMv1(
 {
   */
 void netntlmv1_hash(unsigned char *plaintext, unsigned int plaintext_len, unsigned char *hash) {
-    gcry_control(GCRYCTL_DISABLE_SECMEM, 0); // Disable secure memory (optional)
-    gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
+    ensure_gcrypt_init();
 
     gcry_cipher_hd_t handle;
     gcry_error_t err;
@@ -385,5 +392,6 @@ void netntlmv1_hash(unsigned char *plaintext, unsigned int plaintext_len, unsign
 
 
 void md5_hash(char *plaintext, unsigned int plaintext_len, unsigned char *hash) {
+  ensure_gcrypt_init();
   gcry_md_hash_buffer(GCRY_MD_MD5, hash, plaintext, plaintext_len);
 }
