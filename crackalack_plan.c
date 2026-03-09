@@ -26,8 +26,6 @@
 #include "markov.h"
 #include "mask_parse.h"
 
-#define MAX_PLAINTEXT_LEN 16
-
 /* Compute keyspace for a named charset across [min_len, max_len]. */
 static int charset_keyspace(const char *name, unsigned int min_len,
                             unsigned int max_len, uint64_t *out_keyspace,
@@ -295,11 +293,12 @@ static int cmd_recommend(int argc, char **argv) {
 
 static int cmd_train(int argc, char **argv) {
     if (argc < 1) {
-        fprintf(stderr, "Usage: crackalack_plan train <wordlist>\n");
+        fprintf(stderr, "Usage: crackalack_plan train <wordlist> [charset]\n");
         return 1;
     }
 
     const char *wordlist_path = argv[0];
+    const char *charset_name = (argc >= 2) ? argv[1] : "ascii-32-95";
 
     const char *base = strrchr(wordlist_path, '/');
     base = base ? base + 1 : wordlist_path;
@@ -313,9 +312,9 @@ static int cmd_train(int argc, char **argv) {
         snprintf(output_path, sizeof(output_path), "%s.markov", base);
     }
 
-    char *charset_string = validate_charset("ascii-32-95");
+    char *charset_string = validate_charset((char *)charset_name);
     if (charset_string == NULL) {
-        fprintf(stderr, "Error: built-in charset 'ascii-32-95' not found.\n");
+        fprintf(stderr, "Error: unknown charset '%s'.\n", charset_name);
         return 1;
     }
 
@@ -346,7 +345,7 @@ static void print_usage(void) {
             "<chain_len> <num_chains>\n"
             "  recommend <hash> <charset_or_mask> <min_len> <max_len> "
             "<target_pct>\n"
-            "  train <wordlist>\n");
+            "  train <wordlist> [charset]\n");
 }
 
 int main(int argc, char **argv) {
