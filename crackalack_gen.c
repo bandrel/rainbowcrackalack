@@ -910,8 +910,8 @@ int main(int ac, char **av) {
 
     /* Ensure our plaintext_space_up_to_index array is large enough to call
      * fill_plaintext_space_table() with. */
-    if (plaintext_len_max > (sizeof(plaintext_space_up_to_index) + 1)) {
-      fprintf(stderr, "\n  !! Warning: plaintext length max is too large (%u > %"PRIu64").  Skipping start index safety check.\n\n", plaintext_len_max, (uint64_t)(sizeof(plaintext_space_up_to_index) + 1));  fflush(stderr);
+    if (plaintext_len_max > MAX_PLAINTEXT_LEN) {
+      fprintf(stderr, "\n  !! Warning: plaintext length max is too large (%u > %u).  Skipping start index safety check.\n\n", plaintext_len_max, (unsigned int)MAX_PLAINTEXT_LEN);  fflush(stderr);
     } else {
 
       uint64_t plaintext_space_total;
