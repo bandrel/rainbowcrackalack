@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "misc.h"
 #include "terminal_color.h"
 #include "verify.h"
 #include "version.h"
@@ -58,7 +59,7 @@ int main(int ac, char **av) {
     case 0:
       break;
     case 'n':
-      num_chains_to_verify = atoi(optarg);
+      num_chains_to_verify = (int)parse_uint_arg(optarg, "--num_chains");
       break;
     default:
       print_usage(av[0]);
