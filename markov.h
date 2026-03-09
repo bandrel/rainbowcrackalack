@@ -21,14 +21,14 @@
 #include <stdint.h>
 
 #define MARKOV_MAGIC "RCLM"
-#define MARKOV_VERSION 1
+#define MARKOV_VERSION 2
 
 /* In-memory Markov model after loading/training. */
 typedef struct {
   unsigned int  charset_len;
   char          charset[256];       /* the charset characters in order */
-  uint32_t     *pos0_freq;          /* [charset_len] - position-0 counts */
-  uint32_t     *bigram_freq;        /* [charset_len * charset_len] - bigram counts */
+  uint64_t     *pos0_freq;          /* [charset_len] - position-0 counts */
+  uint64_t     *bigram_freq;        /* [charset_len * charset_len] - bigram counts */
   /* Sorted lookup tables for GPU (built after load/train) */
   uint8_t      *sorted_pos0;        /* [charset_len] - char indices sorted by freq desc */
   uint8_t      *sorted_bigram;      /* [charset_len * charset_len] - per-prev sorted indices */
