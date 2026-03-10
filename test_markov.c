@@ -499,6 +499,223 @@ static int group_f(void)
 
 
 /* -------------------------------------------------------------------------
+ * Group G: Markov model quality / viability tests
+ * Tests MQ-01 through MQ-04
+ * ------------------------------------------------------------------------- */
+
+static int group_g(void)
+{
+    int ok = 1;
+
+    /* MQ-01: Common-first ordering.
+     * Corpus (charset "abc"): "ba"x20, "ca"x10, "bc"x5, all others x1.
+     * "ba" is the most frequent bigram, so index 0 must return "ba". */
+    {
+        char corpus_path[128];
+        snprintf(corpus_path, sizeof(corpus_path),
+                 "/tmp/test_markov_mq01_%d.txt", (int)getpid());
+        FILE *fp = fopen(corpus_path, "w");
+        if (!fp) { fprintf(stderr, "MQ-01: cannot create corpus\n"); ok = 0; goto mq01_done; }
+        for (int i = 0; i < 20; i++) fprintf(fp, "ba\n");
+        for (int i = 0; i < 10; i++) fprintf(fp, "ca\n");
+        for (int i = 0; i <  5; i++) fprintf(fp, "bc\n");
+        /* low-frequency fillers */
+        fprintf(fp, "ab\nac\nbb\ncb\ncc\naa\n");
+        fclose(fp);
+
+        markov_model m;
+        memset(&m, 0, sizeof(m));
+        if (markov_train(corpus_path, "abc", 3, &m) != 0) {
+            fprintf(stderr, "MQ-01: markov_train failed\n");
+            ok = 0; remove(corpus_path); goto mq01_done;
+        }
+
+        unsigned char pt[3];
+        memset(pt, 0, sizeof(pt));
+        index_to_plaintext_markov_cpu(0, &m, 2, pt);
+        if (pt[0] != 'b' || pt[1] != 'a') {
+            fprintf(stderr, "MQ-01 failed: index 0 returned \"%c%c\", expected \"ba\"\n",
+                    (char)pt[0], (char)pt[1]);
+            ok = 0;
+        }
+
+        markov_free(&m);
+        remove(corpus_path);
+    }
+mq01_done:;
+
+    /* MQ-02: Monotone probability ordering.
+     * Corpus (charset "ab"): "aa"x100, "bb"x1.
+     * After Laplace smoothing "aa" has far higher probability, so index 0
+     * must return "aa" and the index of "bb" must be > 0. */
+    {
+        char corpus_path[128];
+        snprintf(corpus_path, sizeof(corpus_path),
+                 "/tmp/test_markov_mq02_%d.txt", (int)getpid());
+        FILE *fp = fopen(corpus_path, "w");
+        if (!fp) { fprintf(stderr, "MQ-02: cannot create corpus\n"); ok = 0; goto mq02_done; }
+        for (int i = 0; i < 100; i++) fprintf(fp, "aa\n");
+        fprintf(fp, "bb\n");
+        fclose(fp);
+
+        markov_model m;
+        memset(&m, 0, sizeof(m));
+        if (markov_train(corpus_path, "ab", 2, &m) != 0) {
+            fprintf(stderr, "MQ-02: markov_train failed\n");
+            ok = 0; remove(corpus_path); goto mq02_done;
+        }
+
+        unsigned char pt[3];
+        memset(pt, 0, sizeof(pt));
+        index_to_plaintext_markov_cpu(0, &m, 2, pt);
+        if (pt[0] != 'a' || pt[1] != 'a') {
+            fprintf(stderr, "MQ-02 failed: index 0 returned \"%c%c\", expected \"aa\"\n",
+                    (char)pt[0], (char)pt[1]);
+            ok = 0;
+        }
+
+        /* Find which index gives "bb" and verify it is > 0 */
+        int found_bb_at = -1;
+        for (uint64_t idx = 0; idx < 4; idx++) {
+            memset(pt, 0, sizeof(pt));
+            index_to_plaintext_markov_cpu(idx, &m, 2, pt);
+            if (pt[0] == 'b' && pt[1] == 'b') {
+                found_bb_at = (int)idx;
+                break;
+            }
+        }
+        if (found_bb_at <= 0) {
+            fprintf(stderr, "MQ-02 failed: \"bb\" found at index %d (expected > 0)\n",
+                    found_bb_at);
+            ok = 0;
+        }
+
+        markov_free(&m);
+        remove(corpus_path);
+    }
+mq02_done:;
+
+    /* MQ-03: Top-N coverage.
+     * Corpus (charset "abc"): "ba"x50, "bc"x30, "ca"x20, all others x2.
+     * The three most-probable bigrams are "ba", "bc", "ca".
+     * Verify all three appear within the first 6 Markov indices (2x slack). */
+    {
+        char corpus_path[128];
+        snprintf(corpus_path, sizeof(corpus_path),
+                 "/tmp/test_markov_mq03_%d.txt", (int)getpid());
+        FILE *fp = fopen(corpus_path, "w");
+        if (!fp) { fprintf(stderr, "MQ-03: cannot create corpus\n"); ok = 0; goto mq03_done; }
+        for (int i = 0; i < 50; i++) fprintf(fp, "ba\n");
+        for (int i = 0; i < 30; i++) fprintf(fp, "bc\n");
+        for (int i = 0; i < 20; i++) fprintf(fp, "ca\n");
+        for (int i = 0; i <  2; i++) {
+            fprintf(fp, "aa\nab\nac\nbb\ncb\ncc\n");
+        }
+        fclose(fp);
+
+        markov_model m;
+        memset(&m, 0, sizeof(m));
+        if (markov_train(corpus_path, "abc", 3, &m) != 0) {
+            fprintf(stderr, "MQ-03: markov_train failed\n");
+            ok = 0; remove(corpus_path); goto mq03_done;
+        }
+
+        /* Collect first 6 Markov-ordered plaintexts */
+        char first6[6][3];
+        for (int idx = 0; idx < 6; idx++) {
+            unsigned char pt[3];
+            memset(pt, 0, sizeof(pt));
+            index_to_plaintext_markov_cpu((uint64_t)idx, &m, 2, pt);
+            first6[idx][0] = (char)pt[0];
+            first6[idx][1] = (char)pt[1];
+            first6[idx][2] = '\0';
+        }
+
+        const char *top3[] = {"ba", "bc", "ca"};
+        for (int t = 0; t < 3; t++) {
+            int found = 0;
+            for (int idx = 0; idx < 6; idx++) {
+                if (first6[idx][0] == top3[t][0] && first6[idx][1] == top3[t][1]) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                fprintf(stderr, "MQ-03 failed: \"%s\" not in first 6 Markov indices\n",
+                        top3[t]);
+                ok = 0;
+            }
+        }
+
+        markov_free(&m);
+        remove(corpus_path);
+    }
+mq03_done:;
+
+    /* MQ-04: Uniform corpus does not crash and produces unique plaintexts.
+     * Corpus (charset "abc"): each of the 9 bigrams appears exactly twice.
+     * After Laplace smoothing all bigram freqs are equal.
+     * Verify: no crashes and all 9 indices [0,9) produce unique 2-char plaintexts. */
+    {
+        char corpus_path[128];
+        snprintf(corpus_path, sizeof(corpus_path),
+                 "/tmp/test_markov_mq04_%d.txt", (int)getpid());
+        FILE *fp = fopen(corpus_path, "w");
+        if (!fp) { fprintf(stderr, "MQ-04: cannot create corpus\n"); ok = 0; goto mq04_done; }
+        const char *bigrams[] = {"aa","ab","ac","ba","bb","bc","ca","cb","cc"};
+        for (int i = 0; i < 9; i++) {
+            fprintf(fp, "%s\n", bigrams[i]);
+            fprintf(fp, "%s\n", bigrams[i]);
+        }
+        fclose(fp);
+
+        markov_model m;
+        memset(&m, 0, sizeof(m));
+        if (markov_train(corpus_path, "abc", 3, &m) != 0) {
+            fprintf(stderr, "MQ-04: markov_train failed\n");
+            ok = 0; remove(corpus_path); goto mq04_done;
+        }
+
+        /* All 9 indices must produce unique 2-char plaintexts */
+        unsigned int seen[9];
+        memset(seen, 0, sizeof(seen));
+        int unique = 1;
+        for (uint64_t idx = 0; idx < 9; idx++) {
+            unsigned char pt[3];
+            memset(pt, 0, sizeof(pt));
+            index_to_plaintext_markov_cpu(idx, &m, 2, pt);
+            int ci = -1, cj = -1;
+            for (unsigned int k = 0; k < 3; k++) {
+                if ((unsigned char)m.charset[k] == pt[0]) ci = (int)k;
+                if ((unsigned char)m.charset[k] == pt[1]) cj = (int)k;
+            }
+            if (ci < 0 || cj < 0) {
+                fprintf(stderr, "MQ-04 failed: char not in charset at idx %llu\n",
+                        (unsigned long long)idx);
+                unique = 0;
+                break;
+            }
+            int key = ci * 3 + cj;
+            if (seen[key]) {
+                fprintf(stderr, "MQ-04 failed: duplicate plaintext at idx %llu\n",
+                        (unsigned long long)idx);
+                unique = 0;
+                break;
+            }
+            seen[key] = 1;
+        }
+        if (!unique) ok = 0;
+
+        markov_free(&m);
+        remove(corpus_path);
+    }
+mq04_done:;
+
+    return ok;
+}
+
+
+/* -------------------------------------------------------------------------
  * test_markov - entry point
  * ------------------------------------------------------------------------- */
 
@@ -512,6 +729,7 @@ int test_markov(void)
     ok &= group_d();
     ok &= group_e();
     ok &= group_f();
+    ok &= group_g();
 
     return ok;
 }
