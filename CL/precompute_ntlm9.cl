@@ -10,6 +10,7 @@ __kernel void precompute_ntlm9(
     __global unsigned int *unused5,
     __global unsigned int *unused6,
     __global unsigned long *unused7,
+    __global unsigned long *unused_chain_len,
     __global unsigned int *g_device_num,
     __global unsigned int *g_total_devices,
     __global unsigned int *g_exec_block_scaler,
