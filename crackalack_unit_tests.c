@@ -38,6 +38,10 @@
 #include "test_hash_to_index_ntlm9.h"
 #include "test_index_to_plaintext.h"
 #include "test_index_to_plaintext_ntlm9.h"
+#include "test_index_to_plaintext_markov.h"
+#include "test_index_to_plaintext_mask.h"
+#include "test_chain_markov.h"
+#include "test_chain_mask.h"
 #include "test_markov.h"
 #include "test_mask.h"
 #include "test_misc.h"
@@ -400,6 +404,70 @@ int main(int ac, char **av) {
   hash_type = HASH_NETNTLMV1;
   load_kernel(context, num_devices, devices, "crackalack.cl", "crackalack", &program, &kernel, hash_type);
   if (!test_chain_netntlmv1(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* Markov index_to_plaintext tests. */
+  hash_type = HASH_NTLM;
+  load_kernel(context, num_devices, devices, "test_index_to_plaintext_markov.cl",
+              "test_index_to_plaintext_markov", &program, &kernel, hash_type);
+  printf("Running Markov index_to_plaintext() tests... "); fflush(stdout);
+  if (!test_index_to_plaintext_markov(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* Markov chain generation tests. */
+  hash_type = HASH_NTLM;
+  load_kernel(context, num_devices, devices, "crackalack_markov.cl",
+              "crackalack_markov", &program, &kernel, hash_type);
+  printf("Running Markov chain tests... "); fflush(stdout);
+  if (!test_chain_markov(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* Mask index_to_plaintext tests (GPU). */
+  hash_type = HASH_NTLM;
+  load_kernel(context, num_devices, devices, "test_index_to_plaintext_mask.cl",
+              "test_index_to_plaintext_mask", &program, &kernel, hash_type);
+  printf("Running mask index_to_plaintext() tests... "); fflush(stdout);
+  if (!test_index_to_plaintext_mask(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* Mask chain generation tests. */
+  hash_type = HASH_NTLM;
+  load_kernel(context, num_devices, devices, "crackalack.cl", "crackalack",
+              &program, &kernel, hash_type);
+  printf("Running mask chain tests... "); fflush(stdout);
+  if (!test_chain_mask(devices[0], context, kernel)) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
