@@ -200,6 +200,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_lookup.o \
 	$(OBJDIR)/file_lock.o \
+	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/markov.o \
 	$(OBJDIR)/mask_parse.o \
