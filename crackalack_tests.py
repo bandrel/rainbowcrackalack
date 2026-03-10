@@ -558,6 +558,11 @@ if __name__ == '__main__':
     shutil.copytree('CL', cl_dir)
     shutil.copy('shared.h', cl_dir)
 
+    # Copy the Metal shaders to the temp dir so the programs can find them on macOS.
+    if os.path.isdir('Metal'):
+        metal_dir = os.path.join(temp_dir, "Metal")
+        shutil.copytree('Metal', metal_dir)
+
     # Change the working directory to the temporary directory.  This way crackalack_gen
     # creates files in here.
     os.chdir(temp_dir)

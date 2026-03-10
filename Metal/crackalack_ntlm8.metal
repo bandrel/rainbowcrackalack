@@ -12,13 +12,14 @@ kernel void crackalack_ntlm8(
     device unsigned int *unused4 [[buffer(3)]],
     device unsigned int *unused5 [[buffer(4)]],
     device unsigned int *unused6 [[buffer(5)]],
-    device ulong *g_indices [[buffer(6)]],
-    device unsigned int *unused7 [[buffer(7)]],
+    device unsigned int *unused_chain_len [[buffer(6)]],
+    device ulong *g_indices [[buffer(7)]],
     device ulong *unused8 [[buffer(8)]],
     device ulong *unused9 [[buffer(9)]],
     device unsigned int *unused10 [[buffer(10)]],
     device char *unused11 [[buffer(11)]],
     device unsigned int *unused12 [[buffer(12)]],
+    device unsigned int *unused13 [[buffer(13)]],
     uint gid [[thread_position_in_grid]]) {
   ulong index = g_indices[gid];
   unsigned char plaintext[8];
