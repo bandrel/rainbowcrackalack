@@ -45,6 +45,7 @@
 #include "gpu_backend.h"
 
 #include "charset.h"
+#include "gws.h"
 #include "clock.h"
 #include "cpu_rt_functions.h"
 #include "hash_validate.h"
@@ -1076,7 +1077,16 @@ void *host_thread_precompute(void *ptr) {
     pthread_exit(NULL);
     return NULL;
   }
-  gws = gws * gpu->num_work_units;
+  if (user_provided_gws > 0) {
+    gws = user_provided_gws;
+    printf("GPU #%u precompute using user-provided GWS: %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
+  } else if (get_optimal_gws(gpu->device) > 0) {
+    gws = get_optimal_gws(gpu->device);
+    printf("GPU #%u precompute using optimized GWS: %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
+  } else {
+    gws = gws * gpu->num_work_units;
+  }
+  fflush(stdout);
 
   /* In the event that the global work size is larger than the number of outputs we
    * need, cap the GWS. */
