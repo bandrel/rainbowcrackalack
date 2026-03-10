@@ -69,6 +69,7 @@ int gpu_test_chain_ntlm9(gpu_device device, gpu_context context, gpu_kernel kern
   gpu_buffer start_buffer = NULL, chain_len_buffer = NULL, pos_start_buffer = NULL;
   gpu_ulong end = 0;
   gpu_buffer unused1 = NULL, unused2 = NULL, unused3 = NULL, unused4 = NULL, unused5 = NULL;
+  gpu_buffer unused_reduction_buf = NULL;
   gpu_buffer unused6 = NULL, unused7 = NULL, unused8_buf = NULL, unused9_buf = NULL, unused10_buf = NULL;
   gpu_uint unused_int = 0;
   gpu_ulong unused_ulong = 0;
@@ -102,14 +103,15 @@ int gpu_test_chain_ntlm9(gpu_device device, gpu_context context, gpu_kernel kern
   CLCREATEARG(2, unused3, CL_RO, unused_int, sizeof(unused_int));
   CLCREATEARG(3, unused4, CL_RO, unused_int, sizeof(unused_int));
   CLCREATEARG(4, unused5, CL_RO, unused_int, sizeof(unused_int));
-  CLCREATEARG(5, chain_len_buffer, CL_RO, chain_len, sizeof(gpu_uint));
-  CLCREATEARG_ARRAY(6, start_buffer, CL_RW, start_array, 1 * sizeof(gpu_ulong));
-  CLCREATEARG(7, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
-  CLCREATEARG_ARRAY(8, unused6, CL_RO, unused_ulong_arr, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
-  CLCREATEARG(9, unused7, CL_RO, unused_ulong, sizeof(gpu_ulong));
-  CLCREATEARG(10, unused8_buf, CL_RO, unused_int, sizeof(gpu_uint));
-  CLCREATEARG_ARRAY(11, unused9_buf, CL_RO, unused_char, sizeof(unused_char));
-  CLCREATEARG_ARRAY(12, unused10_buf, CL_RO, unused_uint_arr, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
+  CLCREATEARG(5, unused_reduction_buf, CL_RO, unused_int, sizeof(unused_int));
+  CLCREATEARG(6, chain_len_buffer, CL_RO, chain_len, sizeof(gpu_uint));
+  CLCREATEARG_ARRAY(7, start_buffer, CL_RW, start_array, 1 * sizeof(gpu_ulong));
+  CLCREATEARG(8, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
+  CLCREATEARG_ARRAY(9, unused6, CL_RO, unused_ulong_arr, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
+  CLCREATEARG(10, unused7, CL_RO, unused_ulong, sizeof(gpu_ulong));
+  CLCREATEARG(11, unused8_buf, CL_RO, unused_int, sizeof(gpu_uint));
+  CLCREATEARG_ARRAY(12, unused9_buf, CL_RO, unused_char, sizeof(unused_char));
+  CLCREATEARG_ARRAY(13, unused10_buf, CL_RO, unused_uint_arr, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
 
   CLRUNKERNEL(queue, kernel, &global_work_size);
   CLFLUSH(queue);
@@ -132,6 +134,7 @@ int gpu_test_chain_ntlm9(gpu_device device, gpu_context context, gpu_kernel kern
   CLFREEBUFFER(unused3);
   CLFREEBUFFER(unused4);
   CLFREEBUFFER(unused5);
+  CLFREEBUFFER(unused_reduction_buf);
   CLFREEBUFFER(unused6);
   CLFREEBUFFER(unused7);
   CLFREEBUFFER(unused8_buf);
