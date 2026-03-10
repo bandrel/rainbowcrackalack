@@ -1297,6 +1297,8 @@ void *host_thread_precompute(void *ptr) {
   }
 
 
+  gpu_ulong chain_len_ulong = args->chain_len;
+
   CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(1, hash_buffer, CL_RO, hash_binary, hash_binary_len);
   CLCREATEARG(2, hash_len_buffer, CL_RO, hash_binary_len, sizeof(gpu_uint));
@@ -1305,7 +1307,7 @@ void *host_thread_precompute(void *ptr) {
   CLCREATEARG(5, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
   CLCREATEARG(6, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
   CLCREATEARG(7, table_index_buffer, CL_RO, args->table_index, sizeof(gpu_uint));
-  CLCREATEARG(8, chain_len_buffer, CL_RO, args->chain_len, sizeof(gpu_ulong));
+  CLCREATEARG(8, chain_len_buffer, CL_RO, chain_len_ulong, sizeof(gpu_ulong));
   CLCREATEARG(9, device_num_buffer, CL_RO, gpu->device_number, sizeof(gpu_uint));
   CLCREATEARG(10, total_devices_buffer, CL_RO, args->total_devices, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(12, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
