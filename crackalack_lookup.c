@@ -211,6 +211,18 @@ void print_eta_precompute();
 gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
 void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash_type);
+void load_precalc_cache(void);
+void free_precalc_cache(void);
+void insert_precalc_cache(const char *index_data, const char *data_filename);
+
+typedef struct precalc_cache_entry {
+  char *index_data;
+  char *data_filename;
+  struct precalc_cache_entry *next;
+} precalc_cache_entry;
+
+#define PRECALC_CACHE_BUCKETS 1024
+static precalc_cache_entry *precalc_cache[PRECALC_CACHE_BUCKETS];
 
 
 /* The path of the pot file to store cracked hashes in.  This can be overridden by
@@ -1536,6 +1548,17 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
     } else {
       fwrite(index_data, sizeof(char), strlen(index_data), f);
       FCLOSE(f);
+
+      /* Insert into the in-memory cache so subsequent lookups find it
+       * without a directory rescan.  Recover the data filename by
+       * stripping the ".index" suffix we appended above. */
+      {
+        char data_fn[128];
+        strncpy(data_fn, filename, sizeof(data_fn) - 1);
+        data_fn[sizeof(data_fn) - 1] = '\0';
+        data_fn[strlen(data_fn) - 6] = '\0';
+        insert_precalc_cache(index_data, data_fn);
+      }
     }
 
   } else {
@@ -2042,92 +2065,138 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
 }
 
 
+static unsigned int precalc_hash_fn(const char *s) {
+  unsigned int h = 5381;
+  while (*s)
+    h = ((h << 5) + h) ^ (unsigned char)*s++;
+  return h % PRECALC_CACHE_BUCKETS;
+}
+
+void insert_precalc_cache(const char *index_data, const char *data_filename) {
+  unsigned int bucket = precalc_hash_fn(index_data);
+  precalc_cache_entry *e = malloc(sizeof(*e));
+  if (e == NULL) {
+    fprintf(stderr, "Failed to allocate precalc cache entry.\n");
+    exit(-1);
+  }
+  e->index_data = strdup(index_data);
+  e->data_filename = strdup(data_filename);
+  e->next = precalc_cache[bucket];
+  precalc_cache[bucket] = e;
+}
+
+void load_precalc_cache(void) {
+  DIR *d = opendir(".");
+  struct dirent *de;
+  char buf[256];
+  FILE *f;
+  int64_t file_size;
+
+  if (d == NULL) {
+    fprintf(stderr, "Can't open current directory for precalc cache.\n");
+    exit(-1);
+  }
+
+  memset(precalc_cache, 0, sizeof(precalc_cache));
+
+  while ((de = readdir(d)) != NULL) {
+    if (!str_ends_with(de->d_name, ".index"))
+      continue;
+
+    f = fopen(de->d_name, "rb");
+    if (f == NULL) {
+      fprintf(stderr, "Failed to open %s for reading.\n", de->d_name);
+      exit(-1);
+    }
+
+    file_size = get_file_size(f);
+    if (file_size <= 0 || file_size >= (int64_t)sizeof(buf)) {
+      FCLOSE(f);
+      continue;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    if (fread(buf, sizeof(char), file_size, f) != (size_t)file_size) {
+      fprintf(stderr, "Failed to read index data from %s: %s\n", de->d_name, strerror(errno));
+      FCLOSE(f);
+      continue;
+    }
+    FCLOSE(f);
+
+    char data_filename[512];
+    strncpy(data_filename, de->d_name, sizeof(data_filename) - 1);
+    data_filename[sizeof(data_filename) - 1] = '\0';
+    data_filename[strlen(data_filename) - 6] = '\0';
+
+    insert_precalc_cache(buf, data_filename);
+  }
+  closedir(d);
+}
+
+void free_precalc_cache(void) {
+  for (unsigned int i = 0; i < PRECALC_CACHE_BUCKETS; i++) {
+    precalc_cache_entry *e = precalc_cache[i];
+    while (e != NULL) {
+      precalc_cache_entry *next = e->next;
+      free(e->index_data);
+      free(e->data_filename);
+      free(e);
+      e = next;
+    }
+    precalc_cache[i] = NULL;
+  }
+}
+
 /* Searches the precompute cache for matching index data.  If found, an array of
  * indices is returned, num_indices set to the array size, and the filename buffer
  * is set to the *.index cache file. */
 gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size) {
-  char buf[256] = {0};
   int64_t file_size = 0;
-  DIR *d = NULL;
-  struct dirent *de = NULL;
   FILE *f = NULL;
   gpu_ulong *ret = NULL;
-
 
   *num_indices = 0;
   memset(filename, 0, filename_size);
 
+  unsigned int bucket = precalc_hash_fn(index_data);
+  precalc_cache_entry *e = precalc_cache[bucket];
+  while (e != NULL) {
+    if (strcmp(index_data, e->index_data) == 0) {
+      char index_filename[512];
+      snprintf(index_filename, sizeof(index_filename), "%s.index", e->data_filename);
+      strncpy(filename, index_filename, filename_size - 1);
 
-  /* Go through all *.index files in the current directory and find any that match
-   * the hash passed to us.  If found, we already pre-computed the values. */
-  d = opendir(".");
-  if (d == NULL) {
-    fprintf(stderr, "Can't open current directory.\n");
-    exit(-1);
-  }
-  while ((de = readdir(d)) != NULL) {
-    if (str_ends_with(de->d_name, ".index")) {
-      /*printf("Looking at %s\n", de->d_name);*/
-
-      /* Open this *.index file. */
-      f = fopen(de->d_name, "rb");
+      f = fopen(e->data_filename, "rb");
       if (f == NULL) {
-	fprintf(stderr, "Failed to open %s for reading.\n", de->d_name);
+	fprintf(stderr, "Failed to open precomputed index file: %s\n", e->data_filename);
 	exit(-1);
       }
 
       file_size = get_file_size(f);
 
-      /* Read the index data.*/
-      if ((file_size >= sizeof(buf)) || (fread(buf, sizeof(char), file_size, f) != file_size)) {
-	fprintf(stderr, "Failed to read index data: %s\n", strerror(errno));
+      if (file_size % sizeof(gpu_ulong) != 0) {
+	fprintf(stderr, "Precomputed indices file is not a multiple of %"PRIu64": %"PRId64"\n", (uint64_t)sizeof(gpu_ulong), file_size);
 	exit(-1);
       }
 
-      FCLOSE(f);
+      *num_indices = file_size / sizeof(gpu_ulong);
 
-      /* We found an index file that matches all our parameters.  Open its related
-       * file containing precomputed indices. */
-      if (strcmp(index_data, buf) == 0) {
-	char data_filename[512] = {0};
-
-	/* Set the filename to the *.index file for the caller. */
-	strncpy(filename, de->d_name, filename_size - 1);
-	strncpy(data_filename, de->d_name, sizeof(data_filename) - 1);
-	data_filename[strlen(data_filename) - 6] = '\0';
-
-	f = fopen(data_filename, "rb");
-	if (f == NULL) {
-	  fprintf(stderr, "Failed to open precomputed index file: %s\n", data_filename);
-	  exit(-1);
-	}
-
-	file_size = get_file_size(f);
-
-	if (file_size % sizeof(gpu_ulong) != 0) {
-	  fprintf(stderr, "Precomputed indices file is not a multiple of %"PRIu64": %"PRId64"\n", (uint64_t)sizeof(gpu_ulong), file_size);
-	  exit(-1);
-	}
-
-	*num_indices = file_size / sizeof(gpu_ulong);
-
-	ret = calloc(*num_indices, sizeof(gpu_ulong));
-	if (ret == NULL) {
-	  fprintf(stderr, "Failed to create indices buffer.\n");
-	  exit(-1);
-	}
-
-	if (fread(ret, sizeof(gpu_ulong), *num_indices, f) != *num_indices) {
-	  fprintf(stderr, "Failed to read indices file.\n");
-	  exit(-1);
-	}
-	FCLOSE(f);
-
-	break;
+      ret = calloc(*num_indices, sizeof(gpu_ulong));
+      if (ret == NULL) {
+	fprintf(stderr, "Failed to create indices buffer.\n");
+	exit(-1);
       }
+
+      if (fread(ret, sizeof(gpu_ulong), *num_indices, f) != *num_indices) {
+	fprintf(stderr, "Failed to read indices file.\n");
+	exit(-1);
+      }
+      FCLOSE(f);
+      break;
     }
+    e = e->next;
   }
-  closedir(d); d = NULL;  
+
   return ret;
 }
 
@@ -2601,6 +2670,8 @@ int main(int ac, char **av) {
     }
   }
 
+  load_precalc_cache();
+
   /* Count config groups for progress reporting. */
   unsigned int num_config_groups = 0;
   for (config_group *cg = cg_head; cg != NULL; cg = cg->next)
@@ -2743,6 +2814,7 @@ int main(int ac, char **av) {
 
   printf(" %s* Statistics *%s\n\n          Number of tables processed: %u\n              Number of false alarms: %" QUOTE PRIu64"\n          Number of chains processed: %" QUOTE PRIu64"\n\n                Time spent per table: %s\n     False alarms checked per second: %" QUOTE ".1f\n\n         False alarms per no. chains: %.5f%%\n  Successful cracks per false alarms: %.5f%%\n  Successful cracks per total chains: %.8f%%\n\n\n", WHITEB, CLR, num_tables_processed, num_falsealarms, num_chains_processed, time_per_table_str, (double)num_falsealarms / time_falsealarms, ((double)num_falsealarms / (double)num_chains_processed) * 100.0, ((double)num_cracked / (double)num_falsealarms) * 100.0, ((double)num_cracked / (double)num_chains_processed) * 100.0);
 
+  free_precalc_cache();
   free_precomputed_and_potential_indices(&ppi_head);
   free_loaded_hashes(usernames, hashes);
   FREE(args);
@@ -2754,6 +2826,7 @@ int main(int ac, char **av) {
  err:
   FCLOSE(f);
   FREE(file_data);
+  free_precalc_cache();
   free_precomputed_and_potential_indices(&ppi_head);
   free_loaded_hashes(usernames, hashes);
   FREE(args);
