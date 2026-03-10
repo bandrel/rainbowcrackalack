@@ -186,11 +186,24 @@ typedef struct _preloaded_table preloaded_table;
 
 typedef struct {
   char *rt_dir;
+  rt_parameters filter;   /* only load tables matching these params when use_filter=1 */
+  unsigned int use_filter;
 } preloading_thread_args;
+
+typedef struct _config_group {
+  rt_parameters params;
+  struct _config_group *next;
+} config_group;
 
 
 unsigned int count_tables(char *dir);
+unsigned int count_tables_for_config(char *dir, const rt_parameters *filter);
 void find_rt_params(char *dir, rt_parameters *rt_params);
+void collect_config_groups(char *dir, config_group **head);
+void free_config_groups(config_group **head);
+precomputed_and_potential_indices *ppi_find(precomputed_and_potential_indices *head, const char *hash);
+void ppi_reset_endpoints(precomputed_and_potential_indices *head);
+void setup_args_for_config(thread_args *args, unsigned int num_devices, const rt_parameters *params);
 void free_loaded_hashes(char **usernames, char **hashes);
 void *host_thread_false_alarm(void *ptr);
 void *preloading_thread(void *ptr);
@@ -698,6 +711,164 @@ void find_rt_params(char *dir_name, rt_parameters *rt_params) {
   }
 
   closedir(dir); dir = NULL;
+}
+
+
+/* Returns 1 if two rt_parameters describe the same table configuration
+ * (same precomputed-endpoint requirements), otherwise 0. */
+static int configs_match(const rt_parameters *a, const rt_parameters *b) {
+  return a->hash_type == b->hash_type
+      && strcmp(a->charset_name, b->charset_name) == 0
+      && a->plaintext_len_min == b->plaintext_len_min
+      && a->plaintext_len_max == b->plaintext_len_max
+      && a->table_index == b->table_index
+      && a->chain_len == b->chain_len;
+}
+
+
+static void collect_config_groups_dir(char *dir_name, config_group **head) {
+  char filepath[512] = {0};
+  DIR *dir = NULL;
+  struct dirent *de = NULL;
+  struct stat st;
+
+  dir = opendir(dir_name);
+  if (dir == NULL)
+    return;
+
+  while ((de = readdir(dir)) != NULL) {
+    filepath_join(filepath, sizeof(filepath), dir_name, de->d_name);
+
+    if ((strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0)
+        && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
+      collect_config_groups_dir(filepath, head);
+
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")) {
+      rt_parameters p = {0};
+      parse_rt_params(&p, filepath);
+      if (!p.parsed)
+        continue;
+
+      /* Add this config only if not already present. */
+      int found = 0;
+      for (config_group *cg = *head; cg != NULL; cg = cg->next) {
+        if (configs_match(&cg->params, &p)) { found = 1; break; }
+      }
+      if (!found) {
+        config_group *cg = calloc(1, sizeof(config_group));
+        if (cg == NULL) { fprintf(stderr, "OOM in collect_config_groups\n"); exit(-1); }
+        cg->params = p;
+        cg->next = *head;
+        *head = cg;
+      }
+    }
+  }
+
+  closedir(dir);
+}
+
+void collect_config_groups(char *dir, config_group **head) {
+  *head = NULL;
+  collect_config_groups_dir(dir, head);
+}
+
+void free_config_groups(config_group **head) {
+  config_group *cg = *head, *next = NULL;
+  while (cg != NULL) {
+    next = cg->next;
+    FREE(cg);
+    cg = next;
+  }
+  *head = NULL;
+}
+
+/* Count only tables whose parsed params match filter. */
+unsigned int count_tables_for_config(char *dir, const rt_parameters *filter) {
+  unsigned int count = 0;
+  DIR *d = opendir(dir);
+  if (d == NULL)
+    return 0;
+
+  struct dirent *de = NULL;
+  while ((de = readdir(d)) != NULL) {
+    char filepath[512] = {0};
+    struct stat st = {0};
+    filepath_join(filepath, sizeof(filepath), dir, de->d_name);
+
+    if ((strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0)
+        && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
+      count += count_tables_for_config(filepath, filter);
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")) {
+      rt_parameters p = {0};
+      parse_rt_params(&p, filepath);
+      if (p.parsed && configs_match(&p, filter))
+        count++;
+    }
+  }
+
+  closedir(d);
+  return count;
+}
+
+/* Find a ppi node by hash string. */
+precomputed_and_potential_indices *ppi_find(precomputed_and_potential_indices *head, const char *hash) {
+  while (head != NULL) {
+    if (head->hash != NULL && strcmp(head->hash, hash) == 0)
+      return head;
+    head = head->next;
+  }
+  return NULL;
+}
+
+/* For each uncracked ppi node, free precomputed endpoints so they can be
+ * recomputed for a different table configuration. */
+void ppi_reset_endpoints(precomputed_and_potential_indices *head) {
+  while (head != NULL) {
+    if (head->plaintext == NULL) {
+      FREE(head->precomputed_end_indices);
+      head->num_precomputed_end_indices = 0;
+      FREE(head->index_filename);
+    }
+    head = head->next;
+  }
+}
+
+/* Update thread args with the given table configuration.  Handles both
+ * regular charset and mask charset tables. */
+void setup_args_for_config(thread_args *args, unsigned int num_devices, const rt_parameters *params) {
+  unsigned int is_mask = is_mask_string(params->charset_name);
+  Mask mask;
+  char mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  unsigned int mask_lens[MAX_PLAINTEXT_LEN];
+
+  memset(&mask, 0, sizeof(mask));
+  memset(mask_data, 0, sizeof(mask_data));
+  memset(mask_lens, 0, sizeof(mask_lens));
+
+  if (is_mask) {
+    if (mask_parse(params->charset_name, &mask, NULL, NULL, NULL, NULL) != 0) {
+      fprintf(stderr, "Error: invalid mask in table filename: \"%s\".\n", params->charset_name);
+      exit(-1);
+    }
+    mask_to_gpu_buffers(&mask, mask_data, mask_lens);
+  }
+
+  for (unsigned int idx = 0; idx < num_devices; idx++) {
+    args[idx].hash_type         = params->hash_type;
+    args[idx].hash_name         = (char *)params->hash_name;
+    args[idx].is_mask           = is_mask;
+    args[idx].charset           = is_mask ? "" : validate_charset((char *)params->charset_name);
+    args[idx].charset_name      = (char *)params->charset_name;
+    if (is_mask) {
+      memcpy(args[idx].mask_charset_data, mask_data, sizeof(args[idx].mask_charset_data));
+      memcpy(args[idx].mask_charset_lens, mask_lens, sizeof(args[idx].mask_charset_lens));
+    }
+    args[idx].plaintext_len_min = params->plaintext_len_min;
+    args[idx].plaintext_len_max = params->plaintext_len_max;
+    args[idx].table_index       = params->table_index;
+    args[idx].reduction_offset  = params->reduction_offset;
+    args[idx].chain_len         = params->chain_len;
+  }
 }
 
 
@@ -1222,7 +1393,10 @@ void *host_thread_precompute(void *ptr) {
 }
 
 
-void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_and_potential_indices **ppi_head) {
+/* If update_ppi is non-NULL, replace its precomputed endpoints in-place (for
+ * re-running precomputation against a different table configuration).
+ * If NULL, a new ppi node is appended to ppi_head (original behaviour). */
+void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_and_potential_indices **ppi_head, precomputed_and_potential_indices *update_ppi) {
   pthread_t threads[MAX_NUM_DEVICES] = {0};
   char filename[128] = {0}, time_str[128] = {0}, index_data[256] = {0};
   struct timespec start_time = {0};
@@ -1385,48 +1559,61 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
   printf("\n");
   */
 
-  /* Time to store the precomputed indices.  If no head exists in the linked list... */
-  if (*ppi_head == NULL) {
-    *ppi_head = calloc(1, sizeof(precomputed_and_potential_indices));
-    if (*ppi_head == NULL) {
-      fprintf(stderr, "Error allocating buffer for precomputed indices.\n");
+  if (update_ppi != NULL) {
+    /* Update an existing ppi node for a new table configuration. */
+    FREE(update_ppi->precomputed_end_indices);
+    FREE(update_ppi->index_filename);
+    update_ppi->num_precomputed_end_indices = output_index;
+    update_ppi->precomputed_end_indices = calloc(output_index, sizeof(gpu_ulong));
+    if (update_ppi->precomputed_end_indices == NULL) {
+      fprintf(stderr, "Error allocating index buffer for precomputed indices.\n");
       exit(-1);
     }
-    ppi = *ppi_head;
+    for (i = 0; i < output_index; i++)
+      update_ppi->precomputed_end_indices[i] = output[i];
+    update_ppi->index_filename = strdup(filename);
   } else {
-    ppi = *ppi_head;
-    while (ppi->next != NULL)
+    /* Original behaviour: append a new ppi node to ppi_head. */
+    if (*ppi_head == NULL) {
+      *ppi_head = calloc(1, sizeof(precomputed_and_potential_indices));
+      if (*ppi_head == NULL) {
+        fprintf(stderr, "Error allocating buffer for precomputed indices.\n");
+        exit(-1);
+      }
+      ppi = *ppi_head;
+    } else {
+      ppi = *ppi_head;
+      while (ppi->next != NULL)
+        ppi = ppi->next;
+      ppi->next = calloc(1, sizeof(precomputed_and_potential_indices));
+      if (ppi->next == NULL) {
+        fprintf(stderr, "Error allocating buffer for precomputed indices.\n");
+        exit(-1);
+      }
       ppi = ppi->next;
-    ppi->next = calloc(1, sizeof(precomputed_and_potential_indices));
-    if (ppi->next == NULL) {
-      fprintf(stderr, "Error allocating buffer for precomputed indices.\n");
+    }
+
+    ppi->username = args->username;
+    ppi->hash = args->hash;
+    ppi->num_precomputed_end_indices = output_index;
+
+    ppi->precomputed_end_indices = calloc(ppi->num_precomputed_end_indices, sizeof(gpu_ulong));
+    if (ppi->precomputed_end_indices == NULL) {
+      fprintf(stderr, "Error allocating index buffer for precomputed indices.\n");
       exit(-1);
     }
-    ppi = ppi->next;
+
+    for (i = 0; i < ppi->num_precomputed_end_indices; i++)
+      ppi->precomputed_end_indices[i] = output[i];
+
+    ppi->index_filename = strdup(filename);
   }
-
-  ppi->username = args->username;
-  ppi->hash = args->hash;
-  ppi->num_precomputed_end_indices = output_index;
-
-  ppi->precomputed_end_indices = calloc(ppi->num_precomputed_end_indices, sizeof(gpu_ulong));
-  if (ppi->precomputed_end_indices == NULL) {
-    fprintf(stderr, "Error allocating index buffer for precomputed indices.\n");
-    exit(-1);
-  }
-
-  /* Store the precomputed indices into the array. */
-  for (i = 0; i < ppi->num_precomputed_end_indices; i++)
-    ppi->precomputed_end_indices[i] = output[i];
-
-  /* Set the filename, so it can be deleted if the hash is cracked later. */
-  ppi->index_filename = strdup(filename);
 
   FREE(output);
 }
 
 
-void _preloading_thread(char *rt_dir) {
+void _preloading_thread(char *rt_dir, const rt_parameters *filter) {
   DIR *dir = NULL;
   struct dirent *de = NULL;
   struct stat st;
@@ -1447,7 +1634,7 @@ void _preloading_thread(char *rt_dir) {
 
     /* If this is a directory, recurse into it. */
     if ((strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0) && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
-      _preloading_thread(filepath);
+      _preloading_thread(filepath, filter);
 
     /* If this is a compressed or uncompressed rainbow table, load it! */
     } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")) {
@@ -1501,12 +1688,20 @@ void _preloading_thread(char *rt_dir) {
       if (rainbow_table != NULL) {
 	unsigned int skip_table = 0;
 
+	/* Parse params from the filename for both filtering and verification. */
+	rt_parameters pt_params = {0};
+	parse_rt_params(&pt_params, filepath);
 
-	/* If the table is uncompressed (*.rt), then there's a possibility its unsorted on accident.  We will
-	 * verify them first to make sure. */
-	if (is_uncompressed_table == 1) {
-	  rt_parameters pt_params = {0};
-	  parse_rt_params(&pt_params, filepath);
+	/* If a config filter is active, skip tables that don't match it. */
+	if (filter != NULL) {
+	  if (!pt_params.parsed || !configs_match(&pt_params, filter)) {
+	    FREE(rainbow_table);
+	    skip_table = 1;
+	  }
+	}
+
+	/* If the table is uncompressed (*.rt), verify it is sorted and valid. */
+	if (!skip_table && is_uncompressed_table == 1) {
 	  unsigned int file_is_mask = pt_params.parsed && is_mask_string(pt_params.charset_name);
 	  if (!verify_rainbowtable(rainbow_table, num_chains, VERIFY_TABLE_TYPE_LOOKUP, 0, 0, NULL, file_is_mask)) {
 	    fprintf(stderr, "\nError: %s is not a valid table suitable for lookups!  (Hint: it may not be sorted.)  Skipping...\n\n", filepath);  fflush(stderr);
@@ -1566,17 +1761,19 @@ void _preloading_thread(char *rt_dir) {
 /* The thread which preloads tables in the background while the main thread performs binary searching & false
  * alarm checks. */
 void *preloading_thread(void *ptr) {
-  char *xrt_dir = ((preloading_thread_args *)ptr)->rt_dir;
+  preloading_thread_args *ta = (preloading_thread_args *)ptr;
+  char *xrt_dir = ta->rt_dir;
   char rt_dir[512];
+  const rt_parameters *filter = ta->use_filter ? &ta->filter : NULL;
 
 
   memset(rt_dir, 0, sizeof(rt_dir));
 
   /* Copy the rainbow table path from the heap to the local stack, then free the source. */
   strncpy(rt_dir, xrt_dir, sizeof(rt_dir) - 1);
-  free(xrt_dir); xrt_dir = ((preloading_thread_args *)ptr)->rt_dir = NULL;
+  free(xrt_dir); ta->rt_dir = NULL;
 
-  _preloading_thread(rt_dir);
+  _preloading_thread(rt_dir, filter);
 
   /* We've reached the end of all the tables, so tell the main thread. */
   table_loading_complete = 1;
@@ -2051,15 +2248,6 @@ int main(int ac, char **av) {
   thread_args *args = NULL;
   char time_precomp_str[64] = {0}, time_io_str[64] = {0}, time_searching_str[64] = {0}, time_falsealarms_str[64] = {0}, time_total_str[64] = {0}, time_per_table_str[64] = {0};
 
-  rt_parameters rt_params = {0};
-  Mask lookup_mask;
-  char lookup_mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
-  unsigned int lookup_mask_lens[MAX_PLAINTEXT_LEN];
-  unsigned int lookup_is_mask = 0;
-
-  memset(&lookup_mask, 0, sizeof(lookup_mask));
-  memset(lookup_mask_data, 0, sizeof(lookup_mask_data));
-  memset(lookup_mask_lens, 0, sizeof(lookup_mask_lens));
 
   gpu_platform platforms[MAX_NUM_PLATFORMS] = {0};
   gpu_device devices[MAX_NUM_DEVICES] = {0};
@@ -2355,27 +2543,22 @@ int main(int ac, char **av) {
   /* We're done checking the pot file for previously-cracked hashes. */
   FREE(pot_file_data);
 
-  /* Look through the supplied rainbow table directory, and infer the parameters via
-   * the filenames. */
-  find_rt_params(rt_dir, &rt_params);
-  if (!rt_params.parsed) {
-    fprintf(stderr, "Failed to infer rainbow table parameters from files in directory.  Ensure that valid rainbow table files are in %s (and/or its sub-directories).\n", rt_dir);
+  /* Enumerate every distinct table configuration present in the directory.
+   * Each configuration requires its own precomputation pass because the
+   * endpoints depend on the charset, chain length, and table index. */
+  config_group *cg_head = NULL;
+  collect_config_groups(rt_dir, &cg_head);
+  if (cg_head == NULL) {
+    fprintf(stderr, "Failed to find any valid rainbow table files in %s (and/or its sub-directories).\n", rt_dir);
     exit(-1);
   }
 
-  /* At this time, only NTLM hashes are supported. 
-  if (rt_params.hash_type != HASH_NTLM) {
-    fprintf(stderr, "Unfortunately, only NTLM hashes are supported at this time.  Terminating.\n");
-    exit(-1);
-  }
-  */
-
-  /* Ensure that valid hashes were provided. */
-  if (rt_params.hash_type == HASH_NTLM) {
+  /* Use the first config group's hash type for hash format validation. */
+  if (cg_head->params.hash_type == HASH_NTLM) {
     for (i = 0; i < num_hashes; i++) {
       if (strlen(hashes[i]) != 32) {
-	fprintf(stderr, "Error: invalid NTLM hash (length is not 32!): %s\n", hashes[i]);
-	exit(-1);
+        fprintf(stderr, "Error: invalid NTLM hash (length is not 32!): %s\n", hashes[i]);
+        exit(-1);
       }
     }
   }
@@ -2392,15 +2575,6 @@ int main(int ac, char **av) {
     goto err;
   }
 
-  if (is_mask_string(rt_params.charset_name)) {
-    if (mask_parse(rt_params.charset_name, &lookup_mask, NULL, NULL, NULL, NULL) != 0) {
-      fprintf(stderr, "Error: invalid mask in table filename: \"%s\".\n", rt_params.charset_name);
-      goto err;
-    }
-    lookup_is_mask = 1;
-    mask_to_gpu_buffers(&lookup_mask, lookup_mask_data, lookup_mask_lens);
-  }
-
   /* If --markov was requested, load the model once before spawning threads. */
   if (use_markov) {
     if (markov_load(markov_path, &g_markov) != 0) {
@@ -2411,73 +2585,130 @@ int main(int ac, char **av) {
     fflush(stdout);
   }
 
-  /* We set most of the args once, since all GPUs & hashes need all the same
-   * parameters. */
+  /* Set per-GPU constant fields that don't change across config groups. */
   for (i = 0; i < num_devices; i++) {
-    args[i].hash_type = rt_params.hash_type;
-    args[i].hash_name = rt_params.hash_name;
-    args[i].username = NULL;  /* Filled in below. */
-    args[i].hash = NULL;      /* Filled in below. */
-    args[i].is_mask = lookup_is_mask;
-    args[i].charset = lookup_is_mask ? "" : validate_charset(rt_params.charset_name);
-    args[i].charset_name = rt_params.charset_name;
-    if (lookup_is_mask) {
-      memcpy(args[i].mask_charset_data, lookup_mask_data, sizeof(args[i].mask_charset_data));
-      memcpy(args[i].mask_charset_lens, lookup_mask_lens, sizeof(args[i].mask_charset_lens));
-    }
-    args[i].plaintext_len_min = rt_params.plaintext_len_min;
-    args[i].plaintext_len_max = rt_params.plaintext_len_max;
-    args[i].table_index = rt_params.table_index;
-    args[i].reduction_offset = rt_params.reduction_offset;
-    args[i].chain_len = rt_params.chain_len;
-    args[i].total_devices = num_devices;
+    args[i].username       = NULL;  /* Filled in per-hash below. */
+    args[i].hash           = NULL;  /* Filled in per-hash below. */
+    args[i].total_devices  = num_devices;
     args[i].gpu.device_number = i;
-    args[i].gpu.device = devices[i];
+    args[i].gpu.device     = devices[i];
     get_device_uint(args[i].gpu.device, CL_DEVICE_MAX_COMPUTE_UNITS, &(args[i].gpu.num_work_units));
-    args[i].use_markov = use_markov;
+    args[i].use_markov     = use_markov;
     if (use_markov) {
-      args[i].sorted_pos0    = g_markov.sorted_pos0;
-      args[i].sorted_bigram  = g_markov.sorted_bigram;
+      args[i].sorted_pos0       = g_markov.sorted_pos0;
+      args[i].sorted_bigram     = g_markov.sorted_bigram;
       args[i].markov_charset_len = g_markov.charset_len;
     }
   }
 
-  /* Start preloading tables into memory in parallel with precomputation. */
-  preload_thread_args.rt_dir = strdup(rt_dir);
-  err = pthread_create(&preload_thread_id, NULL, preloading_thread, &preload_thread_args);
-  if (err != 0) {
-    printf("Failed to create thread: %d\n", err);
-    return -1;
-  }
+  /* Count config groups for progress reporting. */
+  unsigned int num_config_groups = 0;
+  for (config_group *cg = cg_head; cg != NULL; cg = cg->next)
+    num_config_groups++;
 
-  num_hashes_precomputed_total = num_hashes;
-  start_timer(&precompute_start_time);
-  for (i = 0; i < num_hashes; i++) {
-    printf("Pre-computing hash #%u: %s...\n", i + 1, hashes[i]);  fflush(stdout);
+  unsigned int config_group_num = 0;
+  for (config_group *cg = cg_head; cg != NULL; cg = cg->next) {
+    unsigned int num_uncracked = 0;
 
-    for (j = 0; j < num_devices; j++) {
-      args[j].username = usernames[i];
-      args[j].hash = hashes[i];
+    config_group_num++;
+
+    /* Count remaining uncracked hashes. */
+    ppi_cur = ppi_head;
+    while (ppi_cur != NULL) {
+      if (ppi_cur->plaintext == NULL)
+        num_uncracked++;
+      ppi_cur = ppi_cur->next;
+    }
+    /* If ppi_head is still NULL (first pass) count all hashes as uncracked. */
+    if (ppi_head == NULL)
+      num_uncracked = num_hashes;
+
+    if (num_uncracked == 0) {
+      printf("All hashes cracked.  Skipping remaining config groups.\n");  fflush(stdout);
+      break;
     }
 
-    precompute_hash(num_devices, args, &ppi_head);
+    /* Skip config groups whose hash type doesn't match the input hashes.
+     * The target hash type is taken from the first config group. */
+    if (cg->params.hash_type != cg_head->params.hash_type)
+      continue;
+
+    /* Skip config groups that have no tables in the directory (can happen if
+     * a table was removed between enumeration and search). */
+    unsigned int config_table_count = count_tables_for_config(rt_dir, &cg->params);
+    if (config_table_count == 0)
+      continue;
+
+    if (num_config_groups > 1)
+      printf("\n[Config group %u of %u] charset=%s len=%u-%u table_index=%u chain_len=%u\n",
+             config_group_num, num_config_groups,
+             cg->params.charset_name,
+             cg->params.plaintext_len_min, cg->params.plaintext_len_max,
+             cg->params.table_index, cg->params.chain_len);
+
+    /* Apply this config group's parameters to args. */
+    setup_args_for_config(args, num_devices, &cg->params);
+
+    /* Reset kernel-selection message flags so the right message prints for
+     * each config group. */
+    printed_precompute_optimized_message = 0;
+    printed_false_alarm_optimized_message = 0;
+
+    /* Release any stale precomputed endpoints from the previous config group
+     * so they are recomputed with the current config's parameters. */
+    ppi_reset_endpoints(ppi_head);
+
+    /* Start preloading tables for this config group in the background. */
+    table_loading_complete = 0;
+    preload_thread_args.rt_dir = strdup(rt_dir);
+    preload_thread_args.filter = cg->params;
+    preload_thread_args.use_filter = 1;
+    err = pthread_create(&preload_thread_id, NULL, preloading_thread, &preload_thread_args);
+    if (err != 0) {
+      printf("Failed to create preloading thread: %d\n", err);
+      goto err;
+    }
+
+    /* Precompute endpoints for all uncracked hashes under this config. */
+    num_hashes_precomputed = 0;
+    num_hashes_precomputed_total = num_uncracked;
+    start_timer(&precompute_start_time);
+
+    for (i = 0; i < num_hashes; i++) {
+      precomputed_and_potential_indices *existing_ppi = ppi_find(ppi_head, hashes[i]);
+
+      /* Skip already-cracked hashes. */
+      if (existing_ppi != NULL && existing_ppi->plaintext != NULL)
+        continue;
+
+      printf("Pre-computing hash #%u: %s...\n", i + 1, hashes[i]);  fflush(stdout);
+
+      for (j = 0; j < num_devices; j++) {
+        args[j].username = usernames[i];
+        args[j].hash = hashes[i];
+      }
+
+      /* Pass existing_ppi so the function updates in-place on second+ pass,
+       * and creates a new node on the first pass (existing_ppi == NULL). */
+      precompute_hash(num_devices, args, &ppi_head, existing_ppi);
+    }
+
+    time_precomp += get_elapsed(&precompute_start_time);
+    seconds_to_human_time(time_precomp_str, sizeof(time_precomp_str), time_precomp);
+    printf("\nPre-computation finished in %s.\n\n", time_precomp_str);  fflush(stdout);
+
+    /* Warn if precomputed indices are consuming excessive RAM. */
+    check_memory_usage();
+
+    /* Binary search all tables for this config group. */
+    total_tables = config_table_count;
+    start_timer(&search_start_time);
+    search_tables(total_tables, ppi_head, args);
+
+    pthread_join(preload_thread_id, NULL);
   }
-  time_precomp = get_elapsed(&precompute_start_time);
-  seconds_to_human_time(time_precomp_str, sizeof(time_precomp_str), time_precomp);
-  printf("\nPre-computation finished in %s.\n\n", time_precomp_str);  fflush(stdout);
 
-  /* If too much memory is taken up by the pre-computed indices, print a warning to the
-   * user.  Strange crashes in the OpenCL functions can occur when memory is exhausted,
-   * and its not obvious that this is the culprit. */
-  check_memory_usage();
-
-  /* Using the pre-computed end indices, perform a binary search on all rainbow tables
-   * in the target directory.  Any matching indices will trigger false alarm checks. */
-  total_tables = count_tables(rt_dir);
-  start_timer(&search_start_time);
-  search_tables(total_tables, ppi_head, args);
-
-  pthread_join(preload_thread_id, NULL);
+  free_config_groups(&cg_head);
 
   seconds_to_human_time(time_precomp_str, sizeof(time_precomp_str), time_precomp);
   seconds_to_human_time(time_io_str, sizeof(time_io_str), time_io);
