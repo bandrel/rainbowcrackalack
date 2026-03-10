@@ -17,6 +17,9 @@ kernel void crackalack(
     device unsigned int *g_pos_start [[buffer(8)]],
     device ulong *g_plaintext_space_up_to_index [[buffer(9)]],
     device ulong *g_plaintext_space_total [[buffer(10)]],
+    device unsigned int *g_is_mask [[buffer(11)]],
+    device char *g_mask_charset_data [[buffer(12)]],
+    device unsigned int *g_mask_charset_lens [[buffer(13)]],
     uint gid [[thread_position_in_grid]]) {
 
   unsigned int hash_type = *g_hash_type;
@@ -27,17 +30,18 @@ kernel void crackalack(
   unsigned int chain_len = *g_chain_len;
   ulong start_index = g_indices[gid];
   unsigned int pos = *g_pos_start;
+  unsigned int is_mask = *g_is_mask;
 
   unsigned int charset_len = *g_charset_len;
   g_memcpy((thread unsigned char *)charset, (device unsigned char *)g_charset, charset_len);
 
-  ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1];
+  ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
   unsigned char plaintext[MAX_PLAINTEXT_LEN];
   unsigned int plaintext_len = 0;
   unsigned char hash[MAX_HASH_OUTPUT_LEN];
   unsigned int hash_len;
 
-  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index, plaintext_len_max);
+  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index);
   ulong plaintext_space_total = *g_plaintext_space_total;
 
   // Generate a chain, and store it in the local buffer.
@@ -45,6 +49,9 @@ kernel void crackalack(
         hash_type,
         charset,
         charset_len,
+        is_mask,
+        g_mask_charset_data,
+        g_mask_charset_lens,
         plaintext_len_min,
         plaintext_len_max,
         reduction_offset,

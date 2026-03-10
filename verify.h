@@ -2,13 +2,11 @@
 #define _VERIFY_H
 
 #include <inttypes.h>
-#include "markov.h"
 
 
 #define VERIFY_TABLE_TYPE_LOOKUP 2
 #define VERIFY_TABLE_TYPE_QUICK 1
 #define VERIFY_TABLE_TYPE_GENERATED 0
-#define VERIFY_TABLE_TYPE_MARKOV 3
 
 #define VERIFY_TABLE_IS_COMPLETE 1
 #define VERIFY_TABLE_MAY_BE_INCOMPLETE 0
@@ -16,19 +14,11 @@
 #define VERIFY_TRUNCATE_ON_ERROR 1
 #define VERIFY_DONT_TRUNCATE 0
 
-#define VERIFY_LAST_N_CHAINS 0x10
-
-#define VERIFY_ERR_TRUNCATED    -2
-#define VERIFY_ERR_CORRUPTED    -3
-#define VERIFY_ERR_DISCONTINUITY -4
-
 void _print_chain_error(uint64_t random_chain, uint64_t start, uint64_t actual_end, uint64_t computed_end);
 
-int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, uint64_t *error_chain_num);
+int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, unsigned int *error_chain_num, unsigned int is_mask);
 
-int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify, const markov_model *markov);
-
-int verify_chains_recompute(const char *filename, uint64_t start_chain, uint64_t count, int hash_type, const char *charset, int chain_len);
+int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify);
 
 
 #endif

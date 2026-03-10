@@ -26,14 +26,12 @@
 
 /* Uncompresses an RTC file and returns a pointer to the rainbow table, along with the
  * number of chains in it.  Returns 0 on success, or an error code. */
-int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *ret_num_chains) {
+int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, unsigned int *ret_num_chains) {
   char *fn_ptr = NULL;
   FILE *f = NULL;
-  uint64_t i = 0, num_chains = 0;
-  unsigned int chain_size = 0, unused = 0, table_ptr = 0;
+  unsigned int i = 0, chain_size = 0, unused = 0, table_ptr = 0, num_chains = 0;
   int ret = 0;
   uint64_t *uncompressed_table = NULL;
-  uint8_t *chain_buf = NULL;
 
   unsigned int uVersion = 0;
   unsigned short uIndexSBits = 0;
@@ -55,16 +53,16 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *
     }
   }
 
-  if (sscanf(fn_ptr, "%"SCNu64"_%u.rtc", &num_chains, &unused) != 2) {
+  if (sscanf(fn_ptr, "%u_%u.rtc", &num_chains, &unused) != 2) {
     fprintf(stderr, "Error: failed to parse number of chains from filename: %s\n", fn_ptr);
     ret = -1;
     goto done;
   }
 
   /*printf("Total chains in table: %u\n", total_chains_in_table);*/
-  uncompressed_table = calloc((size_t)num_chains, sizeof(uint64_t) * 2);
+  uncompressed_table = calloc(num_chains, sizeof(uint64_t) * 2);
   if (uncompressed_table == NULL) {
-    fprintf(stderr, "Error: could not allocate %"PRIu64" bytes in memory for uncompressed table.\n", num_chains * sizeof(uint64_t) * 2);
+    fprintf(stderr, "Error: could not allocate %"PRIu64" bytes in memory for uncompressed table.\n", (uint64_t)(num_chains * sizeof(uint64_t) * 2));
     ret = -2;
     goto done;
   }
@@ -120,35 +118,20 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *
   }
   /*printf("s_mask: %"PRIu64"\n", s_mask);*/
 
-  /* Bulk-read all chain bytes in a single I/O call.  Per-chain fread() is
-   * dramatically slower than one bulk read followed by in-memory decode. */
-  size_t chains_bytes = (size_t)num_chains * chain_size;
-  if (chain_size != 0 && chains_bytes / chain_size != num_chains) {
-    fprintf(stderr, "Error: chain byte count overflow (num_chains=%"PRIu64", chain_size=%u).\n",
-            num_chains, chain_size);
-    ret = -7;
-    goto done;
-  }
-  chain_buf = malloc(chains_bytes);
-  if (chain_buf == NULL) {
-    fprintf(stderr, "Error: could not allocate %zu bytes for chain buffer.\n", chains_bytes);
-    ret = -7;
-    goto done;
-  }
-
-  if (fread(chain_buf, 1, chains_bytes, f) != chains_bytes) {
-    fprintf(stderr, "Error while reading chains: %s (%d)\n", strerror(errno), errno);
-    ret = -7;
-    goto done;
-  }
-
   for (i = 0; i < num_chains; i++) {
     buf[0] = 0;
     buf[1] = 0;
-    memcpy(buf, chain_buf + (size_t)i * chain_size, chain_size);
+    if (fread(buf, chain_size, 1, f) != 1) {
+      fprintf(stderr, "Error while reading chain: %s (%d)\n", strerror(errno), errno);
+      ret = -7;
+      goto done;
+    }
 
     s = (buf[0] & s_mask) + uIndexSMin;
     e = uIndexEMin + (uIndexEInterval * i) + ((buf[0] >> uIndexSBits) | (buf[1] << (64 - uIndexSBits)));
+
+    /*printf("#%u: %"PRIu64" %"PRIu64"\n", i, buf[0], buf[1]);
+      printf("\t%"PRIu64" %"PRIu64"\n", s, e);*/
 
     uncompressed_table[table_ptr] = s;
     table_ptr++;
@@ -160,11 +143,6 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *
   if (f != NULL) {
     fclose(f);
     f = NULL;
-  }
-
-  if (chain_buf != NULL) {
-    free(chain_buf);
-    chain_buf = NULL;
   }
 
   /* On error, free the table.  Set the table pointer to NULL along with num_chains to

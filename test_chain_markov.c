@@ -93,9 +93,11 @@ static uint64_t cpu_markov_chain(uint64_t start, unsigned int chain_len,
  *   8  pos_start
  *   9  plaintext_space_up_to_index (unused in markov)
  *  10  plaintext_space_total
- *  11  sorted_pos0 (constant)
- *  12  sorted_bigram (constant)
- *  13  max_positions
+ *  11  is_mask (unused in markov)
+ *  12  mask_charset_data (unused in markov)
+ *  13  mask_charset_lens (unused in markov)
+ *  14  sorted_pos0 (constant)
+ *  15  sorted_bigram (constant)
  */
 static int gpu_test_markov_chain(gpu_device device, gpu_context context,
                                   gpu_kernel kernel,
@@ -114,6 +116,7 @@ static int gpu_test_markov_chain(gpu_device device, gpu_context context,
     gpu_uint reduction_offset  = TABLE_INDEX_TO_REDUCTION_OFFSET(t->table_index);
     gpu_uint chain_len_val     = (gpu_uint)t->chain_len;
     gpu_uint pos_start         = 0;
+    gpu_uint is_mask           = 0;
 
     /* pspace_total = charset_len ^ plaintext_len */
     gpu_ulong pspace_total = 1;
@@ -127,15 +130,18 @@ static int gpu_test_markov_chain(gpu_device device, gpu_context context,
     if (!indices) { fprintf(stderr, "gpu_test_markov_chain: OOM\n"); exit(-1); }
     indices[0] = (gpu_ulong)t->start;
 
-    gpu_uint max_positions_val = (gpu_uint)model->max_positions;
+    char dummy_mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+    gpu_uint dummy_mask_lens[MAX_PLAINTEXT_LEN];
+    memset(dummy_mask_data, 0, sizeof(dummy_mask_data));
+    memset(dummy_mask_lens, 0, sizeof(dummy_mask_lens));
 
     gpu_buffer hash_type_buf = NULL, charset_buf = NULL, charset_len_buf = NULL;
     gpu_buffer plen_min_buf = NULL, plen_max_buf = NULL;
     gpu_buffer reduc_buf = NULL, chain_len_buf = NULL;
     gpu_buffer indices_buf = NULL, pos_start_buf = NULL;
     gpu_buffer pspace_up_to_buf = NULL, pspace_total_buf = NULL;
+    gpu_buffer is_mask_buf = NULL, mask_data_buf = NULL, mask_lens_buf = NULL;
     gpu_buffer sorted_pos0_buf = NULL, sorted_bigram_buf = NULL;
-    gpu_buffer max_positions_buf = NULL;
 
     queue = CLCREATEQUEUE(context, device);
 
@@ -151,11 +157,14 @@ static int gpu_test_markov_chain(gpu_device device, gpu_context context,
     CLCREATEARG_ARRAY(9, pspace_up_to_buf, CL_RO, pspace_up_to,
                       MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
     CLCREATEARG(10, pspace_total_buf,   CL_RO, pspace_total,    sizeof(pspace_total));
-    CLCREATEARG_ARRAY(11, sorted_pos0_buf, CL_RO, model->sorted_pos0,
+    CLCREATEARG(11, is_mask_buf,        CL_RO, is_mask,         sizeof(is_mask));
+    CLCREATEARG_ARRAY(12, mask_data_buf, CL_RO, dummy_mask_data, sizeof(dummy_mask_data));
+    CLCREATEARG_ARRAY(13, mask_lens_buf, CL_RO, dummy_mask_lens,
+                      MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
+    CLCREATEARG_ARRAY(14, sorted_pos0_buf, CL_RO, model->sorted_pos0,
                       MC_CHARSET_LEN * sizeof(uint8_t));
-    CLCREATEARG_ARRAY(12, sorted_bigram_buf, CL_RO, model->sorted_bigram,
-                      model->max_positions * MC_CHARSET_LEN * MC_CHARSET_LEN * sizeof(uint8_t));
-    CLCREATEARG(13, max_positions_buf, CL_RO, max_positions_val, sizeof(max_positions_val));
+    CLCREATEARG_ARRAY(15, sorted_bigram_buf, CL_RO, model->sorted_bigram,
+                      MC_CHARSET_LEN * MC_CHARSET_LEN * sizeof(uint8_t));
 
     CLRUNKERNEL(queue, kernel, &global_work_size);
     CLFLUSH(queue);
@@ -184,139 +193,15 @@ static int gpu_test_markov_chain(gpu_device device, gpu_context context,
     CLFREEBUFFER(pos_start_buf);
     CLFREEBUFFER(pspace_up_to_buf);
     CLFREEBUFFER(pspace_total_buf);
+    CLFREEBUFFER(is_mask_buf);
+    CLFREEBUFFER(mask_data_buf);
+    CLFREEBUFFER(mask_lens_buf);
     CLFREEBUFFER(sorted_pos0_buf);
     CLFREEBUFFER(sorted_bigram_buf);
-    CLFREEBUFFER(max_positions_buf);
     CLRELEASEQUEUE(queue);
 
     FREE(indices);
     return test_passed;
-}
-
-
-/*
- * GPU test variant with a custom (truncated) plaintext space total.
- * Used to verify that the generic kernel correctly handles markov-keyspace < n^len.
- */
-static int gpu_test_markov_chain_truncated(gpu_device device, gpu_context context,
-                                            gpu_kernel kernel,
-                                            uint64_t start, unsigned int chain_len,
-                                            unsigned int table_index,
-                                            uint64_t pspace_total_override,
-                                            uint64_t expected_end,
-                                            const markov_model *model,
-                                            unsigned int plaintext_len)
-{
-    CLMAKETESTVARS();
-    int test_passed = 0;
-
-    gpu_uint hash_type         = HASH_NTLM;
-    gpu_uint charset_len_val   = model->charset_len;
-    gpu_uint plen_min          = (gpu_uint)plaintext_len;
-    gpu_uint plen_max          = (gpu_uint)plaintext_len;
-    gpu_uint reduction_offset  = TABLE_INDEX_TO_REDUCTION_OFFSET(table_index);
-    gpu_uint chain_len_val     = (gpu_uint)chain_len;
-    gpu_uint pos_start         = 0;
-
-    gpu_ulong pspace_total = (gpu_ulong)pspace_total_override;
-
-    gpu_ulong pspace_up_to[MAX_PLAINTEXT_LEN];
-    memset(pspace_up_to, 0, sizeof(pspace_up_to));
-
-    gpu_ulong *indices = calloc(1, sizeof(gpu_ulong));
-    if (!indices) { fprintf(stderr, "gpu_test_markov_chain_truncated: OOM\n"); exit(-1); }
-    indices[0] = (gpu_ulong)start;
-
-    gpu_uint max_positions_val = (gpu_uint)model->max_positions;
-
-    gpu_buffer hash_type_buf = NULL, charset_buf = NULL, charset_len_buf = NULL;
-    gpu_buffer plen_min_buf = NULL, plen_max_buf = NULL;
-    gpu_buffer reduc_buf = NULL, chain_len_buf = NULL;
-    gpu_buffer indices_buf = NULL, pos_start_buf = NULL;
-    gpu_buffer pspace_up_to_buf = NULL, pspace_total_buf = NULL;
-    gpu_buffer sorted_pos0_buf = NULL, sorted_bigram_buf = NULL;
-    gpu_buffer max_positions_buf = NULL;
-
-    queue = CLCREATEQUEUE(context, device);
-
-    CLCREATEARG(0,  hash_type_buf,      CL_RO, hash_type,       sizeof(hash_type));
-    CLCREATEARG_ARRAY(1, charset_buf,   CL_RO, MC_CHARSET,      MC_CHARSET_LEN);
-    CLCREATEARG(2,  charset_len_buf,    CL_RO, charset_len_val, sizeof(charset_len_val));
-    CLCREATEARG(3,  plen_min_buf,       CL_RO, plen_min,        sizeof(plen_min));
-    CLCREATEARG(4,  plen_max_buf,       CL_RO, plen_max,        sizeof(plen_max));
-    CLCREATEARG(5,  reduc_buf,          CL_RO, reduction_offset,sizeof(reduction_offset));
-    CLCREATEARG(6,  chain_len_buf,      CL_RO, chain_len_val,   sizeof(chain_len_val));
-    CLCREATEARG_ARRAY(7, indices_buf,   CL_RW, indices,         sizeof(gpu_ulong));
-    CLCREATEARG(8,  pos_start_buf,      CL_RO, pos_start,       sizeof(pos_start));
-    CLCREATEARG_ARRAY(9, pspace_up_to_buf, CL_RO, pspace_up_to,
-                      MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
-    CLCREATEARG(10, pspace_total_buf,   CL_RO, pspace_total,    sizeof(pspace_total));
-    CLCREATEARG_ARRAY(11, sorted_pos0_buf, CL_RO, model->sorted_pos0,
-                      MC_CHARSET_LEN * sizeof(uint8_t));
-    CLCREATEARG_ARRAY(12, sorted_bigram_buf, CL_RO, model->sorted_bigram,
-                      model->max_positions * MC_CHARSET_LEN * MC_CHARSET_LEN * sizeof(uint8_t));
-    CLCREATEARG(13, max_positions_buf, CL_RO, max_positions_val, sizeof(max_positions_val));
-
-    CLRUNKERNEL(queue, kernel, &global_work_size);
-    CLFLUSH(queue);
-    CLWAIT(queue);
-
-    CLREADBUFFER(indices_buf, sizeof(gpu_ulong), indices);
-
-    if (indices[0] == (gpu_ulong)expected_end) {
-        test_passed = 1;
-    } else {
-        printf("\n\nGPU Markov truncated chain error:\n"
-               "\tStart:        %"PRIu64"\n"
-               "\tPspace:       %"PRIu64"\n"
-               "\tExpected end: %"PRIu64"\n"
-               "\tComputed end: %"PRIu64"\n\n",
-               start, pspace_total_override, expected_end, (uint64_t)indices[0]);
-    }
-
-    CLFREEBUFFER(hash_type_buf);
-    CLFREEBUFFER(charset_buf);
-    CLFREEBUFFER(charset_len_buf);
-    CLFREEBUFFER(plen_min_buf);
-    CLFREEBUFFER(plen_max_buf);
-    CLFREEBUFFER(reduc_buf);
-    CLFREEBUFFER(chain_len_buf);
-    CLFREEBUFFER(indices_buf);
-    CLFREEBUFFER(pos_start_buf);
-    CLFREEBUFFER(pspace_up_to_buf);
-    CLFREEBUFFER(pspace_total_buf);
-    CLFREEBUFFER(sorted_pos0_buf);
-    CLFREEBUFFER(sorted_bigram_buf);
-    CLFREEBUFFER(max_positions_buf);
-    CLRELEASEQUEUE(queue);
-
-    FREE(indices);
-    return test_passed;
-}
-
-
-/*
- * CPU reference chain walk with truncated keyspace.
- */
-static uint64_t cpu_markov_chain_truncated(uint64_t start, unsigned int chain_len,
-                                            unsigned int table_index,
-                                            const markov_model *model,
-                                            unsigned int plaintext_len,
-                                            uint64_t pspace_total)
-{
-    uint64_t index = start;
-    unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(table_index);
-
-    for (unsigned int pos = 0; pos < chain_len - 1; pos++) {
-        unsigned char plaintext[MAX_PLAINTEXT_LEN];
-        unsigned char hash[16];
-
-        memset(plaintext, 0, sizeof(plaintext));
-        index_to_plaintext_markov_cpu(index, model, plaintext_len, plaintext);
-        ntlm_hash((char *)plaintext, plaintext_len, hash);
-        index = hash_to_index(hash, 16, reduction_offset, pspace_total, pos);
-    }
-    return index;
 }
 
 
@@ -327,7 +212,7 @@ int test_chain_markov(gpu_device device, gpu_context context, gpu_kernel kernel)
     unsigned int num_tests = (unsigned int)(sizeof(markov_chain_tests) /
                                             sizeof(markov_chain_tests[0]));
 
-    /* Build synthetic model with max_positions=1 (single bigram table) */
+    /* Build synthetic model */
     uint64_t pos0_freq[3]   = {10, 30, 20};
     uint64_t bigram_freq[9] = {5, 15, 10,
                                 1,  1, 50,
@@ -336,12 +221,11 @@ int test_chain_markov(gpu_device device, gpu_context context, gpu_kernel kernel)
     markov_model m;
     memset(&m, 0, sizeof(m));
     m.charset_len   = MC_CHARSET_LEN;
-    m.max_positions = 1;
     memcpy(m.charset, MC_CHARSET, MC_CHARSET_LEN);
     m.pos0_freq     = pos0_freq;
     m.bigram_freq   = bigram_freq;
     m.sorted_pos0   = malloc(MC_CHARSET_LEN * sizeof(uint8_t));
-    m.sorted_bigram = malloc(m.max_positions * MC_CHARSET_LEN * MC_CHARSET_LEN * sizeof(uint8_t));
+    m.sorted_bigram = malloc(MC_CHARSET_LEN * MC_CHARSET_LEN * sizeof(uint8_t));
 
     if (!m.sorted_pos0 || !m.sorted_bigram) {
         fprintf(stderr, "test_chain_markov: OOM\n");
@@ -351,31 +235,12 @@ int test_chain_markov(gpu_device device, gpu_context context, gpu_kernel kernel)
     }
     markov_build_sorted(&m);
 
-    /* Standard full-keyspace tests (pspace_total = 3^2 = 9) */
     for (i = 0; i < num_tests; i++) {
         const struct markov_chain_test *t = &markov_chain_tests[i];
         uint64_t cpu_end = cpu_markov_chain(t->start, t->chain_len,
                                              t->table_index, &m, MC_PLAINTEXT_LEN);
         tests_passed &= gpu_test_markov_chain(device, context, kernel,
                                                t, cpu_end, &m, MC_PLAINTEXT_LEN);
-    }
-
-    /* Truncated keyspace tests: pspace_total < 3^2 */
-    {
-        uint64_t truncated_pspace = 5;
-        /* Start indices must be < truncated_pspace */
-        uint64_t starts[] = {0, 1, 3, 4};
-        unsigned int chain_lens[] = {50, 50, 100, 50};
-
-        for (i = 0; i < 4; i++) {
-            uint64_t cpu_end = cpu_markov_chain_truncated(starts[i], chain_lens[i],
-                                                           0, &m, MC_PLAINTEXT_LEN,
-                                                           truncated_pspace);
-            tests_passed &= gpu_test_markov_chain_truncated(device, context, kernel,
-                                                             starts[i], chain_lens[i],
-                                                             0, truncated_pspace,
-                                                             cpu_end, &m, MC_PLAINTEXT_LEN);
-        }
     }
 
     m.pos0_freq   = NULL;

@@ -69,6 +69,7 @@ def ntlm_hash(password: str) -> str:
 
 
 LM_EMPTY = "aad3b435b51404eeaad3b435b51404ee"
+WORDLIST = "/path/to/wordlists/rockyou.txt"
 OUTPUT = "test_hashes.pwdump"
 
 
@@ -77,30 +78,22 @@ PASSWORD_LEN = 8
 
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="Generate pwdump-format NTLM hash file from a wordlist.")
-    parser.add_argument("wordlist", help="Path to wordlist (e.g. rockyou.txt)")
-    parser.add_argument("-n", "--num-hashes", type=int, default=MAX_HASHES, help=f"Number of hashes to generate (default: {MAX_HASHES})")
-    parser.add_argument("-l", "--password-len", type=int, default=PASSWORD_LEN, help=f"Password length to filter (default: {PASSWORD_LEN})")
-    parser.add_argument("-o", "--output", default=OUTPUT, help=f"Output file (default: {OUTPUT})")
-    args = parser.parse_args()
-
     count = 0
     with (
-        open(args.wordlist, "r", encoding="latin-1") as infile,
-        open(args.output, "w") as outfile,
+        open(WORDLIST, "r", encoding="latin-1") as infile,
+        open(OUTPUT, "w") as outfile,
     ):
         for line in infile:
-            if count >= args.num_hashes:
+            if count >= MAX_HASHES:
                 break
             password = line.rstrip("\n\r")
-            if len(password) != args.password_len:
+            if len(password) != PASSWORD_LEN:
                 continue
             nt = ntlm_hash(password)
             outfile.write(f"user{count:04d}:{count}:{LM_EMPTY}:{nt}:::\n")
             count += 1
 
-    print(f"Wrote {count} hashes to {args.output}")
+    print(f"Wrote {count} hashes to {OUTPUT}")
 
 
 if __name__ == "__main__":

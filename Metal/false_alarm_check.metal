@@ -21,6 +21,9 @@ kernel void false_alarm_check(
     device ulong *g_hash_base_indices [[buffer(13)]],
     device unsigned int *g_exec_block_scaler [[buffer(14)]],
     device ulong *g_plaintext_indices [[buffer(15)]],
+    device unsigned int *g_is_mask [[buffer(16)]],
+    device char *g_mask_charset_data [[buffer(17)]],
+    device unsigned int *g_mask_charset_lens [[buffer(18)]],
     uint gid [[thread_position_in_grid]]) {
 
   int index_pos = (*g_num_start_indices - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
@@ -39,10 +42,11 @@ kernel void false_alarm_check(
   unsigned int plaintext_len_min = *g_plaintext_len_min;
   unsigned int plaintext_len_max = *g_plaintext_len_max;
   unsigned int reduction_offset = *g_reduction_offset;
+  unsigned int is_mask = *g_is_mask;
   ulong plaintext_space_total = *g_plaintext_space_total;
-  ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1];
+  ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
 
-  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index, plaintext_len_max);
+  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index);
 
   ulong index = g_start_indices[index_pos], previous_index = 0;
   ulong hash_base_index = g_hash_base_indices[index_pos] % plaintext_space_total;
@@ -50,7 +54,7 @@ kernel void false_alarm_check(
 
 
   for (unsigned int pos = 0; pos < endpoint + 1; pos++) {
-    index_to_plaintext(index, charset, charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
+    index_to_plaintext(index, charset, charset_len, is_mask, g_mask_charset_data, g_mask_charset_lens, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
     do_hash(hash_type, plaintext, plaintext_len, hash, &hash_len);
 
     //printf("hash_type: %d, plaintext: %x, plaintext_len: %x, hash: %x\n", hash_type, plaintext, plaintext_len, hash);

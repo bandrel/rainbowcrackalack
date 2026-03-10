@@ -11,11 +11,8 @@
 #define QUOTE "'"
 #endif
 
-/* This is the longest chain length that a single kernel invokation can produce.  Beyond
- * this, it must be split up into parts.  Set to 0 to auto-calibrate at runtime using a
- * probe dispatch (recommended for Metal/macOS where the GPU watchdog kills long kernels).
- * A non-zero value skips calibration and uses the fixed limit directly. */
-#define MAX_CHAIN_LEN 0
+/* This is the longest chain length that a single kernel invokation can produce.  Beyond this, it must be split up into parts.  Linux drivers don't seem to have a problem with this larger chains, but Windows drivers end up getting killed by the watchdog timer. */
+#define MAX_CHAIN_LEN 450000
 
 #define CHAIN_SIZE (unsigned int)(sizeof(uint64_t) * 2)
 
@@ -62,10 +59,9 @@ struct _rt_parameters {
   unsigned int table_index;
   unsigned int reduction_offset;
   unsigned int chain_len;
-  uint64_t num_chains;
+  unsigned int num_chains;
   unsigned int table_part;
 
-  uint64_t markov_keyspace; /* 0 = not Markov; >0 = truncated keyspace */
   unsigned int parsed; /* Set to 1 if parameters successfully parsed, otherwise 0. */
 };
 typedef struct _rt_parameters rt_parameters;
@@ -81,15 +77,9 @@ uint64_t get_total_memory();
 unsigned int hash_str_to_type(char *hash_str);
 unsigned int is_ntlm8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len);
 unsigned int is_ntlm9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len);
-unsigned int is_netntlmv1_7(unsigned int hash_type, char *charset_name, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int chain_len);
-unsigned int is_markov_ntlm8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov);
-unsigned int is_markov_ntlm9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov);
-unsigned int is_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
-unsigned int is_markov_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, int use_markov);
 unsigned int is_md5_8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
 unsigned int is_md5_9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
 unsigned int parse_uint_arg(const char *s, const char *name);
-uint64_t parse_uint64_arg(const char *s, const char *name);
 void parse_rt_params(rt_parameters *rt_params, char *rt_filename);
 void *recalloc(void *ptr, size_t new_size, size_t old_size);
 size_t rt_log(rc_file f, const char *fmt, ...);

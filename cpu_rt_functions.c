@@ -16,9 +16,7 @@
  */
 
 #include <stdio.h>
-#include <string.h>
 #include "cpu_rt_functions.h"
-#include "markov.h"
 #include "shared.h"
 
 #include <gcrypt.h>
@@ -43,15 +41,23 @@ static void ensure_gcrypt_init(void) {
 }
 
 
-/* Fills the pspace table for a markov keyspace.
- * Invariant: pspace[0..plaintext_len_max-1] are always 0; pspace[plaintext_len_max] is the
- * total keyspace. */
-uint64_t fill_plaintext_space_markov_keyspace(uint64_t markov_keyspace, unsigned int plaintext_len_max, uint64_t *plaintext_space_up_to_index) {
+/* Fills the pspace table for a mask charset.
+ * Invariant: pspace[0..mask_length-1] are always 0; pspace[mask_length] is the
+ * total keyspace.  index_to_plaintext_mask relies on pspace[mask_length-1]==0
+ * so that index_x = index - 0 = index.  Do not change this layout without
+ * updating index_to_plaintext_mask. */
+uint64_t fill_plaintext_space_table_mask(unsigned int *mask_lens, unsigned int mask_length, uint64_t *plaintext_space_up_to_index) {
+  uint64_t product = 1;
   int i;
-  for (i = 0; i <= (int)plaintext_len_max; i++)
+
+  for (i = 0; i <= (int)mask_length; i++)
     plaintext_space_up_to_index[i] = 0;
-  plaintext_space_up_to_index[plaintext_len_max] = markov_keyspace;
-  return markov_keyspace;
+
+  for (i = 0; i < (int)mask_length; i++)
+    product *= mask_lens[i];
+
+  plaintext_space_up_to_index[mask_length] = product;
+  return product;
 }
 
 
@@ -120,6 +126,25 @@ void index_to_plaintext(uint64_t index, char *charset, unsigned int charset_len,
 }
 
 
+void index_to_plaintext_mask(uint64_t index, unsigned int *mask_lens, char *mask_data, unsigned int mask_length, uint64_t *plaintext_space_up_to_index, char *plaintext, unsigned int *plaintext_len) {
+  uint64_t index_x;
+  int i;
+
+  *plaintext_len = mask_length;
+  plaintext[mask_length] = '\0';
+
+  /* pspace[mask_length-1] is always 0 (see fill_plaintext_space_table_mask
+   * invariant), so index_x == index.  Do not remove the subtraction: it is
+   * the documented interface with fill_plaintext_space_table_mask. */
+  index_x = index - plaintext_space_up_to_index[mask_length - 1];
+  for (i = (int)mask_length - 1; i >= 0; i--) {
+    unsigned int sz = mask_lens[i];
+    plaintext[i] = mask_data[i * MAX_CHARSET_LEN + index_x % sz];
+    index_x /= sz;
+  }
+}
+
+
 uint64_t generate_rainbow_chain(
     unsigned int hash_type,
     char *charset,
@@ -151,39 +176,6 @@ uint64_t generate_rainbow_chain(
       ntlm_hash(plaintext, *plaintext_len, hash);
     }
     index = hash_to_index(hash, *hash_len, reduction_offset, plaintext_space_total, pos);
-  }
-  return index;
-}
-
-
-uint64_t generate_rainbow_chain_markov(
-    unsigned int hash_type,
-    const markov_model *model,
-    unsigned int plaintext_len,
-    unsigned int reduction_offset,
-    unsigned int chain_len,
-    uint64_t start)
-{
-  uint64_t index = start;
-  uint64_t pspace_total = 1;
-  for (unsigned int i = 0; i < plaintext_len; i++)
-    pspace_total *= model->charset_len;
-
-  for (unsigned int pos = 0; pos < chain_len - 1; pos++) {
-    unsigned char plaintext[MAX_PLAINTEXT_LEN];
-    unsigned char hash[MAX_HASH_OUTPUT_LEN];
-    unsigned int hash_len = sizeof(hash);
-
-    memset(plaintext, 0, sizeof(plaintext));
-    index_to_plaintext_markov_cpu(index, model, plaintext_len, plaintext);
-
-    if (hash_type == HASH_MD5) {
-      md5_hash((char *)plaintext, plaintext_len, hash);
-      hash_len = 16;
-    } else {
-      ntlm_hash((char *)plaintext, plaintext_len, hash);
-    }
-    index = hash_to_index(hash, hash_len, reduction_offset, pspace_total, pos);
   }
   return index;
 }

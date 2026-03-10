@@ -24,8 +24,8 @@
 
 #include "charset.h"
 #include "cpu_rt_functions.h"
+#include "mask_parse.h"
 #include "file_lock.h"
-#include "markov.h"
 #include "misc.h"
 #include "rtc_decompress.h"
 #include "shared.h"
@@ -37,8 +37,8 @@ void _print_chain_error(uint64_t random_chain, uint64_t start, uint64_t actual_e
 }
 
 /* Verifies a rainbow table already loaded from disk. */
-int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, uint64_t *error_chain_num) {
-  uint64_t i = 0, dummy_error_chain = 0;
+int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, unsigned int *error_chain_num, unsigned int is_mask) {
+  unsigned int i = 0, dummy_error_chain = 0;
   uint64_t start = 0, end = 0;
 
   if (error_chain_num == NULL)
@@ -51,15 +51,16 @@ int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned in
       end = rainbowtable[(i * 2) + 1];
 
       if (start != expected_start) {
-	fprintf(stderr, "Start index at chain #%"PRIu64" is not the expected value!  Expected %"PRIu64", but found %"PRIu64".\n", i, expected_start, start);
+	fprintf(stderr, "Start index at chain #%u is not the expected value!  Expected %"PRIu64", but found %"PRIu64".\n", i, expected_start, start);
 	*error_chain_num = i;
-	return VERIFY_ERR_DISCONTINUITY;
+	return 0;
       }
 
-      if (end == 0) {
-	fprintf(stderr, "Chain #%"PRIu64" has an end value of zero!\n", i);
+      /* end index 0 is valid for mask tables (e.g. index 0 maps to a real plaintext) */
+      if (!is_mask && end == 0) {
+	fprintf(stderr, "Chain #%u has an end value of zero!\n", i);
 	*error_chain_num = i;
-	return VERIFY_ERR_CORRUPTED;
+	return 0;
       }
 
       /* The indices must not be equal or greater than the plaintext space total. */
@@ -67,30 +68,9 @@ int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned in
 	  ((start >= plaintext_space_total) || (end >= plaintext_space_total))) {
 	fprintf(stderr, "Start and/or end indices are greater or equal to the plaintext space total!\n\n\tStart index: %"PRIu64"\n\tEnd index:   %"PRIu64"\nPlaintext space total: %"PRIu64"\n\n", start, end, plaintext_space_total);
 	*error_chain_num = i;
-	return VERIFY_ERR_CORRUPTED;
+	return 0;
       }
       expected_start++;
-    }
-  } else if (table_type == VERIFY_TABLE_TYPE_MARKOV) {
-    /* Markov tables have probability-ranked start indices (not sequential).
-     * Only check for non-zero end indices and within-bounds indices. */
-    for (i = 0; i < num_chains; i++) {
-      start = rainbowtable[i * 2];
-      end = rainbowtable[(i * 2) + 1];
-
-      if (end == 0) {
-	fprintf(stderr, "Chain #%"PRIu64" has an end value of zero!\n", i);
-	*error_chain_num = i;
-	return VERIFY_ERR_CORRUPTED;
-      }
-
-      /* For Markov tables, end index must be within the full keyspace (plaintext_space_total).
-       * Start index can be within the markov_keyspace which may be smaller. */
-      if ((plaintext_space_total > 0) && (end >= plaintext_space_total)) {
-	fprintf(stderr, "End index is greater or equal to the plaintext space total!\n\n\tEnd index:   %"PRIu64"\nPlaintext space total: %"PRIu64"\n\n", end, plaintext_space_total);
-	*error_chain_num = i;
-	return VERIFY_ERR_CORRUPTED;
-      }
     }
   } else if (table_type == VERIFY_TABLE_TYPE_LOOKUP) {
     uint64_t last_end = 0;
@@ -103,27 +83,27 @@ int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned in
 /* this is a valid condition if checking 0x00 00 00 00 00 00 00 00
       if (end == 0) {
 	fprintf(stderr, "Error: end index for chain #%u is zero.\n", i);
-	return VERIFY_ERR_CORRUPTED;
+	return 0;
       }
 */
       if (end < last_end) {
-	fprintf(stderr, "Error: table end indices are not sorted.  Current end index (at chain #%"PRIu64") is not greater or equal to last end index.\n\n\tCurrent end index: %"PRIu64"\n\tLast end index:    %"PRIu64"\n\n", i, end, last_end);
+	fprintf(stderr, "Error: table end indices are not sorted.  Current end index (at chain #%u) is not greater or equal to last end index.\n\n\tCurrent end index: %"PRIu64"\n\tLast end index:    %"PRIu64"\n\n", i, end, last_end);
 	*error_chain_num = i;
-	return VERIFY_ERR_CORRUPTED;
+	return 0;
       }
 
       /* The indices must not be equal or greater than the plaintext space total. */
       if ((plaintext_space_total > 0) && \
 	  ((start >= plaintext_space_total) || (end >= plaintext_space_total))) {
 	fprintf(stderr, "Start and/or end indices are greater or equal to the plaintext space total!\n\n\tStart index: %"PRIu64"\n\tEnd index:   %"PRIu64"\nPlaintext space total: %"PRIu64"\n\n", start, end, plaintext_space_total);
-	return VERIFY_ERR_CORRUPTED;
+	return 0;
       }
 
       last_end = end;
     }
   } else {
     fprintf(stderr, "Invalid value for table type: %u\n", table_type);
-    return VERIFY_ERR_CORRUPTED;
+    return 0;
   }
 
   
@@ -151,18 +131,25 @@ int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned in
  * verified with CPU code.  When set to -1, the default of 100 is checked.
  * 
  * Returns 1 on success, or 0 on failure. */
-int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify, const markov_model *markov) {
+int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify) {
   rt_parameters rt_params = {0};
   uint64_t plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
 
   rc_file f = NULL;
   uint64_t *rainbow_table = NULL;
   char *charset = NULL;
+  unsigned int is_mask = 0;
+  Mask mask;
+  char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
 
   uint64_t file_size = 0;
-  uint64_t actual_num_chains = 0, error_chain_num = 0;
-  unsigned int is_compressed = 0;
+  unsigned int actual_num_chains = 0, error_chain_num = 0, is_compressed = 0;
   uint64_t expected_start = 0, plaintext_space_total = 0;
+
+  memset(&mask, 0, sizeof(mask));
+  memset(mask_charset_data, 0, sizeof(mask_charset_data));
+  memset(mask_charset_lens, 0, sizeof(mask_charset_lens));
 
   is_compressed = str_ends_with(filename, ".rtc");
 
@@ -175,15 +162,28 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
   charset = validate_charset(rt_params.charset_name);
   if (charset == NULL) {
-    fprintf(stderr, "Character set is invalid: %s\n", rt_params.charset_name);
-    return 0;
+    if (validate_mask(rt_params.charset_name) != NULL) {
+      if (mask_parse(rt_params.charset_name, &mask, NULL, NULL, NULL, NULL) != 0) {
+        fprintf(stderr, "Character set is invalid: %s\n", rt_params.charset_name);
+        return 0;
+      }
+      mask_to_gpu_buffers(&mask, mask_charset_data, mask_charset_lens);
+      is_mask = 1;
+    } else {
+      fprintf(stderr, "Character set is invalid: %s\n", rt_params.charset_name);
+      return 0;
+    }
   }
 
   unsigned int charset_len = 0;
-  charset_len = (strcmp(rt_params.charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(charset);
-  plaintext_space_total = fill_plaintext_space_table(charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, plaintext_space_up_to_index);
+  if (is_mask) {
+    plaintext_space_total = fill_plaintext_space_table_mask(mask_charset_lens, rt_params.plaintext_len_max, plaintext_space_up_to_index);
+  } else {
+    charset_len = (strcmp(rt_params.charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(charset);
+    plaintext_space_total = fill_plaintext_space_table(charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, plaintext_space_up_to_index);
+  }
 
-  expected_start = rt_params.num_chains * (uint64_t)rt_params.table_part;
+  expected_start = (uint64_t)rt_params.num_chains * (uint64_t)rt_params.table_part;
 
   /* Open the file and obtain a lock on it. */
   f = rc_fopen(filename, 0);
@@ -207,17 +207,17 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
   if (file_size == 0) {
     rc_fclose(f);
     fprintf(stderr, "Error: file is empty!\n");
-    return VERIFY_ERR_TRUNCATED;
+    return 0;
   /* If the table should be complete, then ensure its file size is what we'd expect.  Skip compressed files. */
-  } else if ((table_should_be_complete == VERIFY_TABLE_IS_COMPLETE) && (file_size != (rt_params.num_chains * CHAIN_SIZE)) && !is_compressed) {
+  } else if ((table_should_be_complete == VERIFY_TABLE_IS_COMPLETE) && (file_size != ((uint64_t)rt_params.num_chains * CHAIN_SIZE)) && !is_compressed) {
     rc_fclose(f);
-    fprintf(stderr, "Error: table is expected to be complete, but file size does not match expected value.  Expected: %"PRIu64"; actual: %"PRIu64"\n", rt_params.num_chains * CHAIN_SIZE, file_size);
-    return VERIFY_ERR_TRUNCATED;
+    fprintf(stderr, "Error: table is expected to be complete, but file size does not match expected value.  Expected: %"PRIu64"; actual: %"PRIu64"\n", (uint64_t)rt_params.num_chains * CHAIN_SIZE, file_size);
+    return 0;
   /* If the table is incomplete, ensure that the file size is a multiple of CHAIN_SIZE. */
   } else if (((file_size % CHAIN_SIZE) != 0) && !is_compressed) {
     rc_fclose(f);
     fprintf(stderr, "Error: file size is not aligned to %u bytes: %"PRIu64"\n", CHAIN_SIZE, file_size);
-    return VERIFY_ERR_TRUNCATED;
+    return 0;
   }
 
   /* Compressed tables cannot be quickly checked, as they currently require the entire table to be loaded into memory. */
@@ -229,6 +229,13 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
   /* Handle the case of a quick table verification up-front. */
   if (table_type == VERIFY_TABLE_TYPE_QUICK) {
+    /* Mask tables use a different chain function; skip CPU verification. */
+    if (is_mask) {
+      printf("Note: skipping quick CPU chain verification for mask charset.\n"); fflush(stdout);
+      rc_fclose(f);
+      return 1;
+    }
+
     uint64_t random_chain = 0, start = 0, actual_end = 0, computed_end = 0;
     char plaintext[MAX_PLAINTEXT_LEN] = {0};
     unsigned char hash[MAX_HASH_OUTPUT_LEN] = {0};
@@ -236,7 +243,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
 
     /* The actual number of chains in the file. */
-    actual_num_chains = file_size / CHAIN_SIZE;
+    actual_num_chains = (unsigned int)(file_size / CHAIN_SIZE);
 
     /* Only verify 5 chains. */
     for (i = 0; i < 5; i++) {
@@ -248,10 +255,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
       rc_fread(&actual_end, sizeof(uint64_t), 1, f);
 
       /* Compute the expected end point. */
-      if (markov)
-        computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start);
-      else
-        computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
+      computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
 
       /* Ensure that the end point in the file matches what we just computed. */
       if (actual_end != computed_end) {
@@ -281,8 +285,8 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
       printf("\n!! WARNING: table is compressed, yet is supposedly unsorted!  Only sorted tables should be compressed...\n\n");
 
   } else { /* Simply load uncompressed RT files. */
-    actual_num_chains = file_size / CHAIN_SIZE;
-    rainbow_table = calloc((size_t)(actual_num_chains * 2), sizeof(uint64_t));
+    actual_num_chains = (unsigned int)(file_size / CHAIN_SIZE);
+    rainbow_table = calloc(actual_num_chains * 2, sizeof(uint64_t));
     if (rainbow_table == NULL) {
       fprintf(stderr, "Error while creating buffer to read file.\n");
       return 0;
@@ -295,8 +299,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     rc_fclose(f);
   }
 
-  int verify_result = verify_rainbowtable(rainbow_table, actual_num_chains, table_type, expected_start, plaintext_space_total, &error_chain_num);
-  if (verify_result <= 0) {
+  if (!verify_rainbowtable(rainbow_table, actual_num_chains, table_type, expected_start, plaintext_space_total, &error_chain_num, is_mask)) {
     if ((table_type == VERIFY_TABLE_TYPE_GENERATED) && (truncate_at_error == VERIFY_TRUNCATE_ON_ERROR)) {
       f = rc_fopen(filename, 0);
       if (f == NULL)
@@ -306,17 +309,13 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 	rc_fclose(f);
       }
     }
-    FREE(rainbow_table);
-    return verify_result;
+    goto err;
   }
 
   /* If the number of chains to verify wasn't set by the user... */
   if (num_chains_to_verify < 0) {
-    /* For incomplete tables, verify last 1000 chains instead of random sample. */
-    if (table_should_be_complete == VERIFY_TABLE_MAY_BE_INCOMPLETE)
-      num_chains_to_verify = (actual_num_chains < 1000) ? actual_num_chains : 1000;
     /* Set it to 50 for NTLM9 tables. */
-    else if (is_ntlm9(rt_params.hash_type, charset, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len))
+    if (!is_mask && is_ntlm9(rt_params.hash_type, charset, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len))
       num_chains_to_verify = 50;
     else /* Set it to 100 for all other tables. */
       num_chains_to_verify = 100;
@@ -329,45 +328,21 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     unsigned int i = 0, plaintext_len = sizeof(plaintext), hash_len = sizeof(hash);
 
 
-    if (rt_params.hash_type == HASH_NTLM || rt_params.hash_type == HASH_MD5) {
-      /* For incomplete tables, verify the LAST N chains (not random). */
-      if (table_should_be_complete == VERIFY_TABLE_MAY_BE_INCOMPLETE) {
-        uint64_t start_offset = (actual_num_chains > num_chains_to_verify) ?
-                                (actual_num_chains - num_chains_to_verify) : 0;
-        for (i = 0; i < num_chains_to_verify; i++) {
-          random_chain = start_offset + i;
+    if (is_mask) {
+      printf("Note: skipping CPU chain verification for mask charset.\n"); fflush(stdout);
+    } else if (rt_params.hash_type == HASH_NTLM || rt_params.hash_type == HASH_MD5) {
+      for (i = 0; i < num_chains_to_verify; i++) {
+	random_chain = get_random(actual_num_chains);
 
-          start = rainbow_table[random_chain * 2];
-          actual_end = rainbow_table[(random_chain * 2) + 1];
+	start = rainbow_table[random_chain * 2];
+	actual_end = rainbow_table[(random_chain * 2) + 1];
 
-          if (markov)
-            computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start);
-          else
-            computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
+	computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
 
-          if (actual_end != computed_end) {
-            _print_chain_error(random_chain, start, actual_end, computed_end);
-            goto err;
-          }
-        }
-      } else {
-        /* Complete tables: verify random chains. */
-        for (i = 0; i < num_chains_to_verify; i++) {
-          random_chain = get_random(actual_num_chains);
-
-          start = rainbow_table[random_chain * 2];
-          actual_end = rainbow_table[(random_chain * 2) + 1];
-
-          if (markov)
-            computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start);
-          else
-            computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
-
-          if (actual_end != computed_end) {
-            _print_chain_error(random_chain, start, actual_end, computed_end);
-            goto err;
-          }
-        }
+	if (actual_end != computed_end) {
+          _print_chain_error(random_chain, start, actual_end, computed_end);
+	  goto err;
+	}
       }
     } else {
       printf("Note: skipping CPU chain verification since hash type is not supported.\n"); fflush(stdout);
@@ -379,93 +354,5 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
  err:
   FREE(rainbow_table);
-  return VERIFY_ERR_CORRUPTED;
-}
-
-
-/* Recompute chains from start indices and compare to stored endpoints.
- * Returns 0 if all chains verify, negative error code otherwise. */
-int verify_chains_recompute(const char *filename, uint64_t start_chain,
-                            uint64_t count, int hash_type,
-                            const char *charset, int chain_len) {
-  rt_parameters rt_params = {0};
-  uint64_t plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
-  rc_file f = NULL;
-  uint64_t *chain_data = NULL;
-  uint64_t plaintext_space_total = 0;
-  unsigned int charset_len = 0;
-  uint64_t i = 0;
-  char filename_buf[4096];
-
-  /* Copy filename to non-const buffer for parse_rt_params. */
-  strncpy(filename_buf, filename, sizeof(filename_buf) - 1);
-  filename_buf[sizeof(filename_buf) - 1] = '\0';
-
-  /* Parse table parameters from filename. */
-  parse_rt_params(&rt_params, filename_buf);
-  if (rt_params.parsed == 0) {
-    fprintf(stderr, "Error: failed to parse filename: %s\n", filename);
-    return VERIFY_ERR_CORRUPTED;
-  }
-
-  /* Validate charset. */
-  char *validated_charset = validate_charset(rt_params.charset_name);
-  if (validated_charset == NULL) {
-    fprintf(stderr, "Character set is invalid: %s\n", rt_params.charset_name);
-    return VERIFY_ERR_CORRUPTED;
-  }
-
-  charset_len = (strcmp(rt_params.charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(validated_charset);
-  plaintext_space_total = fill_plaintext_space_table(charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, plaintext_space_up_to_index);
-
-  /* Open file and seek to start_chain. */
-  f = rc_fopen(filename_buf, 0);
-  if (f == NULL) {
-    fprintf(stderr, "Failed to open rainbow table file: %s\n", filename);
-    return VERIFY_ERR_CORRUPTED;
-  }
-
-  /* Allocate buffer for chains. */
-  chain_data = calloc(count * 2, sizeof(uint64_t));
-  if (chain_data == NULL) {
-    fprintf(stderr, "Failed to allocate memory for chain data.\n");
-    rc_fclose(f);
-    return VERIFY_ERR_CORRUPTED;
-  }
-
-  /* Read chains from file. */
-  rc_fseek(f, start_chain * CHAIN_SIZE, RCSEEK_SET);
-  if (rc_fread(chain_data, sizeof(uint64_t), count * 2, f) != (count * 2)) {
-    fprintf(stderr, "Error reading chains from file: %s (%d)\n", strerror(errno), errno);
-    FREE(chain_data);
-    rc_fclose(f);
-    return VERIFY_ERR_TRUNCATED;
-  }
-  rc_fclose(f);
-
-  /* Verify each chain by recomputing. */
-  for (i = 0; i < count; i++) {
-    uint64_t start_index = chain_data[i * 2];
-    uint64_t stored_end = chain_data[(i * 2) + 1];
-    uint64_t computed_end = 0;
-    char plaintext[MAX_PLAINTEXT_LEN] = {0};
-    unsigned char hash[MAX_HASH_OUTPUT_LEN] = {0};
-    unsigned int plaintext_len = sizeof(plaintext);
-    unsigned int hash_len = sizeof(hash);
-
-    computed_end = generate_rainbow_chain(hash_type, validated_charset, charset_len,
-                                         rt_params.plaintext_len_min, rt_params.plaintext_len_max,
-                                         rt_params.reduction_offset, chain_len,
-                                         start_index, plaintext_space_up_to_index, plaintext_space_total,
-                                         plaintext, &plaintext_len, hash, &hash_len);
-
-    if (stored_end != computed_end) {
-      _print_chain_error(start_chain + i, start_index, stored_end, computed_end);
-      FREE(chain_data);
-      return VERIFY_ERR_CORRUPTED;
-    }
-  }
-
-  FREE(chain_data);
   return 0;
 }

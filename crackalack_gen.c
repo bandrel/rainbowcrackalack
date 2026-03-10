@@ -34,13 +34,13 @@
 #include "gpu_backend.h"
 
 #include "charset.h"
-#include "checkpoint.h"
 #include "markov.h"
 #include "clock.h"
 #include "cpu_rt_functions.h"
 #include "file_lock.h"
 #include "gws.h"
 #include "hash_validate.h"
+#include "mask_parse.h"
 #include "misc.h"
 #include "shared.h"
 #include "terminal_color.h"
@@ -50,19 +50,8 @@
 #define CRACKALACK_KERNEL_PATH "crackalack.cl"
 #define CRACKALACK_NTLM8_KERNEL_PATH "crackalack_ntlm8.cl"
 #define CRACKALACK_NTLM9_KERNEL_PATH "crackalack_ntlm9.cl"
-#define CRACKALACK_NTLM10_KERNEL_PATH "crackalack_ntlm10.cl"
 #define CRACKALACK_MD5_8_KERNEL_PATH "crackalack_md5_8.cl"
 #define CRACKALACK_MD5_9_KERNEL_PATH "crackalack_md5_9.cl"
-#define CRACKALACK_NETNTLMV1_7_KERNEL_PATH "crackalack_netntlmv1_7.cl"
-#ifdef USE_METAL
-#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.metal"
-#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.metal"
-#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "crackalack_markov_ntlm10.metal"
-#else
-#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.cl"
-#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.cl"
-#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "crackalack_markov_ntlm10.cl"
-#endif
 
 #define VERBOSE 1
 
@@ -117,22 +106,13 @@ typedef struct {
   pthread_t thread;
   pthread_mutex_t mutex;
   pthread_cond_t cond;
+  int ready;
   int shutdown;
   char *filename;
   unsigned int device_number;
-  gpu_ulong *start_buf[2];
-  gpu_ulong *end_buf[2];
-  unsigned int buf_size[2];
-  unsigned int active_idx;   /* Which buffer the writer is processing */
-  unsigned int pending_idx;  /* Which buffer has pending data */
-  int pending_ready;         /* 1 if pending_idx has data waiting */
-  uint64_t total_chains_written;  /* Running count of chains written */
-  uint64_t last_written_start;    /* Last chain's start index */
-  uint64_t last_written_end;      /* Last chain's end index */
-  uint64_t recent_ends[1000];     /* Rolling buffer of recent end indices */
-  size_t recent_idx;              /* Current position in rolling buffer */
-  char *table_filename;           /* Table filename for checkpoint updates */
-  int checkpoint_enabled;         /* Whether to update checkpoint */
+  gpu_ulong *start_buf;
+  gpu_ulong *end_buf;
+  unsigned int buf_size;
 } writer_state;
 
 /* Struct to pass arguments to a host thread. */
@@ -141,7 +121,6 @@ typedef struct {
 
   unsigned int hash_type;
   char *charset;
-  char *charset_name;
   unsigned int plaintext_len_min;
   unsigned int plaintext_len_max;
   unsigned int table_index;
@@ -149,11 +128,14 @@ typedef struct {
   unsigned int chain_len;
   char *filename;
 
-  uint64_t initial_chains_per_execution;
+  unsigned int initial_chains_per_execution;
+
+  unsigned int is_mask;
+  char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
 
   int     use_markov;
   char    markov_path[1024];
-  uint64_t markov_keyspace;
 
   gpu_dev gpu;
 } thread_args;
@@ -176,7 +158,7 @@ uint64_t start_index = 0;
 /* The number of chains to generate.  This doesn't necessarily equal the number of
  * chains entered on the command line, since we may be resuming a
  * partially-constructed table. */
-uint64_t num_chains_to_generate = 0;
+unsigned int num_chains_to_generate = 0;
 
 /* The first chain that we will generate (this will not be zero if we resume an
  * unfinished file or part index > 0).  We use this to track how many chains we
@@ -198,28 +180,11 @@ size_t user_provided_gws = 0;
 /* Markov mode state set by --markov flag. */
 static int    use_markov = 0;
 static char   markov_path[1024] = {0};
-static uint64_t markov_keyspace = 0;
 
 
 void print_usage_and_exit(char *prog_name, int exit_code) {
-  fprintf(stderr, "Usage: %s hash_algorithm charset_name plaintext_min_length plaintext_max_length table_index chain_length number_of_chains [part_index | -bench] [-gws GWS] [--markov FILE] [--markov-keyspace N]\n\nExample: %s ntlm ascii-32-95 9 9 0 803000 67108864 0\n\n", prog_name, prog_name);
+  fprintf(stderr, "Usage: %s hash_algorithm charset_name plaintext_min_length plaintext_max_length table_index chain_length number_of_chains [part_index | -bench] [-gws GWS]\n\nExample: %s ntlm ascii-32-95 9 9 0 803000 67108864 0\n\n", prog_name, prog_name);
   exit(exit_code);
-}
-
-
-/* Computes a hash of table generation parameters for checkpoint validation (FNV-1a). */
-static uint64_t compute_params_hash(unsigned int hash_type, unsigned int plaintext_len_min,
-                                    unsigned int plaintext_len_max, unsigned int table_index,
-                                    unsigned int chain_len) {
-  uint64_t hash = 0xcbf29ce484222325ULL;  /* FNV offset basis */
-  const uint64_t prime = 0x100000001b3ULL; /* FNV prime */
-  unsigned int params[] = {hash_type, plaintext_len_min, plaintext_len_max, table_index, chain_len};
-  const unsigned char *p = (const unsigned char *)params;
-  for (size_t i = 0; i < sizeof(params); i++) {
-    hash ^= p[i];
-    hash *= prime;
-  }
-  return hash;
 }
 
 
@@ -265,39 +230,18 @@ void *writer_thread_func(void *ptr) {
 
   pthread_mutex_lock(&ws->mutex);
   while (1) {
-    while (!ws->pending_ready && !ws->shutdown)
+    while (!ws->ready && !ws->shutdown)
       pthread_cond_wait(&ws->cond, &ws->mutex);
 
-    if (ws->shutdown && !ws->pending_ready)
+    if (ws->shutdown && !ws->ready)
       break;
 
-    ws->active_idx = ws->pending_idx;
-    ws->pending_ready = 0;
-    unsigned int batch_size = ws->buf_size[ws->active_idx];
-    pthread_cond_signal(&ws->cond);  /* Signal pending buffer is free */
     pthread_mutex_unlock(&ws->mutex);
-
-    write_chains(ws->filename, 1, ws->start_buf[ws->active_idx], batch_size, ws->end_buf[ws->active_idx], batch_size, ws->device_number);
-
-    /* Track recent ends for CRC64 computation (circular buffer) */
-    for (size_t j = 0; j < batch_size; j++) {
-      ws->recent_ends[ws->recent_idx % 1000] = ws->end_buf[ws->active_idx][j];
-      ws->recent_idx++;
-    }
-
-    ws->total_chains_written += batch_size;
-    ws->last_written_start = ws->start_buf[ws->active_idx][batch_size - 1];
-    ws->last_written_end = ws->end_buf[ws->active_idx][batch_size - 1];
-
-    /* Update checkpoint */
-    if (ws->checkpoint_enabled) {
-      size_t recent_count = ws->recent_idx < 1000 ? ws->recent_idx : 1000;
-      checkpoint_update(ws->table_filename, ws->total_chains_written,
-                       ws->last_written_start, ws->last_written_end,
-                       ws->recent_ends, recent_count);
-    }
-
+    write_chains(ws->filename, 1, ws->start_buf, ws->buf_size, ws->end_buf, ws->buf_size, ws->device_number);
     pthread_mutex_lock(&ws->mutex);
+
+    ws->ready = 0;
+    pthread_cond_signal(&ws->cond);
   }
   pthread_mutex_unlock(&ws->mutex);
 
@@ -312,7 +256,6 @@ void *host_thread(void *ptr) {
   gpu_dev *gpu = &(args->gpu);
 
   char *kernel_path = CRACKALACK_KERNEL_PATH, *kernel_name = "crackalack";
-  int using_fast_path_kernel = 0;
   size_t gws = 0, kernel_work_group_size = 0, kernel_preferred_work_group_size_multiple = 0;
   uint64_t *start_indices = NULL, *end_indices = NULL;
   unsigned int i = 0, indices_size = 0, thread_complete = 0, num_passes = 0, pass = 0, chain_len = 0, charset_len = 0;
@@ -324,13 +267,15 @@ void *host_thread(void *ptr) {
   gpu_queue queue = NULL;
   gpu_kernel kernel = NULL;
 
-  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
+  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
+  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
 
   gpu_uint pos_start = 0;
   markov_model markov = {0};
 
-  if ((args->charset != NULL) && (strlen(args->charset) == 0)) {
+  if (args->is_mask) {
+    charset_len = 0;
+  } else if ((args->charset != NULL) && (strlen(args->charset) == 0)) {
     charset_len = 256;
   } else {
     charset_len = strlen(args->charset);
@@ -342,86 +287,47 @@ void *host_thread(void *ptr) {
   if (is_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
     kernel_path = CRACKALACK_NTLM8_KERNEL_PATH;
     kernel_name = "crackalack_ntlm8";
-    using_fast_path_kernel = 1;
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized NTLM8 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
   } else if (is_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
     kernel_path = CRACKALACK_NTLM9_KERNEL_PATH;
     kernel_name = "crackalack_ntlm9";
-    using_fast_path_kernel = 1;
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized NTLM9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
-    }
-  } else if (is_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
-    kernel_path = CRACKALACK_NTLM10_KERNEL_PATH;
-    kernel_name = "crackalack_ntlm10";
-    using_fast_path_kernel = 1;
-    if (args->gpu.device_number == 0) {
-      printf("%sNote: optimized NTLM10 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
   } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
     kernel_path = CRACKALACK_MD5_8_KERNEL_PATH;
     kernel_name = "crackalack_md5_8";
-    using_fast_path_kernel = 1;
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized MD5_8 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
-    }
-  } else if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
-    kernel_path = CRACKALACK_NETNTLMV1_7_KERNEL_PATH;
-    kernel_name = "crackalack_netntlmv1_7";
-    using_fast_path_kernel = 1;
-    if (args->gpu.device_number == 0) {
-      printf("%sNote: optimized NetNTLMv1-7 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
   } else if (is_md5_9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
     kernel_path = CRACKALACK_MD5_9_KERNEL_PATH;
     kernel_name = "crackalack_md5_9";
-    using_fast_path_kernel = 1;
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized MD5_9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
-  } else {
+  } else if (!args->is_mask) {
     printf("%sWARNING: non-optimized kernel will be used since non-standard options were given!  Generation will be much slower.  (Hint: use \"crackalack_gen ntlm ascii-32-95 8 8 0 422000 67108864 X\" for optimized NTLM8 generation, or \"crackalack_gen ntlm ascii-32-95 9 9 0 803000 67108864 X\" for optimized NTLM9 generation.)%s\n", YELLOWB, CLR); fflush(stdout);
   }
 
   /* When --markov is requested, switch to the Markov generation kernel.
    * The Markov kernel has the same interface as the generic crackalack kernel
-   * but adds sorted_pos0 and sorted_bigram as args 13 and 14.
-   * Use optimized Markov fast-path kernels for NTLM8/NTLM9 when parameters match. */
+   * but adds sorted_pos0 and sorted_bigram as args 13 and 14. */
   if (args->use_markov) {
-    if (is_markov_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
-      kernel_path = CRACKALACK_MARKOV_NTLM8_KERNEL_PATH;
-      kernel_name = "crackalack_markov_ntlm8";
+    if (strcmp(kernel_path, CRACKALACK_NTLM8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NTLM9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_9_KERNEL_PATH) == 0) {
       if (args->gpu.device_number == 0) {
-        printf("%sNote: optimized Markov NTLM8 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
+        printf("%sNote: --markov cannot use fast-path kernels. Falling back to Markov generic kernel.%s\n", YELLOWB, CLR); fflush(stdout);
       }
-    } else if (is_markov_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
-      kernel_path = CRACKALACK_MARKOV_NTLM9_KERNEL_PATH;
-      kernel_name = "crackalack_markov_ntlm9";
-      if (args->gpu.device_number == 0) {
-        printf("%sNote: optimized Markov NTLM9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
-      }
-    } else if (is_markov_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->use_markov)) {
-      kernel_path = CRACKALACK_MARKOV_NTLM10_KERNEL_PATH;
-      kernel_name = "crackalack_markov_ntlm10";
-      if (args->gpu.device_number == 0) {
-        printf("%sNote: optimized Markov NTLM10 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
-      }
-    } else {
-      if (strcmp(kernel_path, CRACKALACK_NTLM8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NTLM9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NETNTLMV1_7_KERNEL_PATH) == 0) {
-        if (args->gpu.device_number == 0) {
-          printf("%sNote: --markov cannot use fast-path kernels. Falling back to Markov generic kernel.%s\n", YELLOWB, CLR); fflush(stdout);
-        }
-      }
-#ifdef USE_METAL
-      kernel_path = "crackalack_markov.metal";
-      kernel_name = "crackalack_markov";
-#else
-      kernel_path = "crackalack_markov.cl";
-      kernel_name = "crackalack_markov";
-#endif
     }
+#ifdef USE_METAL
+    kernel_path = "crackalack_markov.metal";
+    kernel_name = "crackalack_markov";
+#else
+    kernel_path = "crackalack_markov.cl";
+    kernel_name = "crackalack_markov";
+#endif
   }
 
   /* Get the number of compute units in this device. */
@@ -472,8 +378,8 @@ void *host_thread(void *ptr) {
   if (user_provided_gws > 0) {
     gws = user_provided_gws;
     printf("GPU #%u is using user-provided GWS value of %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
-  } else if (get_optimal_gws(gpu->device, kernel_name) > 0) {
-    gws = get_optimal_gws(gpu->device, kernel_name);
+  } else if (get_optimal_gws(gpu->device) > 0) {
+    gws = get_optimal_gws(gpu->device);
     printf("GPU #%u is using optimized GWS: %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
   } else {
     gws = kernel_work_group_size * kernel_preferred_work_group_size_multiple;
@@ -485,7 +391,7 @@ void *host_thread(void *ptr) {
    * GWS.  The open-source ROCm driver under Linux works fine, though. */
 #if _WIN32
   if ((is_amd_gpu) && (gws >= num_chains_to_generate)) {
-    printf("\n\n  !! WARNING !!\n\nThe GWS (global work size) is greater or equal to the number of chains to generate (%"PRId64" >= %"PRIu64").  The closed-source AMD Windows driver has been observed to hang indefinitely in this case.  If this happens, either raise the number of chains to generate, or lower the GWS setting using the '-gws' parameter.\n\n", gws, num_chains_to_generate);  fflush(stdout);
+    printf("\n\n  !! WARNING !!\n\nThe GWS (global work size) is greater or equal to the number of chains to generate (%"PRId64" >= %u).  The closed-source AMD Windows driver has been observed to hang indefinitely in this case.  If this happens, either raise the number of chains to generate, or lower the GWS setting using the '-gws' parameter.\n\n", gws, num_chains_to_generate);  fflush(stdout);
   }
 #endif
 
@@ -498,24 +404,15 @@ void *host_thread(void *ptr) {
   }
 
   writer_state ws = {0};
-  ws.pending_ready = 0;
+  ws.ready = 0;
   ws.shutdown = 0;
   ws.filename = args->filename;
   ws.device_number = gpu->device_number;
-  ws.start_buf[0] = calloc(indices_size, sizeof(gpu_ulong));
-  ws.start_buf[1] = calloc(indices_size, sizeof(gpu_ulong));
-  ws.end_buf[0] = calloc(indices_size, sizeof(gpu_ulong));
-  ws.end_buf[1] = calloc(indices_size, sizeof(gpu_ulong));
-  ws.buf_size[0] = indices_size;
-  ws.buf_size[1] = indices_size;
-  ws.active_idx = 0;
-  ws.pending_idx = 0;
-  ws.total_chains_written = first_generated_chain;  /* Start from resume point */
-  ws.recent_idx = 0;
-  ws.table_filename = args->filename;
-  ws.checkpoint_enabled = (gpu->device_number == 0) ? 1 : 0;  /* Only device 0 updates checkpoint */
-  if ((ws.start_buf[0] == NULL) || (ws.start_buf[1] == NULL) || (ws.end_buf[0] == NULL) || (ws.end_buf[1] == NULL)) {
-    fprintf(stderr, "Failed to create writer triple-buffers.\n");
+  ws.start_buf = calloc(indices_size, sizeof(gpu_ulong));
+  ws.end_buf = calloc(indices_size, sizeof(gpu_ulong));
+  ws.buf_size = indices_size;
+  if ((ws.start_buf == NULL) || (ws.end_buf == NULL)) {
+    fprintf(stderr, "Failed to create writer double-buffers.\n");
     exit(-1);
   }
   pthread_mutex_init(&ws.mutex, NULL);
@@ -525,9 +422,12 @@ void *host_thread(void *ptr) {
     exit(-1);
   }
 
-  unsigned int effective_max_chain_len = MAX_CHAIN_LEN;
-  int calibration_done = (effective_max_chain_len > 0);  /* skip calibration if a fixed limit is set */
   num_passes = 1;
+  if (args->chain_len > MAX_CHAIN_LEN) {
+    num_passes = args->chain_len / MAX_CHAIN_LEN;
+    if ((args->chain_len % MAX_CHAIN_LEN) > 0)
+      num_passes++;
+  }
 
   while(1) {
     LOCK_START_INDEX();
@@ -549,7 +449,7 @@ void *host_thread(void *ptr) {
     /* All chains generated, so shut down the writer thread and terminate. */
     if (thread_complete) {
       pthread_mutex_lock(&ws.mutex);
-      while (ws.pending_ready)
+      while (ws.ready)
         pthread_cond_wait(&ws.cond, &ws.mutex);
       ws.shutdown = 1;
       pthread_cond_signal(&ws.cond);
@@ -558,10 +458,8 @@ void *host_thread(void *ptr) {
 
       pthread_mutex_destroy(&ws.mutex);
       pthread_cond_destroy(&ws.cond);
-      FREE(ws.start_buf[0]);
-      FREE(ws.start_buf[1]);
-      FREE(ws.end_buf[0]);
-      FREE(ws.end_buf[1]);
+      FREE(ws.start_buf);
+      FREE(ws.end_buf);
 
       CLFREEBUFFER(hash_type_buffer);
       CLFREEBUFFER(charset_buffer);
@@ -574,10 +472,12 @@ void *host_thread(void *ptr) {
       CLFREEBUFFER(pos_start_buffer);
       CLFREEBUFFER(pspace_table_buffer);
       CLFREEBUFFER(pspace_total_buffer);
+      CLFREEBUFFER(is_mask_buffer);
+      CLFREEBUFFER(mask_data_buffer);
+      CLFREEBUFFER(mask_lens_buffer);
       if (args->use_markov) {
         CLFREEBUFFER(sorted_pos0_buffer);
         CLFREEBUFFER(sorted_bigram_buffer);
-        CLFREEBUFFER(max_positions_buffer);
         markov_free(&markov);
       }
 
@@ -596,8 +496,8 @@ void *host_thread(void *ptr) {
     if (hash_type_buffer == NULL) {
       uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
       gpu_ulong pspace_total;
-      if (args->markov_keyspace > 0)
-        pspace_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, pspace_up_to_index);
+      if (args->is_mask)
+        pspace_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, pspace_up_to_index);
       else
         pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
 
@@ -613,79 +513,27 @@ void *host_thread(void *ptr) {
       CLCREATEARG(8, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(9, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
       CLCREATEARG(10, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
+      CLCREATEARG(11, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
+      CLCREATEARG_ARRAY(12, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
+      CLCREATEARG_ARRAY(13, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
       if (args->use_markov) {
-        CLCREATEARG_ARRAY(11, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
-        CLCREATEARG_ARRAY(12, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.max_positions * markov.charset_len * markov.charset_len * sizeof(uint8_t));
-        CLCREATEARG(13, max_positions_buffer, CL_RO, markov.max_positions, sizeof(gpu_uint));
-      } else if (using_fast_path_kernel) {
-        /* Fast-path kernels (NTLM8, NTLM9, etc.) expect 14 args even though they don't use 11-13.
-         * Provide dummy buffers to satisfy OpenCL's requirement that all kernel args be set.
-         * The generic crackalack kernel only has 11 args, so skip these for it. */
-        static uint8_t dummy_byte = 0;
-        static gpu_uint dummy_uint = 0;
-        CLCREATEARG(11, sorted_pos0_buffer, CL_RO, dummy_byte, sizeof(uint8_t));
-        CLCREATEARG(12, sorted_bigram_buffer, CL_RO, dummy_byte, sizeof(uint8_t));
-        CLCREATEARG(13, max_positions_buffer, CL_RO, dummy_uint, sizeof(gpu_uint));
+        CLCREATEARG_ARRAY(14, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
+        CLCREATEARG_ARRAY(15, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.charset_len * markov.charset_len * sizeof(uint8_t));
       }
     } else {
       CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
     }
 
-    /* Auto-calibrate the max chain steps per kernel dispatch on first iteration.
-     * Runs a short probe kernel, measures wall time, and extrapolates the largest
-     * pass size that stays under a safe GPU time budget.  This avoids watchdog
-     * kills on macOS Metal and Windows while letting fast Linux/CUDA GPUs run
-     * full-length chains in a single dispatch. */
-    if (!calibration_done) {
-#define PROBE_STEPS 2000
-#define TARGET_SECONDS 3.0
-      gpu_uint probe_chain_len = (args->chain_len < PROBE_STEPS) ? args->chain_len : PROBE_STEPS;
-      gpu_uint probe_pos_start = 0;
-      CLWRITEBUFFER(chain_len_buffer, sizeof(gpu_uint), &probe_chain_len);
-      CLWRITEBUFFER(pos_start_buffer, sizeof(gpu_uint), &probe_pos_start);
-
-      struct timespec t0, t1;
-      clock_gettime(CLOCK_MONOTONIC, &t0);
-      CLRUNKERNEL(gpu->queue, gpu->kernel, &gws);
-      CLFLUSH(gpu->queue);
-      CLWAIT(gpu->queue);
-      clock_gettime(CLOCK_MONOTONIC, &t1);
-
-      double probe_secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
-      if (probe_secs < 0.001) probe_secs = 0.001;
-
-      effective_max_chain_len = (unsigned int)(probe_chain_len * (TARGET_SECONDS / probe_secs));
-      if (effective_max_chain_len < PROBE_STEPS)
-        effective_max_chain_len = PROBE_STEPS;
-      if (effective_max_chain_len > args->chain_len)
-        effective_max_chain_len = args->chain_len;
-
-      num_passes = 1;
-      if (args->chain_len > effective_max_chain_len) {
-        num_passes = args->chain_len / effective_max_chain_len;
-        if ((args->chain_len % effective_max_chain_len) > 0)
-          num_passes++;
-      }
-
-      printf("GPU #%u auto-calibrated: %u max chain steps/pass, %u passes (probe: %u steps in %.3fs)\n",
-             gpu->device_number, effective_max_chain_len, num_passes, probe_chain_len, probe_secs);
-      fflush(stdout);
-
-      /* Re-upload the original start indices since the probe consumed them. */
-      CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
-      calibration_done = 1;
-    }
-
-    /* If the chain length exceeds the per-pass limit, split into multiple kernel dispatches. */
+    /* If the chain length is greater than MAX_CHAIN_LEN, then the chains must be computed in multiple passes (otherwise Windows drivers crash). */
     for (pass = 0; pass < num_passes; pass++) {
       chain_len = args->chain_len;
 
-      /* If we're doing multiple passes, and aren't handling the last pass, set the chain length to a multiple of effective_max_chain_len.  We add one at the end because the GPU code stops one short of the chain length. */
+      /* If we're doing multiple passes, and aren't handling the last pass, set the chain length to a multiple of MAX_CHAIN_LEN.  We add one at the end because the GPU code stops one short of the chain length. */
       if ((num_passes > 1) && (pass != (num_passes - 1)))
-	chain_len = ((pass + 1) * effective_max_chain_len) + 1;
+	chain_len = ((pass + 1) * MAX_CHAIN_LEN) + 1;
 
-      /* Starting at 0, the position start increases by a multiple of effective_max_chain_len. */
-      pos_start = pass * effective_max_chain_len;
+      /* Starting at 0, the position start increases by a multiple of MAX_CHAIN_LEN. */
+      pos_start = pass * MAX_CHAIN_LEN;
 
       CLWRITEBUFFER(chain_len_buffer, sizeof(gpu_uint), &chain_len);
       CLWRITEBUFFER(pos_start_buffer, sizeof(gpu_uint), &pos_start);
@@ -720,16 +568,14 @@ void *host_thread(void *ptr) {
       thread_complete = 1;
     else {
 
-      /* Wait for a free buffer, then hand off data. */
+      /* Wait for the previous async write to complete, then hand off data. */
       pthread_mutex_lock(&ws.mutex);
-      while (ws.pending_ready)
+      while (ws.ready)
         pthread_cond_wait(&ws.cond, &ws.mutex);
-      unsigned int free_idx = 1 - ws.active_idx;  /* Use the non-active buffer */
-      memcpy(ws.start_buf[free_idx], start_indices, indices_size * sizeof(gpu_ulong));
-      memcpy(ws.end_buf[free_idx], end_indices, indices_size * sizeof(gpu_ulong));
-      ws.buf_size[free_idx] = indices_size;
-      ws.pending_idx = free_idx;
-      ws.pending_ready = 1;
+      memcpy(ws.start_buf, start_indices, indices_size * sizeof(gpu_ulong));
+      memcpy(ws.end_buf, end_indices, indices_size * sizeof(gpu_ulong));
+      ws.buf_size = indices_size;
+      ws.ready = 1;
       pthread_cond_signal(&ws.cond);
       pthread_mutex_unlock(&ws.mutex);
 
@@ -817,24 +663,6 @@ void write_chains(char *filename, unsigned int chains_per_work_unit, gpu_ulong *
   if (start_indices_size > 0)
     rt_log(l, "\tWrote chains start indices from %"PRIu64" to %"PRIu64"\n", start_indices[0], start - 1);
 
-  /* Sync to disk to ensure data durability */
-#ifdef _WIN32
-  FlushFileBuffers(f);
-#else
-  fflush(f);
-  fsync(fileno(f));
-#endif
-
-  /* Verify write succeeded by checking file size */
-  rc_fseek(f, 0, RCSEEK_END);
-  uint64_t actual_size = rc_ftell(f);
-  uint64_t expected_size = (start_indices[start_indices_size - 1] - first_generated_chain + 1) * CHAIN_SIZE;
-  if (actual_size < expected_size) {
-    fprintf(stderr, "\nWarning: file size mismatch after write. Expected at least %"PRIu64", got %"PRIu64"\n",
-            expected_size, actual_size);
-    rt_log(l, "\tERROR: File size mismatch. Expected %"PRIu64", got %"PRIu64"\n",
-           expected_size, actual_size);
-  }
 
   rc_fclose(l);
   rc_fclose(f);
@@ -852,13 +680,20 @@ int main(int ac, char **av) {
   uint64_t file_size = 0;
   thread_args *args = NULL;
   char *hash_name = NULL, *charset_name = NULL, *charset = NULL;
-  unsigned int plaintext_len_min = 0, plaintext_len_max = 0, table_index = 0, benchmark_mode = 0;
-  uint64_t total_chains_in_table = 0;
+  unsigned int plaintext_len_min = 0, plaintext_len_max = 0, total_chains_in_table = 0, table_index = 0, benchmark_mode = 0;
   unsigned int resuming_table = 0;  /* Set when a table gen is being resumed. */
   gpu_uint hash_type = 0, chain_len = 0, num_platforms = 0, num_devices = 0;
   uint64_t part_index = 0;
   int i = 0;
   int charset_len = 0;
+  unsigned int is_mask = 0;
+  Mask mask;
+  char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
+
+  memset(&mask, 0, sizeof(mask));
+  memset(mask_charset_data, 0, sizeof(mask_charset_data));
+  memset(mask_charset_lens, 0, sizeof(mask_charset_lens));
 
 
   ENABLE_CONSOLE_COLOR();
@@ -884,7 +719,7 @@ int main(int ac, char **av) {
     exit(-1);
   }
   chain_len = parse_uint_arg(av[6], "chain_len");
-  total_chains_in_table = parse_uint64_arg(av[7], "total_chains_in_table");
+  total_chains_in_table = parse_uint_arg(av[7], "total_chains_in_table");
 
   /* See if the user wants to run the benchmarks. */
   if (strcmp(av[8], "-bench") == 0) {
@@ -911,21 +746,6 @@ int main(int ac, char **av) {
       i++;
       strncpy(markov_path, av[i], sizeof(markov_path) - 1);
       use_markov = 1;
-    } else if (strcmp(av[i], "--markov-keyspace") == 0) {
-      if (i + 1 >= ac) {
-        fprintf(stderr, "--markov-keyspace requires a value\n");
-        return -1;
-      }
-      i++;
-      {
-        char *end;
-        errno = 0;
-        markov_keyspace = strtoull(av[i], &end, 10);
-        if (errno != 0 || end == av[i] || *end != '\0' || markov_keyspace == 0) {
-          fprintf(stderr, "Error: --markov-keyspace must be a positive integer, got '%s'.\n", av[i]);
-          return -1;
-        }
-      }
     } else {
       fprintf(stderr, "Unknown option: %s\n", av[i]);
       print_usage_and_exit(av[0], -1);
@@ -937,20 +757,11 @@ int main(int ac, char **av) {
   CHECK_MEMORY_SIZE();
 
 
-  /* Copy charset_name to charset_name_safe. */
-  strncpy(charset_name_safe, charset_name, sizeof(charset_name_safe) - 1);
-  charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
-
-  /* When using Markov keyspace, append -mkN to the charset field in the filename. */
-  if (markov_keyspace > 0) {
-    char tmp[sizeof(charset_name_safe)];
-    snprintf(tmp, sizeof(tmp), "%s-mk%"PRIu64, charset_name_safe, markov_keyspace);
-    strncpy(charset_name_safe, tmp, sizeof(charset_name_safe) - 1);
-    charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
-  }
+  /* Encode '?' as '%' in mask names so filenames are shell-safe. */
+  mask_encode_for_filename(charset_name, charset_name_safe, sizeof(charset_name_safe));
 
   /* Format the filename based on the user options. */
-  snprintf(filename, sizeof(filename) - 1, "%s_%s#%u-%u_%u_%ux%"PRIu64"_%"PRIu64".rt", hash_name, charset_name_safe, plaintext_len_min, plaintext_len_max, table_index, chain_len, total_chains_in_table, part_index);
+  snprintf(filename, sizeof(filename) - 1, "%s_%s#%u-%u_%u_%ux%u_%"PRIu64".rt", hash_name, charset_name_safe, plaintext_len_min, plaintext_len_max, table_index, chain_len, total_chains_in_table, part_index);
 
 
   /* If the user provided an invalid hash name, dump the valid options and
@@ -964,18 +775,33 @@ int main(int ac, char **av) {
   }
 
 
-  charset = validate_charset(charset_name);
-  if (charset == NULL) {
-    char buf[256] = {0};
-
-    get_valid_charsets(buf, sizeof(buf));
-    fprintf(stderr, "Error: charset \"%s\" not supported.  Valid values are: %s", charset_name, buf);
-    exit(-1);
-  }
-  if (strcmp(charset_name, "byte") == 0) {
-    charset_len = 256;
+  if (is_mask_string(charset_name)) {
+    if (mask_parse(charset_name, &mask, NULL, NULL, NULL, NULL) != 0) {
+      fprintf(stderr, "Error: invalid mask \"%s\".\n", charset_name);
+      exit(-1);
+    }
+    if ((unsigned int)mask.length != plaintext_len_min || (unsigned int)mask.length != plaintext_len_max) {
+      fprintf(stderr, "Error: mask length (%d) must equal plaintext_min (%u) and plaintext_max (%u).\n", mask.length, plaintext_len_min, plaintext_len_max);
+      exit(-1);
+    }
+    is_mask = 1;
+    mask_to_gpu_buffers(&mask, mask_charset_data, mask_charset_lens);
+    charset = "";
+    charset_len = 0;
   } else {
-    charset_len = strlen(charset);
+    charset = validate_charset(charset_name);
+    if (charset == NULL) {
+      char buf[256] = {0};
+
+      get_valid_charsets(buf, sizeof(buf));
+      fprintf(stderr, "Error: charset \"%s\" not supported.  Valid values are: %s", charset_name, buf);
+      exit(-1);
+    }
+    if (strcmp(charset_name, "byte") == 0) {
+      charset_len = 256;
+    } else {
+      charset_len = strlen(charset);
+    }
   }
 
 
@@ -1002,11 +828,6 @@ int main(int ac, char **av) {
     return -1;
   }
 
-  if (markov_keyspace > 0 && !use_markov) {
-    fprintf(stderr, "Error: --markov-keyspace requires --markov to also be specified.\n");
-    return -1;
-  }
-
   /* The original rcrack didn't support chain counts >= 128M, as that would
    * result in files greater than 2GB in size.  It may work with modern
    * rcrack/rcracki_mt, but its untested as of right now... */
@@ -1030,7 +851,7 @@ int main(int ac, char **av) {
 
   /* If the file size implies that it is already complete, run the verifier on it. */
   if (file_size == ((uint64_t)total_chains_in_table * CHAIN_SIZE)) {
-    if (verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL)) {
+    if (verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1)) {
       /* The table is complete, so tell the user and exit. */
       printf("Table in \"%s\" already appears to be complete.  Terminating...\n", filename);
       exit(0);
@@ -1050,55 +871,36 @@ int main(int ac, char **av) {
   /* If the file already exists and isn't empty, then verify the file, and update
    * the start_index so that we resume generation. */
   if (file_size > 0) {
-    uint64_t chains_done = 0;
+    printf("\n  !! WARNING !!\n\nIt appears that the output table is partially generated.  An attempt to resume generation will be made, but know that this is experimental and may end up failing after hours of work.  A near-future release will further refine this feature.\n\n"); fflush(stdout);
 
-    /* Try checkpoint-based resume first */
-    char resume_device_name[256] = {0};
-    get_platforms_and_devices(-1, MAX_NUM_PLATFORMS, platforms, &num_platforms, MAX_NUM_DEVICES, devices, &num_devices, 0);
-    if (num_devices > 0)
-      get_device_str(devices[0], CL_DEVICE_NAME, resume_device_name, sizeof(resume_device_name) - 1);
-    else
-      strncpy(resume_device_name, "unknown", sizeof(resume_device_name) - 1);
-    if (checkpoint_get_resume_point(filename, &start_index, &chains_done, resume_device_name) == 0) {
-      printf("Resuming from checkpoint: %"PRIu64" chains already generated (%.1f%%)\n",
-             chains_done, (100.0 * chains_done) / total_chains_in_table);
-      start_index++;  /* Start at next chain */
+    verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1);
+
+    /* fopen()'s modes are weird.  Its easier to just re-open the file for reading
+     * at this point, rather than change the code above and re-use the open handle. */
+    f = rc_fopen(filename, 0);
+    if (f == NULL)
+      exit(-1);
+
+    /* The file size may be different now if the verification function, above,
+     * truncated it due to errors.  Ensure that at least one chain is in the file. */
+    rc_fseek(f, 0, RCSEEK_END);
+    if (rc_ftell(f) >= CHAIN_SIZE) {
+
+      /* Seek to the last starting index in the file and read it. */
+      rc_fseek(f, CHAIN_SIZE, RCSEEK_END);
+      rc_fread(&start_index, sizeof(start_index), 1, f);
+
+      start_index++;  /* Increment the index to the next one needed. */
       first_generated_chain = start_index;
-      num_chains_to_generate = total_chains_in_table - chains_done;
-      resuming_table = 1;
-    } else {
-      /* No valid checkpoint - use legacy resume (experimental) */
-      printf("\n  !! WARNING !!\n\nPartially generated table found without checkpoint.\nAttempting legacy resume (experimental).\n\n"); fflush(stdout);
 
-      verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL);
-
-      /* fopen()'s modes are weird.  Its easier to just re-open the file for reading
-       * at this point, rather than change the code above and re-use the open handle. */
-      f = rc_fopen(filename, 0);
-      if (f == NULL)
-        exit(-1);
-
-      /* The file size may be different now if the verification function, above,
-       * truncated it due to errors.  Ensure that at least one chain is in the file. */
+      /* The number of chains left to generate would be the total requested by the
+       * user, minus the number of chains already in the file. */
       rc_fseek(f, 0, RCSEEK_END);
-      if (rc_ftell(f) >= CHAIN_SIZE) {
+      num_chains_to_generate = total_chains_in_table - (rc_ftell(f) / CHAIN_SIZE);
 
-        /* Seek to the last starting index in the file and read it. */
-        rc_fseek(f, CHAIN_SIZE, RCSEEK_END);
-        rc_fread(&start_index, sizeof(start_index), 1, f);
-
-        start_index++;  /* Increment the index to the next one needed. */
-        first_generated_chain = start_index;
-
-        /* The number of chains left to generate would be the total requested by the
-         * user, minus the number of chains already in the file. */
-        rc_fseek(f, 0, RCSEEK_END);
-        num_chains_to_generate = total_chains_in_table - (rc_ftell(f) / CHAIN_SIZE);
-
-        resuming_table = 1;
-      }
-      rc_fclose(f);
+      resuming_table = 1;
     }
+    rc_fclose(f);
   } else {  /* This is a new table. */
     uint64_t plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
 
@@ -1113,8 +915,8 @@ int main(int ac, char **av) {
     } else {
 
       uint64_t plaintext_space_total;
-      if (markov_keyspace > 0)
-        plaintext_space_total = fill_plaintext_space_markov_keyspace(markov_keyspace, plaintext_len_max, plaintext_space_up_to_index);
+      if (is_mask)
+        plaintext_space_total = fill_plaintext_space_table_mask(mask_charset_lens, plaintext_len_max, plaintext_space_up_to_index);
       else
         plaintext_space_total = fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
       
@@ -1127,7 +929,7 @@ int main(int ac, char **av) {
 	if ((plaintext_space_total % num_chains_to_generate) != 0)
 	  highest_part_index--;
 
-	fprintf(stderr, "\n  !! Error: start index (%"PRIu64") + number of chains to generate (%"PRIu64") > plaintext space total (%"PRIu64")!  The highest part index that can be generated without causing this overflow is %"PRIu64" (hint: you set the part index too high (%"PRIu64").\n\n", start_index, num_chains_to_generate, plaintext_space_total, highest_part_index, part_index); fflush(stderr);
+	fprintf(stderr, "\n  !! Error: start index (%"PRIu64") + number of chains to generate (%u) > plaintext space total (%"PRIu64")!  The highest part index that can be generated without causing this overflow is %"PRIu64" (hint: you set the part index too high (%"PRIu64").\n\n", start_index, num_chains_to_generate, plaintext_space_total, highest_part_index, part_index); fflush(stderr);
 	//exit(-1);
       }
     }
@@ -1145,19 +947,6 @@ int main(int ac, char **av) {
       is_amd_gpu = 1;
   }
 
-  /* Initialize checkpoint for new tables */
-  if (!resuming_table && num_devices > 0) {
-    char gpu_device_name[256] = {0};
-    uint64_t params_hash;
-
-    get_device_str(devices[0], CL_DEVICE_NAME, gpu_device_name, sizeof(gpu_device_name) - 1);
-    params_hash = compute_params_hash(hash_type, plaintext_len_min, plaintext_len_max, table_index, chain_len);
-
-    if (checkpoint_init(filename, gpu_device_name, params_hash) != 0) {
-      fprintf(stderr, "Warning: failed to initialize checkpoint file.\n");
-    }
-  }
-
   /* Initialize the barrier.  This is used in some cases to ensure kernels across
    * multiple devices run concurrently. */
   if (pthread_barrier_init(&barrier, NULL, num_devices) != 0) {
@@ -1172,7 +961,7 @@ int main(int ac, char **av) {
   }
 
   /* Print info about how we're generating the table. */
-  printf("Output file:\t\t%s\nHash algorithm:\t\t%s\nCharset name:\t\t%s\nCharset:\t\t%s\nCharset length:\t\t%u\nPlaintext length range: %u - %u\nReduction offset:\t0x%x\nChain length:\t\t%u\nNumber of chains:\t%"PRIu64"\nPart index:\t\t%"PRIu64"\n\n", filename, hash_name, charset_name, charset, charset_len, plaintext_len_min, plaintext_len_max, TABLE_INDEX_TO_REDUCTION_OFFSET(table_index), chain_len, total_chains_in_table, part_index);
+  printf("Output file:\t\t%s\nHash algorithm:\t\t%s\nCharset name:\t\t%s\nCharset:\t\t%s\nCharset length:\t\t%u\nPlaintext length range: %u - %u\nReduction offset:\t0x%x\nChain length:\t\t%u\nNumber of chains:\t%u\nPart index:\t\t%"PRIu64"\n\n", filename, hash_name, charset_name, charset, charset_len, plaintext_len_min, plaintext_len_max, TABLE_INDEX_TO_REDUCTION_OFFSET(table_index), chain_len, total_chains_in_table, part_index);
 
   /* If we found a file to append to, tell the user what's happening. */
   if (resuming_table)
@@ -1193,7 +982,6 @@ int main(int ac, char **av) {
     args[i].benchmark_mode = benchmark_mode;
     args[i].hash_type = hash_type;
     args[i].charset = charset;
-    args[i].charset_name = charset_name;
     args[i].plaintext_len_min = plaintext_len_min;
     args[i].plaintext_len_max = plaintext_len_max;
     args[i].table_index = table_index;
@@ -1201,8 +989,12 @@ int main(int ac, char **av) {
     args[i].chain_len = chain_len;
     args[i].filename = filename;
     args[i].initial_chains_per_execution = INITIAL_CHAINS_PER_EXECUTION;
+    args[i].is_mask = is_mask;
+    if (is_mask) {
+      memcpy(args[i].mask_charset_data, mask_charset_data, sizeof(args[i].mask_charset_data));
+      memcpy(args[i].mask_charset_lens, mask_charset_lens, sizeof(args[i].mask_charset_lens));
+    }
     args[i].use_markov = use_markov;
-    args[i].markov_keyspace = markov_keyspace;
     snprintf(args[i].markov_path, sizeof(args[i].markov_path), "%s", markov_path);
     args[i].gpu.device_number = i;
     args[i].gpu.device = devices[i];
@@ -1239,14 +1031,14 @@ int main(int ac, char **av) {
     printf("\nGeneration complete!\n");
 
     if (stat(filename, &st) == 0) {
-      uint64_t actual_num_chains = st.st_size / CHAIN_SIZE;
+      unsigned int actual_num_chains = st.st_size / CHAIN_SIZE;
 
       /* If we generated more chains than the user requested, rename the file to
        * reflect this. */
       if (actual_num_chains > total_chains_in_table) {
 	if (VERBOSE)
-	  printf("\nNote %"PRIu64" extra chains created.  Truncating...\n", actual_num_chains - total_chains_in_table);
-	if (truncate(filename, (off_t)(total_chains_in_table * CHAIN_SIZE)) != 0) {
+	  printf("\nNote %u extra chains created.  Truncating...\n", actual_num_chains - total_chains_in_table);
+	if (truncate(filename, total_chains_in_table * CHAIN_SIZE) != 0) {
 	  fprintf(stderr, "Error while truncating file %s: %s (%d)\n", filename, strerror(errno), errno);
 	}
 
@@ -1254,7 +1046,7 @@ int main(int ac, char **av) {
 	char new_filename[sizeof(filename)];
 	memset(new_filename, 0, sizeof(new_filename));
 
-	snprintf(new_filename, sizeof(new_filename) - 1, "%s_%s#%u-%u_%u_%ux%"PRIu64"_%"PRIu64".rt", hash_name, charset_name, plaintext_len_min, plaintext_len_max, table_index, chain_len, actual_num_chains, part_index);
+	snprintf(new_filename, sizeof(new_filename) - 1, "%s_%s#%u-%u_%u_%ux%u_%u.rt", hash_name, charset_name, plaintext_len_min, plaintext_len_max, table_index, chain_len, actual_num_chains, part_index);
 	if (!rename(filename, new_filename)) {
 	  printf("\nNote: because extra chains were generated, the file name was renamed to reflect this (from \"%s\" to \"%s\").\n\n", filename, new_filename);
 	  strncpy(filename, new_filename, sizeof(filename) - 1);
@@ -1267,7 +1059,7 @@ int main(int ac, char **av) {
     /* Verify that the new table is valid. */
     printf("Now verifying rainbow table... ");
     fflush(stdout);
-    if (!verify_rainbowtable_file(filename, use_markov ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL)) {
+    if (!verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1)) {
       char log_filename[256] = {0};
 
       get_rt_log_filename(log_filename, sizeof(log_filename), filename);
@@ -1278,9 +1070,6 @@ int main(int ac, char **av) {
        * correct.  No need to keep this debugging info. */
       delete_rt_log(filename);
       printf("done!\n");
-
-      /* Remove checkpoint file since table is complete and verified */
-      checkpoint_remove(filename);
     }
   }
 

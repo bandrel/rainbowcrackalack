@@ -362,10 +362,6 @@ void load_kernel(cl_context context, cl_uint num_devices, const cl_device_id *de
     strncat(build_options, " -DAMD_ROCM=1", sizeof(build_options) - 1);
 #endif
 
-  /* NVIDIA: enable aggressive optimizations for kernel compilation. */
-  if (strcmp(device_vendor, "NVIDIA Corporation") == 0)
-    strncat(build_options, " -cl-mad-enable -cl-no-signed-zeros", sizeof(build_options) - 1);
-
   /*printf("Building program with options: %s\n", build_options);*/
   if (rc_clBuildProgram(*program, num_devices, devices, build_options, NULL, NULL) < 0) {
     size_t log_size = 0;
@@ -374,13 +370,9 @@ void load_kernel(cl_context context, cl_uint num_devices, const cl_device_id *de
     fprintf(stderr, "clBuildProgram failed.\n");
     rc_clGetProgramBuildInfo(*program, devices[0], CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
     error_str = calloc(log_size + 1, sizeof(char));
-    if (error_str != NULL) {
-      rc_clGetProgramBuildInfo(*program, devices[0], CL_PROGRAM_BUILD_LOG, log_size, error_str, NULL);
-      fprintf(stderr, "%s\n", error_str);
-      FREE(error_str);
-    } else {
-      fprintf(stderr, "(build log unavailable: memory allocation failed)\n");
-    }
+    rc_clGetProgramBuildInfo(*program, devices[0], CL_PROGRAM_BUILD_LOG, log_size, error_str, NULL);
+    fprintf(stderr, "%s\n", error_str);
+    FREE(error_str);
     exit(-1);
   }
 

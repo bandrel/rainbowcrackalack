@@ -25,8 +25,8 @@ ifeq ($(BUILD),linux)
   CC := $(CC_linux)
   EXE :=
   CPPFLAGS := $(CPPFLAGS_common)
-  CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
-  LDFLAGS  := $(LDFLAGS_common) -flto=auto
+  CFLAGS   := $(CFLAGS_common)
+  LDFLAGS  := $(LDFLAGS_common)
   LIBS     := -lpthread -ldl -lgcrypt -lOpenCL
 endif
 
@@ -34,8 +34,8 @@ ifeq ($(BUILD),macos)
   CC := clang
   EXE :=
   CPPFLAGS := $(CPPFLAGS_common) -DUSE_METAL -I/opt/homebrew/include
-  CFLAGS   := $(CFLAGS_common) -march=native -flto
-  LDFLAGS  := $(LDFLAGS_common) -L/opt/homebrew/lib -flto
+  CFLAGS   := $(CFLAGS_common)
+  LDFLAGS  := $(LDFLAGS_common) -L/opt/homebrew/lib
   LIBS     := -lpthread -lgcrypt -framework Metal -framework Foundation
   GPU_BACKEND_OBJ := $(OBJDIR)/metal_setup.o
 endif
@@ -126,7 +126,6 @@ $(OBJDIR)/%.o: %.m | $(OBJDIR)
 
 $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/charset.o \
-	$(OBJDIR)/checkpoint.o \
 	$(OBJDIR)/clock.o \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_gen.o \
@@ -134,6 +133,7 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rtc_decompress.o \
@@ -145,6 +145,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_unit_tests.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/test_chain.o \
@@ -162,19 +163,17 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_index_to_plaintext.o \
 	$(OBJDIR)/test_index_to_plaintext_ntlm9.o \
 	$(OBJDIR)/test_index_to_plaintext_markov.o \
+	$(OBJDIR)/test_index_to_plaintext_mask.o \
 	$(OBJDIR)/markov.o \
 	$(OBJDIR)/test_chain_markov.o \
-	$(OBJDIR)/test_chain_markov_ntlm8.o \
-	$(OBJDIR)/test_chain_markov_ntlm9.o \
+	$(OBJDIR)/test_chain_mask.o \
 	$(OBJDIR)/test_markov.o \
+	$(OBJDIR)/test_mask.o \
 	$(OBJDIR)/test_misc.o \
 	$(OBJDIR)/test_sort.o \
-	$(OBJDIR)/test_decompress.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/file_lock.o \
-	$(OBJDIR)/parallel_sort.o \
 	$(OBJDIR)/rtc_decompress.o \
-	$(OBJDIR)/rti2_decompress.o \
 	$(OBJDIR)/sort_utils.o \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
@@ -188,7 +187,7 @@ $(OUTDIR)/$(VERIFY_PROG): \
 	$(OBJDIR)/crackalack_verify.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
-	$(OBJDIR)/markov.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/verify.o
@@ -200,19 +199,17 @@ $(OUTDIR)/$(RTC2RT_PROG): \
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 $(OUTDIR)/$(LOOKUP_PROG): \
-	$(OBJDIR)/bloom.o \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/clock.o \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_lookup.o \
 	$(OBJDIR)/file_lock.o \
-	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rtc_decompress.o \
-	$(OBJDIR)/rti2_decompress.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
@@ -225,7 +222,6 @@ $(OUTDIR)/$(PERFECTIFY): \
 $(OUTDIR)/$(ENUMERATE): \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/enumerate_chain.o \
-	$(OBJDIR)/markov.o \
 	$(OBJDIR)/test_shared.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
@@ -234,8 +230,8 @@ $(OUTDIR)/$(SORT_PROG): \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
-	$(OBJDIR)/parallel_sort.o \
 	$(OBJDIR)/sort_utils.o \
 	$(GPU_BACKEND_OBJ)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
@@ -246,6 +242,7 @@ $(OUTDIR)/$(PLAN_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o
 	$(CC) $(LDFLAGS) $^ -o $@ -lgcrypt -lm
 

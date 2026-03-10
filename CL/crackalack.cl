@@ -13,7 +13,10 @@ __kernel void crackalack(
     __global unsigned long *g_indices,
     __global unsigned int *g_pos_start,
     __global unsigned long *g_plaintext_space_up_to_index,
-    __global unsigned long *g_plaintext_space_total) {
+    __global unsigned long *g_plaintext_space_total,
+    __global unsigned int *g_is_mask,
+    __global char *g_mask_charset_data,
+    __global unsigned int *g_mask_charset_lens) {
 
   unsigned int hash_type = *g_hash_type;
   char charset[MAX_CHARSET_LEN];
@@ -23,17 +26,18 @@ __kernel void crackalack(
   unsigned int chain_len = *g_chain_len;
   unsigned long start_index = g_indices[get_global_id(0)];
   unsigned int pos = *g_pos_start;
+  unsigned int is_mask = *g_is_mask;
 
   unsigned int charset_len = *g_charset_len;
   g_memcpy((unsigned char *)charset, (unsigned char __global *)g_charset, charset_len);
 
-  unsigned long plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1];
+  unsigned long plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
   unsigned char plaintext[MAX_PLAINTEXT_LEN];
   unsigned int plaintext_len = 0;
   unsigned char hash[MAX_HASH_OUTPUT_LEN];
   unsigned int hash_len;
 
-  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index, plaintext_len_max);
+  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index);
   unsigned long plaintext_space_total = *g_plaintext_space_total;
 
   // Generate a chain, and store it in the local buffer.
@@ -41,6 +45,9 @@ __kernel void crackalack(
         hash_type,
         charset,
         charset_len,
+        is_mask,
+        g_mask_charset_data,
+        g_mask_charset_lens,
         plaintext_len_min,
         plaintext_len_max,
         reduction_offset,

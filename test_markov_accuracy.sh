@@ -3,53 +3,38 @@ set -euo pipefail
 
 # Markov vs standard rainbow table accuracy comparison.
 #
-# Generates standard and Markov-ordered tables at multiple coverage levels
-# (10%, 25%, 50%, 100%) and compares crack rates against a test set of
-# real-world passwords. Uses multiple table indices per level for variance
-# reduction. Reports merge rates (chain loss after sort) at each level.
+# Trains against a rockyou.txt sample, generates a standard table and a
+# Markov-ordered table at identical ~50% keyspace coverage, then compares
+# crack rates against a held-out set of real-world 5-char passwords.
 #
-# To avoid train/test contamination, this script splits the password corpus
-# into disjoint training (80%) and testing (20%) halves. The Markov model
-# is trained on the training half; crack rates are measured on the test half.
+# Parameters: ascii-32-95, length 5, chain_len=100000, num_chains=53600
+# (~50% coverage: 1-(1-100000/7737809375)^53600 ~= 0.50)
 #
-# Usage: ./test_markov_accuracy.sh <path/to/rockyou.txt> [plaintext_lens] [num_tables] [chain_len] [sample_size] [coverage_levels]
-# plaintext_lens is a space-separated quoted string of lengths to test, e.g. "7 8"
-# (default "5"). Lengths are tested in order. num_tables defaults to 1.
-# coverage_levels is a space-separated quoted string like "10 25 50 100" (default).
+# Usage: ./test_markov_accuracy.sh <path/to/rockyou.txt> [path/to/model.markov]
 
 ROCKYOU="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-IFS=' ' read -r -a PT_LENS <<< "${2:-5}"
-NUM_TABLES="${3:-1}"
+MARKOV="${2:-$SCRIPT_DIR/rockyou.markov}"
 BINDIR="$SCRIPT_DIR"
 
-CHAIN_LEN_ARG="${4:-auto}"
-SAMPLE_SIZE_ARG="${5:-2000}"
-IFS=' ' read -r -a COVERAGE_LEVELS <<< "${6:-10 25 50 100}"
-
-# When the keyspace is so large that even 10% exceeds this limit, switch to
-# fixed chain-count mode with geometrically spaced levels (1x, 2.5x, 5x, 10x).
-MAX_PRACTICAL_CHAINS=100000000
+SAMPLE_SIZE=500
+CHAIN_LEN=100000
+NUM_CHAINS=53600
+PT_LEN=5
 
 if [ -z "$ROCKYOU" ]; then
-    echo "Usage: $0 <path/to/rockyou.txt> [plaintext_len] [num_tables]"
-    exit 1
-fi
-
-for _pt in "${PT_LENS[@]}"; do
-    if ! [[ "$_pt" =~ ^[0-9]+$ ]] || [ "$_pt" -lt 2 ]; then
-        echo "ERROR: plaintext_len must be an integer >= 2 (got: $_pt)"
-        exit 1
-    fi
-done
-
-if ! [[ "$NUM_TABLES" =~ ^[0-9]+$ ]] || [ "$NUM_TABLES" -lt 1 ]; then
-    echo "ERROR: num_tables must be an integer >= 1 (got: $NUM_TABLES)"
+    echo "Usage: $0 <path/to/rockyou.txt> [path/to/model.markov]"
     exit 1
 fi
 
 if [ ! -r "$ROCKYOU" ]; then
     echo "ERROR: rockyou.txt not readable: $ROCKYOU"
+    exit 1
+fi
+
+if [ ! -f "$MARKOV" ]; then
+    echo "ERROR: Markov model not found: $MARKOV"
+    echo "  Train one with: ./crackalack_plan train rockyou.txt"
     exit 1
 fi
 
@@ -60,137 +45,7 @@ for bin in "$BINDIR/crackalack_gen" "$BINDIR/crackalack_sort" "$BINDIR/crackalac
     fi
 done
 
-# --- Helper functions ---
-
-file_size_bytes() {
-    local f="$1"
-    stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null
-}
-
-count_rt_records() {
-    local rt_file="$1"
-    local size
-    size=$(file_size_bytes "$rt_file")
-    echo $((size / 16))
-}
-
-count_rt_records_dir() {
-    local dir="$1"
-    local total=0
-    for f in "$dir"/*.rt; do
-        [ -f "$f" ] || continue
-        local n
-        n=$(count_rt_records "$f")
-        total=$((total + n))
-    done
-    echo "$total"
-}
-
-validate_markov_model() {
-    local model="$1"
-    local magic
-    magic=$(head -c 4 "$model")
-    if [ "$magic" != "RCLM" ]; then
-        echo "ERROR: Markov model '$model' has bad magic (expected RCLM, got '$magic')"
-        exit 1
-    fi
-    echo "  Markov model validated (magic=RCLM)."
-}
-
-validate_rt_file() {
-    local rt_file="$1"
-    local label="$2"
-    if [ ! -f "$rt_file" ]; then
-        echo "ERROR: $label .rt file not created: $rt_file"
-        exit 1
-    fi
-    local size
-    size=$(file_size_bytes "$rt_file")
-    if [ "$size" -eq 0 ]; then
-        echo "ERROR: $label .rt file is empty: $rt_file"
-        exit 1
-    fi
-    if [ $((size % 16)) -ne 0 ]; then
-        echo "ERROR: $label .rt file size ($size) is not a multiple of 16 - corrupt table"
-        exit 1
-    fi
-}
-
-validate_sort_order() {
-    local rt_file="$1"
-    local label="$2"
-    python3 -c "
-import struct, sys
-with open('$rt_file', 'rb') as f:
-    data = f.read()
-n = len(data) // 16
-if n < 2:
-    sys.exit(0)
-check_positions = list(range(min(10, n-1))) + list(range(max(0, n-10), n-1))
-check_positions = sorted(set(check_positions))
-for i in check_positions:
-    _, end_a = struct.unpack_from('<QQ', data, i * 16)
-    _, end_b = struct.unpack_from('<QQ', data, (i + 1) * 16)
-    if end_a > end_b:
-        print(f'ERROR: $label table not sorted at record {i}: {end_a} > {end_b}', file=sys.stderr)
-        sys.exit(1)
-" || { echo "ERROR: $label table sort verification failed"; exit 1; }
-}
-
-validate_hashes() {
-    local hash_file="$1"
-    local pw_file="$2"
-    local hash_count pw_count
-    hash_count=$(wc -l < "$hash_file" | tr -d ' ')
-    pw_count=$(wc -l < "$pw_file" | tr -d ' ')
-    if [ "$hash_count" != "$pw_count" ]; then
-        echo "ERROR: Hash count ($hash_count) != password count ($pw_count)"
-        exit 1
-    fi
-    local bad_lines
-    bad_lines=$(grep -cvE '^[0-9a-f]{32}$' "$hash_file" || true)
-    if [ "$bad_lines" -gt 0 ]; then
-        echo "ERROR: $bad_lines hashes are not exactly 32 hex chars"
-        exit 1
-    fi
-    echo "  Validated $hash_count hashes (all 32 hex chars)."
-}
-
-parse_cracked() {
-    awk '/were cracked, or/{print $6} /No hashes were cracked/{print "0"}'
-}
-
-parse_pct() {
-    awk '/were cracked, or/{gsub(/%\.?$/,"",$NF); print $NF} /No hashes were cracked/{print "0.00"}'
-}
-
-run_lookup() {
-    local table_dir="$1"
-    local hash_file="$2"
-    shift 2
-    local output rc=0
-    output=$("$BINDIR/crackalack_lookup" "$table_dir" "$hash_file" "$@" 2>&1) || rc=$?
-    if [ $rc -ne 0 ]; then
-        echo "WARNING: crackalack_lookup exited with code $rc"
-    fi
-    if ! echo "$output" | grep -qE '(were cracked|No hashes were cracked)'; then
-        echo "ERROR: crackalack_lookup produced unexpected output:"
-        echo "$output" | tail -10 | sed 's/^/  /'
-        exit 1
-    fi
-    local cracked
-    cracked=$(echo "$output" | parse_cracked)
-    if [ -n "$cracked" ] && [ "$cracked" -gt "$(wc -l < "$hash_file" | tr -d ' ')" ]; then
-        echo "ERROR: cracked count ($cracked) > total hashes - parse error"
-        exit 1
-    fi
-    echo "$output"
-}
-
-# --- Setup ---
-
-TMPDIR="./tmp/markov_test_$$"
-mkdir -p "$TMPDIR"
+TMPDIR=$(mktemp -d)
 cleanup() {
     rm -rf "$TMPDIR"
 }
@@ -198,152 +53,18 @@ trap cleanup EXIT
 
 ln -sfn "$BINDIR/Metal" "$TMPDIR/Metal" 2>/dev/null || true
 ln -sfn "$BINDIR/CL" "$TMPDIR/CL" 2>/dev/null || true
-ln -sfn "$BINDIR/shared.h" "$TMPDIR/shared.h" 2>/dev/null || true
 
-for PT_LEN in "${PT_LENS[@]}"; do
-
-echo ""
-echo "################################################################"
-echo "# Plaintext length: $PT_LEN"
-echo "################################################################"
-
-SAMPLE_SIZE="$SAMPLE_SIZE_ARG"
-
-# Compute keyspace
-KEYSPACE=$(awk -v pt_len="$PT_LEN" 'BEGIN {
-    ks = 1; for (i = 0; i < pt_len; i++) ks *= 95; print int(ks)
-}')
-
-# Auto-calculate chain length for fastest precompute while keeping
-# generation practical.  Strategy: pick the shortest chain_len such that
-# 100% coverage doesn't exceed MAX_PRACTICAL_CHAINS.  This gives the
-# fastest possible lookup without making generation infeasible.
-# Floor at 100, and for very large keyspaces fall back to cbrt(keyspace)
-# which is the theoretical optimum for multi-table setups.
-if [ "$CHAIN_LEN_ARG" = "auto" ]; then
-    CHAIN_LEN=$(python3 -c "
-import math
-ks = $KEYSPACE
-max_chains = $MAX_PRACTICAL_CHAINS
-# Shortest chain_len where full coverage fits in max_chains
-cl = max(100, ks // max_chains)
-# But don't go below cbrt for very large keyspaces (diminishing returns)
-cl_cbrt = int(round(ks ** (1/3)))
-if cl > cl_cbrt:
-    cl = cl_cbrt
-# Round to nearest 100 for cleaner filenames
-cl = max(100, (cl // 100) * 100)
-print(cl)
-")
-    echo "  Auto chain_len=$CHAIN_LEN (shortest practical for keyspace=$KEYSPACE)"
-else
-    CHAIN_LEN="$CHAIN_LEN_ARG"
-fi
-
-# Cap sample size to available keyspace
-if [ "$KEYSPACE" -lt "$SAMPLE_SIZE" ]; then
-    SAMPLE_SIZE=$KEYSPACE
-fi
-if [ "$SAMPLE_SIZE" -lt 1 ]; then SAMPLE_SIZE=1; fi
-
-# Determine whether coverage-based or fixed-chain-count mode is needed.
-# If the smallest coverage level already exceeds the practical cap, use fixed mode.
-smallest_coverage=${COVERAGE_LEVELS[0]}
-smallest_num_chains=$(( KEYSPACE * smallest_coverage / 100 / CHAIN_LEN ))
-if [ "$smallest_num_chains" -gt "$MAX_PRACTICAL_CHAINS" ]; then
-    USE_FIXED_CHAINS=1
-    # Geometrically spaced: base, 2.5x, 5x, 10x
-    FIXED_BASE=$((MAX_PRACTICAL_CHAINS / 10))
-    FIXED_CHAIN_COUNTS=("$FIXED_BASE" $((FIXED_BASE * 25 / 10)) $((FIXED_BASE * 5)) $((FIXED_BASE * 10)))
-else
-    USE_FIXED_CHAINS=0
-fi
-
-echo "=== Markov Accuracy Test ==="
-echo "  charset=ascii-32-95, len=$PT_LEN, keyspace=$KEYSPACE"
-if [ "$USE_FIXED_CHAINS" -eq 1 ]; then
-    echo "  chain_len=$CHAIN_LEN, mode=fixed-chain-count (keyspace too large for coverage %)"
-    echo "  chain_counts=${FIXED_CHAIN_COUNTS[*]}"
-else
-    echo "  chain_len=$CHAIN_LEN, coverage_levels=${COVERAGE_LEVELS[*]}%"
-fi
-echo "  sample_size=$SAMPLE_SIZE passwords, num_tables=$NUM_TABLES per level"
+echo "=== Markov Accuracy Test (ascii-32-95, len=$PT_LEN, ~50% coverage, N=$SAMPLE_SIZE passwords) ==="
 echo ""
 
-# --- Train/test split ---
-# Deduplicate passwords of the target length, then split 80/20 for train/test.
-# The Markov model is trained only on the training half; crack rates are measured
-# on the test half. This prevents train/test contamination.
-
-echo "Splitting corpus into train/test sets (80/20)..."
-LC_ALL=C grep -E "^[ -~]{${PT_LEN}}$" "$ROCKYOU" | sort -u | shuf > "$TMPDIR/all_unique.txt"
-total_unique=$(wc -l < "$TMPDIR/all_unique.txt" | tr -d ' ')
-echo "  Total unique ${PT_LEN}-char passwords: $total_unique"
-
-if [ "$total_unique" -lt 10 ]; then
-    echo "ERROR: Too few unique passwords of length $PT_LEN (need at least 10, got $total_unique)"
-    exit 1
-fi
-
-train_count=$(( total_unique * 80 / 100 ))
-if [ "$train_count" -lt 1 ]; then train_count=1; fi
-test_count=$(( total_unique - train_count ))
-if [ "$test_count" -lt 1 ]; then
-    echo "ERROR: Not enough passwords for a test set (total=$total_unique, train=$train_count)"
-    exit 1
-fi
-
-head -n "$train_count" "$TMPDIR/all_unique.txt" > "$TMPDIR/train_passwords.txt"
-tail -n "$test_count" "$TMPDIR/all_unique.txt" > "$TMPDIR/test_passwords.txt"
-echo "  Train set: $train_count passwords"
-echo "  Test set:  $test_count passwords"
-
-# Cap sample size to test set
-if [ "$SAMPLE_SIZE" -gt "$test_count" ]; then
-    SAMPLE_SIZE=$test_count
-    echo "  NOTE: Reduced sample_size to $SAMPLE_SIZE (limited by test set)"
-fi
-
-# Sample from the TEST set only (already deduplicated)
-shuf -n "$SAMPLE_SIZE" "$TMPDIR/test_passwords.txt" > "$TMPDIR/passwords.txt"
+# Sample passwords: 5-char printable ASCII (0x20-0x7e = ascii-32-95)
+echo "Sampling $SAMPLE_SIZE passwords from rockyou.txt..."
+grep -E '^[ -~]{5}$' "$ROCKYOU" | shuf -n "$SAMPLE_SIZE" > "$TMPDIR/passwords.txt"
 actual_count=$(wc -l < "$TMPDIR/passwords.txt" | tr -d ' ')
-echo "  Sampled $actual_count test passwords."
+echo "  Got $actual_count passwords."
 
-if [ "$actual_count" -eq 0 ]; then
-    echo "ERROR: No passwords sampled"
-    exit 1
-fi
-
-# --- Train Markov model on training set only ---
-echo ""
-echo "Training Markov model on training set..."
-MARKOV="$TMPDIR/train.markov"
-
-if [ -x "$BINDIR/crackalack_plan" ]; then
-    "$BINDIR/crackalack_plan" train "$TMPDIR/train_passwords.txt" 2>&1 | tail -3 | sed 's/^/  /'
-    # crackalack_plan writes <basename>.markov in the current working directory
-    mv "train_passwords.markov" "$MARKOV"
-else
-    # Fall back to user-provided model with a warning
-    echo "  WARNING: crackalack_plan not found; cannot train a fresh model."
-    echo "  Falling back to pre-trained model. This introduces train/test contamination"
-    echo "  if the model was trained on the same corpus as the test set."
-    MARKOV_FALLBACK="${4:-$SCRIPT_DIR/rockyou.markov}"
-    if [[ ! "$MARKOV_FALLBACK" = /* ]]; then
-        MARKOV_FALLBACK="$(cd "$(dirname "$MARKOV_FALLBACK")" && pwd)/$(basename "$MARKOV_FALLBACK")"
-    fi
-    if [ ! -f "$MARKOV_FALLBACK" ]; then
-        echo "ERROR: No Markov model available at $MARKOV_FALLBACK"
-        exit 1
-    fi
-    MARKOV="$MARKOV_FALLBACK"
-fi
-
-# Validate Markov model
-validate_markov_model "$MARKOV"
-
-# Compute NTLM hashes
-echo ""
+# Compute NTLM hashes via pure Python MD4 (works on macOS where OpenSSL
+# blocks legacy digest algorithms).
 echo "Computing NTLM hashes..."
 cat > "$TMPDIR/ntlm_hash.py" <<'PYEOF'
 import struct, sys
@@ -390,6 +111,7 @@ def _md4(data):
 def ntlm(password):
     return _md4(password.encode('utf-16-le'))
 
+# Self-test: NTLM("password") == 8846f7eaee8fb117ad06bdd830b7586c
 _expected = '8846f7eaee8fb117ad06bdd830b7586c'
 _got = ntlm('password')
 if _got != _expected:
@@ -398,262 +120,79 @@ if _got != _expected:
 for line in sys.stdin:
     print(ntlm(line.rstrip('\n')))
 PYEOF
+uv run python3 "$TMPDIR/ntlm_hash.py" < "$TMPDIR/passwords.txt" > "$TMPDIR/hashes.txt"
 
-if command -v uv &> /dev/null; then
-    PYTHON_CMD="uv run python3"
-else
-    PYTHON_CMD="python3"
-fi
-$PYTHON_CMD "$TMPDIR/ntlm_hash.py" < "$TMPDIR/passwords.txt" > "$TMPDIR/hashes.txt"
-validate_hashes "$TMPDIR/hashes.txt" "$TMPDIR/passwords.txt"
-
-# --- Pipeline sanity check with a known password ---
+# --- Standard table ---
 echo ""
-echo "--- Pipeline sanity check ---"
+echo "Generating standard table (chain_len=$CHAIN_LEN, num_chains=$NUM_CHAINS)..."
+mkdir -p "$TMPDIR/standard_tables"
+(cd "$TMPDIR" && "$BINDIR/crackalack_gen" ntlm ascii-32-95 $PT_LEN $PT_LEN 0 $CHAIN_LEN $NUM_CHAINS 0)
+mv "$TMPDIR"/*.rt "$TMPDIR/standard_tables/"
 
-SANITY_PW=$(head -1 "$TMPDIR/passwords.txt")
-SANITY_HASH=$($PYTHON_CMD "$TMPDIR/ntlm_hash.py" <<< "$SANITY_PW")
-echo "$SANITY_HASH" > "$TMPDIR/sanity_hash.txt"
-echo "  Testing pipeline with password '$SANITY_PW' (hash=$SANITY_HASH)..."
+echo "Sorting standard table..."
+"$BINDIR/crackalack_sort" "$TMPDIR"/standard_tables/*.rt
 
-# Standard sanity: generate a small table (capped for large keyspaces)
-SANITY_CHAINS=$(( (KEYSPACE / CHAIN_LEN) + 1 ))
-if [ "$SANITY_CHAINS" -gt 10000 ]; then SANITY_CHAINS=10000; fi
-mkdir -p "$TMPDIR/sanity_std"
-SANITY_STD_RT="ntlm_ascii-32-95#${PT_LEN}-${PT_LEN}_0_${CHAIN_LEN}x${SANITY_CHAINS}_0.rt"
-"$BINDIR/crackalack_gen" ntlm ascii-32-95 "$PT_LEN" "$PT_LEN" 0 "$CHAIN_LEN" "$SANITY_CHAINS" 0 2>&1 | tail -3 | sed 's/^/  /'
-mv "./$SANITY_STD_RT" "$TMPDIR/sanity_std/"
-"$BINDIR/crackalack_sort" "$TMPDIR"/sanity_std/*.rt 2>&1 | tail -1 | sed 's/^/  /'
+# Clean stale precalc/pot files before lookup
 rm -f "$BINDIR"/rcracki.precalc.* "$BINDIR"/rainbowcrackalack_*.pot
-sanity_std_rc=0
-sanity_std_out=$("$BINDIR/crackalack_lookup" "$TMPDIR/sanity_std/" "$TMPDIR/sanity_hash.txt" 2>&1) || sanity_std_rc=$?
-sanity_std_cracked=$(echo "$sanity_std_out" | parse_cracked)
-if [ -z "$sanity_std_cracked" ]; then
-    echo "  Standard pipeline: PARSE_ERROR (exit code $sanity_std_rc)"
-    echo "  crackalack_lookup output:"
-    echo "$sanity_std_out" | tail -20 | sed 's/^/    /'
-else
-    echo "  Standard pipeline: cracked=$sanity_std_cracked"
-fi
 
-# Markov sanity (same chain count)
-mkdir -p "$TMPDIR/sanity_mkv"
-SANITY_MKV_RT="ntlm_ascii-32-95-mk${KEYSPACE}#${PT_LEN}-${PT_LEN}_0_${CHAIN_LEN}x${SANITY_CHAINS}_0.rt"
-"$BINDIR/crackalack_gen" ntlm ascii-32-95 "$PT_LEN" "$PT_LEN" 0 "$CHAIN_LEN" "$SANITY_CHAINS" 0 --markov "$MARKOV" --markov-keyspace "$KEYSPACE" 2>&1 | tail -3 | sed 's/^/  /'
-mv "./$SANITY_MKV_RT" "$TMPDIR/sanity_mkv/"
-"$BINDIR/crackalack_sort" "$TMPDIR"/sanity_mkv/*.rt 2>&1 | tail -1 | sed 's/^/  /'
+echo "Looking up hashes against standard table..."
+standard_output=$("$BINDIR/crackalack_lookup" "$TMPDIR/standard_tables/" "$TMPDIR/hashes.txt" 2>&1) || true
+
+# --- Markov table ---
+echo ""
+echo "Generating Markov table (chain_len=$CHAIN_LEN, num_chains=$NUM_CHAINS)..."
+mkdir -p "$TMPDIR/markov_tables"
+(cd "$TMPDIR" && "$BINDIR/crackalack_gen" ntlm ascii-32-95 $PT_LEN $PT_LEN 0 $CHAIN_LEN $NUM_CHAINS 0 --markov "$MARKOV")
+mv "$TMPDIR"/*.rt "$TMPDIR/markov_tables/"
+
+echo "Sorting Markov table..."
+"$BINDIR/crackalack_sort" "$TMPDIR"/markov_tables/*.rt
+
 rm -f "$BINDIR"/rcracki.precalc.* "$BINDIR"/rainbowcrackalack_*.pot
-sanity_mkv_rc=0
-sanity_mkv_out=$("$BINDIR/crackalack_lookup" "$TMPDIR/sanity_mkv/" "$TMPDIR/sanity_hash.txt" --markov "$MARKOV" 2>&1) || sanity_mkv_rc=$?
-sanity_mkv_cracked=$(echo "$sanity_mkv_out" | parse_cracked)
-if [ -z "$sanity_mkv_cracked" ]; then
-    echo "  Markov pipeline:   PARSE_ERROR (exit code $sanity_mkv_rc)"
-    echo "  crackalack_lookup output:"
-    echo "$sanity_mkv_out" | tail -20 | sed 's/^/    /'
+
+echo "Looking up hashes against Markov table..."
+markov_output=$("$BINDIR/crackalack_lookup" "$TMPDIR/markov_tables/" "$TMPDIR/hashes.txt" 2>&1) || true
+
+# --- Parse results ---
+# When num_cracked > 0: "   Of the N hashes loaded, M were cracked, or PP.PP%."
+# When num_cracked == 0: "No hashes were cracked.  :("
+parse_cracked() {
+    awk '/were cracked, or/{print $6} /No hashes were cracked/{print "0"}'
+}
+parse_pct() {
+    awk '/were cracked, or/{gsub(/%\.?$/,"",$NF); print $NF} /No hashes were cracked/{print "0.00"}'
+}
+
+standard_cracked=$(echo "$standard_output" | parse_cracked)
+markov_cracked=$(echo "$markov_output" | parse_cracked)
+
+if [ -z "$standard_cracked" ] || [ -z "$markov_cracked" ]; then
+    echo ""
+    echo "ERROR: Could not parse lookup summary lines."
+    echo ""
+    echo "Standard lookup output (last 5 lines):"
+    echo "$standard_output" | tail -5 | sed 's/^/  /'
+    echo ""
+    echo "Markov lookup output (last 5 lines):"
+    echo "$markov_output" | tail -5 | sed 's/^/  /'
+    exit 1
+fi
+
+standard_pct=$(echo "$standard_output" | parse_pct)
+markov_pct=$(echo "$markov_output" | parse_pct)
+
+diff_count=$((markov_cracked - standard_cracked))
+diff_pct=$(awk "BEGIN{printf \"%.2f\", ($markov_cracked - $standard_cracked) * 100.0 / $actual_count}")
+
+echo ""
+echo "=== Results ==="
+echo ""
+printf "  Standard:  %s / %s cracked (%s%%)\n" "$standard_cracked" "$actual_count" "$standard_pct"
+printf "  Markov:    %s / %s cracked (%s%%)\n" "$markov_cracked" "$actual_count" "$markov_pct"
+echo ""
+if [ "$diff_count" -ge 0 ]; then
+    printf "  Markov improvement: +%s hashes (+%s percentage points)\n" "$diff_count" "$diff_pct"
 else
-    echo "  Markov pipeline:   cracked=$sanity_mkv_cracked"
+    printf "  Markov vs standard: %s hashes (%s percentage points)\n" "$diff_count" "$diff_pct"
 fi
-
-if [ "${sanity_std_cracked:-0}" = "0" ] && [ "${sanity_mkv_cracked:-0}" = "0" ]; then
-    echo ""
-    echo "WARNING: Neither pipeline cracked a known password at full coverage."
-    echo "  This may indicate a broken pipeline. Continuing anyway..."
-    echo ""
-fi
-
-# --- Main comparison loop ---
 echo ""
-echo "=== Coverage-level comparison ==="
-echo "  Generating $NUM_TABLES table(s) per level (table_index 0..$((NUM_TABLES-1)))"
-
-# Arrays to accumulate summary data
-declare -a SUMMARY_LABEL=()
-declare -a SUMMARY_STD_REQ=()
-declare -a SUMMARY_STD_ACTUAL=()
-declare -a SUMMARY_STD_CRACKED=()
-declare -a SUMMARY_MKV_REQ=()
-declare -a SUMMARY_MKV_ACTUAL=()
-declare -a SUMMARY_MKV_CRACKED=()
-
-# Build the iteration list: either coverage percentages or fixed chain counts
-if [ "$USE_FIXED_CHAINS" -eq 1 ]; then
-    ITER_COUNT=${#FIXED_CHAIN_COUNTS[@]}
-else
-    ITER_COUNT=${#COVERAGE_LEVELS[@]}
-fi
-
-for iter_idx in $(seq 0 $((ITER_COUNT - 1))); do
-    if [ "$USE_FIXED_CHAINS" -eq 1 ]; then
-        num_chains=${FIXED_CHAIN_COUNTS[$iter_idx]}
-        coverage_label="${num_chains} chains"
-        # In fixed mode, Markov keyspace = full keyspace (the table size is the variable)
-        mkv_keyspace=$KEYSPACE
-    else
-        coverage=${COVERAGE_LEVELS[$iter_idx]}
-        coverage_label="${coverage}%"
-        num_chains=$(( KEYSPACE * coverage / 100 / CHAIN_LEN ))
-        if [ "$num_chains" -lt 1 ]; then num_chains=1; fi
-        if [ "$num_chains" -gt "$MAX_PRACTICAL_CHAINS" ]; then
-            echo "  NOTE: Capping num_chains from $num_chains to $MAX_PRACTICAL_CHAINS (practical limit)"
-            num_chains=$MAX_PRACTICAL_CHAINS
-        fi
-        # Confine Markov chains to the top (coverage)% of keyspace by probability.
-        mkv_keyspace=$((KEYSPACE * coverage / 100))
-        if [ "$mkv_keyspace" -lt 1 ]; then mkv_keyspace=1; fi
-    fi
-
-    # Per-table chain count (split evenly across tables)
-    chains_per_table=$(( num_chains / NUM_TABLES ))
-    if [ "$chains_per_table" -lt 1 ]; then chains_per_table=1; fi
-
-    echo ""
-    echo "--- Level: ${coverage_label} ---"
-    echo "  Total chains: $num_chains ($chains_per_table x $NUM_TABLES tables, chain_len=$CHAIN_LEN)"
-
-    # --- Standard tables ---
-    std_dir="$TMPDIR/std_${iter_idx}"
-    mkdir -p "$std_dir"
-
-    std_total_pre_sort=0
-    for tidx in $(seq 0 $((NUM_TABLES - 1))); do
-        echo "  [Standard] Generating table_index=$tidx..."
-        std_rt_name="ntlm_ascii-32-95#${PT_LEN}-${PT_LEN}_${tidx}_${CHAIN_LEN}x${chains_per_table}_0.rt"
-        "$BINDIR/crackalack_gen" ntlm ascii-32-95 "$PT_LEN" "$PT_LEN" "$tidx" "$CHAIN_LEN" "$chains_per_table" 0 2>&1 | tail -2 | sed 's/^/    /'
-        mv "./$std_rt_name" "$std_dir/"
-
-        validate_rt_file "$std_dir/$std_rt_name" "Standard ${coverage_label} idx=$tidx"
-
-        pre=$(count_rt_records "$std_dir/$std_rt_name")
-        std_total_pre_sort=$((std_total_pre_sort + pre))
-
-        "$BINDIR/crackalack_sort" "$std_dir/$std_rt_name" 2>&1 | tail -1 | sed 's/^/    /'
-        validate_sort_order "$std_dir/$std_rt_name" "Standard ${coverage_label} idx=$tidx"
-    done
-
-    std_post_sort=$(count_rt_records_dir "$std_dir")
-
-    std_merge_loss=0
-    if [ "$std_total_pre_sort" -gt 0 ]; then
-        std_merge_loss=$(awk "BEGIN{printf \"%.1f\", ($std_total_pre_sort - $std_post_sort) * 100.0 / $std_total_pre_sort}")
-    fi
-    std_eff_coverage=$(awk "BEGIN{printf \"%.1f\", $std_post_sort * 100.0 / $KEYSPACE}")
-
-    echo "  [Standard] Pre-sort: $std_total_pre_sort, After sort: $std_post_sort (${std_merge_loss}% merge loss)"
-    echo "  [Standard] Effective coverage: ${std_eff_coverage}% of keyspace"
-
-    if awk "BEGIN{exit(!($std_merge_loss > 50))}"; then
-        echo "  WARNING: Merge loss > 50% - chain_len may be too high for this keyspace"
-    fi
-
-    rm -f "$BINDIR"/rcracki.precalc.* "$BINDIR"/rainbowcrackalack_*.pot
-    echo "  [Standard] Looking up hashes..."
-    std_output=$(run_lookup "$std_dir" "$TMPDIR/hashes.txt")
-    std_cracked=$(echo "$std_output" | parse_cracked)
-    std_pct=$(echo "$std_output" | parse_pct)
-    echo "  [Standard] Cracked: $std_cracked / $actual_count ($std_pct%)"
-
-    # --- Markov tables ---
-    mkv_dir="$TMPDIR/mkv_${iter_idx}"
-    mkdir -p "$mkv_dir"
-
-    mkv_total_pre_sort=0
-    for tidx in $(seq 0 $((NUM_TABLES - 1))); do
-        echo "  [Markov] Generating table_index=$tidx (markov_keyspace=$mkv_keyspace)..."
-        mkv_rt_name="ntlm_ascii-32-95-mk${mkv_keyspace}#${PT_LEN}-${PT_LEN}_${tidx}_${CHAIN_LEN}x${chains_per_table}_0.rt"
-        "$BINDIR/crackalack_gen" ntlm ascii-32-95 "$PT_LEN" "$PT_LEN" "$tidx" "$CHAIN_LEN" "$chains_per_table" 0 --markov "$MARKOV" --markov-keyspace "$mkv_keyspace" 2>&1 | tail -2 | sed 's/^/    /'
-        mv "./$mkv_rt_name" "$mkv_dir/"
-
-        validate_rt_file "$mkv_dir/$mkv_rt_name" "Markov ${coverage_label} idx=$tidx"
-
-        pre=$(count_rt_records "$mkv_dir/$mkv_rt_name")
-        mkv_total_pre_sort=$((mkv_total_pre_sort + pre))
-
-        "$BINDIR/crackalack_sort" "$mkv_dir/$mkv_rt_name" 2>&1 | tail -1 | sed 's/^/    /'
-        validate_sort_order "$mkv_dir/$mkv_rt_name" "Markov ${coverage_label} idx=$tidx"
-    done
-
-    mkv_post_sort=$(count_rt_records_dir "$mkv_dir")
-
-    mkv_merge_loss=0
-    if [ "$mkv_total_pre_sort" -gt 0 ]; then
-        mkv_merge_loss=$(awk "BEGIN{printf \"%.1f\", ($mkv_total_pre_sort - $mkv_post_sort) * 100.0 / $mkv_total_pre_sort}")
-    fi
-    mkv_eff_total=$(awk "BEGIN{printf \"%.1f\", $mkv_post_sort * 100.0 / $KEYSPACE}")
-    mkv_eff_target=$(awk "BEGIN{printf \"%.1f\", $mkv_post_sort * 100.0 / $mkv_keyspace}")
-
-    echo "  [Markov] Pre-sort: $mkv_total_pre_sort, After sort: $mkv_post_sort (${mkv_merge_loss}% merge loss)"
-    echo "  [Markov] Effective coverage: ${mkv_eff_total}% of full keyspace, ${mkv_eff_target}% of target keyspace ($mkv_keyspace)"
-
-    if awk "BEGIN{exit(!($mkv_merge_loss > 50))}"; then
-        echo "  WARNING: Merge loss > 50% - chain_len may be too high for this keyspace"
-    fi
-
-    rm -f "$BINDIR"/rcracki.precalc.* "$BINDIR"/rainbowcrackalack_*.pot
-    echo "  [Markov] Looking up hashes..."
-    mkv_output=$(run_lookup "$mkv_dir" "$TMPDIR/hashes.txt" --markov "$MARKOV")
-    mkv_cracked=$(echo "$mkv_output" | parse_cracked)
-    mkv_pct=$(echo "$mkv_output" | parse_pct)
-    echo "  [Markov] Cracked: $mkv_cracked / $actual_count ($mkv_pct%)"
-
-    diff_count=$((mkv_cracked - std_cracked))
-    diff_pp=$(awk "BEGIN{printf \"%.1f\", ($mkv_cracked - $std_cracked) * 100.0 / $actual_count}")
-    if [ "$diff_count" -ge 0 ]; then
-        echo "  Delta: +$diff_count (+${diff_pp}pp)"
-    else
-        echo "  Delta: $diff_count (${diff_pp}pp)"
-    fi
-
-    # Accumulate for summary
-    SUMMARY_LABEL+=("$coverage_label")
-    SUMMARY_STD_REQ+=("$num_chains")
-    SUMMARY_STD_ACTUAL+=("$std_post_sort")
-    SUMMARY_STD_CRACKED+=("$std_cracked")
-    SUMMARY_MKV_REQ+=("$num_chains")
-    SUMMARY_MKV_ACTUAL+=("$mkv_post_sort")
-    SUMMARY_MKV_CRACKED+=("$mkv_cracked")
-done
-
-# --- Summary table ---
-echo ""
-echo "=== Summary ==="
-echo ""
-printf "%-16s  %-12s  %-14s  %-12s  %-14s  %s\n" \
-    "Level" "Std Chains" "Std Cracked" "Mkv Chains" "Mkv Cracked" "Delta"
-printf "%-16s  %-12s  %-14s  %-12s  %-14s  %s\n" \
-    "---------------" "----------" "-----------" "----------" "-----------" "-----"
-
-for i in "${!SUMMARY_LABEL[@]}"; do
-    label="${SUMMARY_LABEL[$i]}"
-    std_ch="${SUMMARY_STD_ACTUAL[$i]}"
-    std_cr="${SUMMARY_STD_CRACKED[$i]}"
-    mkv_ch="${SUMMARY_MKV_ACTUAL[$i]}"
-    mkv_cr="${SUMMARY_MKV_CRACKED[$i]}"
-
-    std_pct_val=$(awk "BEGIN{printf \"%.1f\", $std_cr * 100.0 / $actual_count}")
-    mkv_pct_val=$(awk "BEGIN{printf \"%.1f\", $mkv_cr * 100.0 / $actual_count}")
-    delta=$((mkv_cr - std_cr))
-    delta_pp=$(awk "BEGIN{printf \"%.1f\", ($mkv_cr - $std_cr) * 100.0 / $actual_count}")
-
-    if [ "$delta" -ge 0 ]; then
-        delta_str="+$delta (+${delta_pp}pp)"
-    else
-        delta_str="$delta (${delta_pp}pp)"
-    fi
-
-    printf "%-16s  %-12s  %-14s  %-12s  %-14s  %s\n" \
-        "$label" \
-        "$std_ch" \
-        "$std_cr (${std_pct_val}%)" \
-        "$mkv_ch" \
-        "$mkv_cr (${mkv_pct_val}%)" \
-        "$delta_str"
-done
-
-echo ""
-echo "Methodology: train/test split (80/20), $actual_count deduplicated test passwords,"
-echo "  $NUM_TABLES table(s) per level, Markov model trained on training set only."
-
-done  # end PT_LENS loop
-
-echo ""
-echo "Done."

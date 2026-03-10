@@ -16,6 +16,7 @@
  */
 
 #include "charset.h"
+#include "mask_parse.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -76,3 +77,8 @@ void get_valid_charsets(char *buf, unsigned int buf_size) {
 }
 
 
+char *validate_mask(char *charset_name) {
+  if (is_mask_string(charset_name))
+    return charset_name;
+  return NULL;
+}

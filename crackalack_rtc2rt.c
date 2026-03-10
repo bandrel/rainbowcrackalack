@@ -18,7 +18,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include <inttypes.h>
 #include <stdio.h>
 
 #include "rtc_decompress.h"
@@ -27,7 +26,7 @@
 
 int main(int ac, char **av) {
   uint64_t *uncompressed_table = NULL;
-  uint64_t i = 0, num_chains = 0;
+  unsigned int i = 0, num_chains = 0;
   char *rtc_filename_input = NULL, *rt_filename_output = NULL;
   int ret = 0;
   FILE *f = NULL;
@@ -62,6 +61,6 @@ int main(int ac, char **av) {
 
   fclose(f);
 
-  printf("Successfully uncompressed %"PRIu64" chains in RTC file \"%s\" to RT file \"%s\".\n", num_chains, rtc_filename_input, rt_filename_output);
+  printf("Successfully uncompressed %u chains in RTC file \"%s\" to RT file \"%s\".\n", num_chains, rtc_filename_input, rt_filename_output);
   return 0;
 }

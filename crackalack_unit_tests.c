@@ -39,13 +39,13 @@
 #include "test_index_to_plaintext.h"
 #include "test_index_to_plaintext_ntlm9.h"
 #include "test_index_to_plaintext_markov.h"
+#include "test_index_to_plaintext_mask.h"
 #include "test_chain_markov.h"
-#include "test_chain_markov_ntlm8.h"
-#include "test_chain_markov_ntlm9.h"
+#include "test_chain_mask.h"
 #include "test_markov.h"
+#include "test_mask.h"
 #include "test_misc.h"
 #include "test_sort.h"
-#include "test_decompress.h"
 #include "version.h"
 
 
@@ -135,9 +135,8 @@ int main(int ac, char **av) {
 
 
   /* Mask tests (CPU-only, no kernel needed). */
-  /* Sort utility tests (CPU-only, no kernel needed). */
-  printf("Running sort utility tests... "); fflush(stdout);
-  if (!test_sort()) {
+  printf("Running mask tests... "); fflush(stdout);
+  if (!test_mask()) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
@@ -145,9 +144,9 @@ int main(int ac, char **av) {
     PRINT_PASSED();
 
 
-  /* Decompression tests (CPU-only, no kernel needed). */
-  printf("Running decompress tests... "); fflush(stdout);
-  if (!test_decompress()) {
+  /* Sort utility tests (CPU-only, no kernel needed). */
+  printf("Running sort utility tests... "); fflush(stdout);
+  if (!test_sort()) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
@@ -447,12 +446,12 @@ int main(int ac, char **av) {
   CLRELEASEPROGRAM(program);
 
 
-  /* Markov NTLM8 fast-path chain tests. */
+  /* Mask index_to_plaintext tests (GPU). */
   hash_type = HASH_NTLM;
-  load_kernel(context, num_devices, devices, "crackalack_markov_ntlm8.cl",
-              "crackalack_markov_ntlm8", &program, &kernel, hash_type);
-  printf("Running Markov NTLM8 chain tests... "); fflush(stdout);
-  if (!test_chain_markov_ntlm8(devices[0], context, kernel)) {
+  load_kernel(context, num_devices, devices, "test_index_to_plaintext_mask.cl",
+              "test_index_to_plaintext_mask", &program, &kernel, hash_type);
+  printf("Running mask index_to_plaintext() tests... "); fflush(stdout);
+  if (!test_index_to_plaintext_mask(devices[0], context, kernel)) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
@@ -463,12 +462,12 @@ int main(int ac, char **av) {
   CLRELEASEPROGRAM(program);
 
 
-  /* Markov NTLM9 fast-path chain tests. */
+  /* Mask chain generation tests. */
   hash_type = HASH_NTLM;
-  load_kernel(context, num_devices, devices, "crackalack_markov_ntlm9.cl",
-              "crackalack_markov_ntlm9", &program, &kernel, hash_type);
-  printf("Running Markov NTLM9 chain tests... "); fflush(stdout);
-  if (!test_chain_markov_ntlm9(devices[0], context, kernel)) {
+  load_kernel(context, num_devices, devices, "crackalack.cl", "crackalack",
+              &program, &kernel, hash_type);
+  printf("Running mask chain tests... "); fflush(stdout);
+  if (!test_chain_mask(devices[0], context, kernel)) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();

@@ -72,15 +72,12 @@ static int cmp_by_freq_desc_linux(const void *a, const void *b, void *arg)
 void markov_build_sorted(markov_model *model)
 {
   unsigned int n = model->charset_len;
-  unsigned int max_pos = model->max_positions;
 
   /* Initialise index arrays 0..n-1 */
   for (unsigned int i = 0; i < n; i++)
     model->sorted_pos0[i] = (uint8_t)i;
 
-  /* Initialize sorted_bigram for all positions */
-  size_t total_bigram = (size_t)max_pos * n * n;
-  for (size_t i = 0; i < total_bigram; i++)
+  for (unsigned int i = 0; i < n * n; i++)
     model->sorted_bigram[i] = (uint8_t)(i % n);
 
 #ifdef __APPLE__
@@ -89,27 +86,21 @@ void markov_build_sorted(markov_model *model)
   qsort_r(model->sorted_pos0, n, sizeof(uint8_t), &ctx0,
           cmp_by_freq_desc_apple);
 
-  /* For each position and previous character, sort the bigram row */
-  for (unsigned int pos = 0; pos < max_pos; pos++) {
-    for (unsigned int p = 0; p < n; p++) {
-      size_t offset = (size_t)pos * n * n + (size_t)p * n;
-      sort_ctx ctxb = { model->bigram_freq + offset };
-      qsort_r(model->sorted_bigram + offset, n, sizeof(uint8_t),
-              &ctxb, cmp_by_freq_desc_apple);
-    }
+  /* For each previous character p, sort sorted_bigram[p*n .. p*n+n-1] */
+  for (unsigned int p = 0; p < n; p++) {
+    sort_ctx ctxb = { model->bigram_freq + (size_t)p * n };
+    qsort_r(model->sorted_bigram + (size_t)p * n, n, sizeof(uint8_t),
+            &ctxb, cmp_by_freq_desc_apple);
   }
 #else
   sort_ctx ctx0 = { model->pos0_freq };
   qsort_r(model->sorted_pos0, n, sizeof(uint8_t),
           cmp_by_freq_desc_linux, &ctx0);
 
-  for (unsigned int pos = 0; pos < max_pos; pos++) {
-    for (unsigned int p = 0; p < n; p++) {
-      size_t offset = (size_t)pos * n * n + (size_t)p * n;
-      sort_ctx ctxb = { model->bigram_freq + offset };
-      qsort_r(model->sorted_bigram + offset, n, sizeof(uint8_t),
-              cmp_by_freq_desc_linux, &ctxb);
-    }
+  for (unsigned int p = 0; p < n; p++) {
+    sort_ctx ctxb = { model->bigram_freq + (size_t)p * n };
+    qsort_r(model->sorted_bigram + (size_t)p * n, n, sizeof(uint8_t),
+            cmp_by_freq_desc_linux, &ctxb);
   }
 #endif
 }
@@ -119,8 +110,7 @@ void markov_build_sorted(markov_model *model)
  * ------------------------------------------------------------------------- */
 
 int markov_train(const char *wordlist_path, const char *charset,
-                 unsigned int charset_len, unsigned int max_positions,
-                 markov_model *model)
+                 unsigned int charset_len, markov_model *model)
 {
   if (charset_len == 0 || charset_len > 255) {
     fprintf(stderr, "markov_train: charset_len %u out of range [1, 255] (uint8_t indices cannot represent 256)\n",
@@ -128,21 +118,16 @@ int markov_train(const char *wordlist_path, const char *charset,
     return -1;
   }
 
-  /* Use default if max_positions is 0 */
-  if (max_positions == 0)
-    max_positions = MARKOV_DEFAULT_MAX_POSITIONS;
-
   memset(model, 0, sizeof(*model));
   model->charset_len = charset_len;
-  model->max_positions = max_positions;
   memcpy(model->charset, charset, charset_len);
 
-  size_t bigram_size = (size_t)max_positions * charset_len * charset_len;
-
-  model->pos0_freq     = calloc(charset_len, sizeof(uint64_t));
-  model->bigram_freq   = calloc(bigram_size, sizeof(uint64_t));
-  model->sorted_pos0   = calloc(charset_len, sizeof(uint8_t));
-  model->sorted_bigram = calloc(bigram_size, sizeof(uint8_t));
+  model->pos0_freq    = calloc(charset_len, sizeof(uint64_t));
+  model->bigram_freq  = calloc((size_t)charset_len * charset_len,
+                                sizeof(uint64_t));
+  model->sorted_pos0  = calloc(charset_len, sizeof(uint8_t));
+  model->sorted_bigram = calloc((size_t)charset_len * charset_len,
+                                 sizeof(uint8_t));
 
   if (!model->pos0_freq || !model->bigram_freq ||
       !model->sorted_pos0 || !model->sorted_bigram) {
@@ -193,16 +178,11 @@ int markov_train(const char *wordlist_path, const char *charset,
     /* Count position-0 frequency */
     model->pos0_freq[rev[(unsigned char)buf[0]]]++;
 
-    /* Count position-aware bigrams */
+    /* Count bigrams */
     for (size_t i = 0; i + 1 < len; i++) {
       unsigned int prev = (unsigned int)rev[(unsigned char)buf[i]];
       unsigned int next = (unsigned int)rev[(unsigned char)buf[i + 1]];
-      /* Position for bigram: i is the position of prev_char (0-indexed)
-       * Use the last position table for positions >= max_positions */
-      unsigned int pos = (i < max_positions) ? (unsigned int)i : (max_positions - 1);
-      size_t offset = (size_t)pos * charset_len * charset_len
-                    + (size_t)prev * charset_len + next;
-      model->bigram_freq[offset]++;
+      model->bigram_freq[(size_t)prev * charset_len + next]++;
     }
   }
 
@@ -220,7 +200,7 @@ int markov_train(const char *wordlist_path, const char *charset,
   for (unsigned int i = 0; i < charset_len; i++)
     model->pos0_freq[i]++;
 
-  for (size_t i = 0; i < bigram_size; i++)
+  for (size_t i = 0; i < (size_t)charset_len * charset_len; i++)
     model->bigram_freq[i]++;
 
   markov_build_sorted(model);
@@ -253,11 +233,6 @@ int markov_save(const char *path, const markov_model *model)
   if (fwrite(&clen, sizeof(uint32_t), 1, fp) != 1)
     goto write_error;
 
-  /* Max positions (v3) */
-  uint32_t maxpos = model->max_positions;
-  if (fwrite(&maxpos, sizeof(uint32_t), 1, fp) != 1)
-    goto write_error;
-
   /* Charset bytes */
   if (fwrite(model->charset, 1, model->charset_len, fp) != model->charset_len)
     goto write_error;
@@ -267,9 +242,8 @@ int markov_save(const char *path, const markov_model *model)
       != model->charset_len)
     goto write_error;
 
-  /* bigram_freq array - now position-aware */
-  size_t bigram_count = (size_t)model->max_positions
-                      * model->charset_len * model->charset_len;
+  /* bigram_freq array */
+  size_t bigram_count = (size_t)model->charset_len * model->charset_len;
   if (fwrite(model->bigram_freq, sizeof(uint64_t), bigram_count, fp)
       != bigram_count)
     goto write_error;
@@ -306,7 +280,7 @@ int markov_load(const char *path, markov_model *model)
     return -1;
   }
 
-  /* Version */
+  /* Version - split into two checks so ver is initialised before use */
   uint32_t ver;
   if (fread(&ver, sizeof(uint32_t), 1, fp) != 1) {
     fprintf(stderr, "markov_load: truncated version field in '%s'\n", path);
@@ -314,8 +288,7 @@ int markov_load(const char *path, markov_model *model)
     return -1;
   }
   if (ver != MARKOV_VERSION) {
-    fprintf(stderr, "markov_load: unsupported version %u in '%s' (expected %u)\n",
-            ver, path, MARKOV_VERSION);
+    fprintf(stderr, "markov_load: unsupported version %u in '%s'\n", ver, path);
     fclose(fp);
     return -1;
   }
@@ -329,15 +302,6 @@ int markov_load(const char *path, markov_model *model)
   }
   model->charset_len = clen;
 
-  /* Max positions */
-  uint32_t maxpos;
-  if (fread(&maxpos, sizeof(uint32_t), 1, fp) != 1 || maxpos == 0) {
-    fprintf(stderr, "markov_load: invalid max_positions in '%s'\n", path);
-    fclose(fp);
-    return -1;
-  }
-  model->max_positions = maxpos;
-
   /* Charset bytes */
   if (fread(model->charset, 1, clen, fp) != clen) {
     fprintf(stderr, "markov_load: truncated charset in '%s'\n", path);
@@ -346,11 +310,10 @@ int markov_load(const char *path, markov_model *model)
   }
 
   /* Allocate arrays */
-  size_t bigram_size = (size_t)maxpos * clen * clen;
   model->pos0_freq     = calloc(clen, sizeof(uint64_t));
-  model->bigram_freq   = calloc(bigram_size, sizeof(uint64_t));
+  model->bigram_freq   = calloc((size_t)clen * clen, sizeof(uint64_t));
   model->sorted_pos0   = calloc(clen, sizeof(uint8_t));
-  model->sorted_bigram = calloc(bigram_size, sizeof(uint8_t));
+  model->sorted_bigram = calloc((size_t)clen * clen, sizeof(uint8_t));
 
   if (!model->pos0_freq || !model->bigram_freq ||
       !model->sorted_pos0 || !model->sorted_bigram) {
@@ -369,8 +332,9 @@ int markov_load(const char *path, markov_model *model)
   }
 
   /* bigram_freq */
-  if (fread(model->bigram_freq, sizeof(uint64_t), bigram_size, fp)
-      != bigram_size) {
+  size_t bigram_count = (size_t)clen * clen;
+  if (fread(model->bigram_freq, sizeof(uint64_t), bigram_count, fp)
+      != bigram_count) {
     fprintf(stderr, "markov_load: truncated bigram_freq in '%s'\n", path);
     fclose(fp);
     markov_free(model);
@@ -392,13 +356,12 @@ void index_to_plaintext_markov_cpu(uint64_t index, const markov_model *model,
                                    unsigned char *plaintext)
 {
   unsigned int n = model->charset_len;
-  unsigned int max_pos = model->max_positions;
 
   /* Position 0: decode from sorted_pos0 */
   plaintext[0] = (unsigned char)model->charset[model->sorted_pos0[index % n]];
   index /= n;
 
-  /* Positions 1..plaintext_len-1: decode from position-aware bigram row */
+  /* Positions 1..plaintext_len-1: decode from bigram row of previous char */
   for (unsigned int i = 1; i < plaintext_len; i++) {
     /* Find index of previous character in charset */
     unsigned int prev_idx = 0;
@@ -410,14 +373,7 @@ void index_to_plaintext_markov_cpu(uint64_t index, const markov_model *model,
       }
     }
     assert(prev_idx < n); /* charset chars are always in the model; caller bug otherwise */
-
-    /* Select position-specific bigram table
-     * Position i-1 is where prev_ch is located (0-indexed)
-     * Use last table for positions >= max_positions */
-    unsigned int pos = ((i - 1) < max_pos) ? (i - 1) : (max_pos - 1);
-    size_t offset = (size_t)pos * n * n + (size_t)prev_idx * n;
-    const uint8_t *row = model->sorted_bigram + offset;
-
+    const uint8_t *row = model->sorted_bigram + (size_t)prev_idx * n;
     plaintext[i] = (unsigned char)model->charset[row[index % n]];
     index /= n;
   }

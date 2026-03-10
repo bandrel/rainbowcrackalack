@@ -3,7 +3,7 @@
 #include "netntlmv1.metal"
 #include "md5.metal"
 
-inline void index_to_plaintext(ulong index, thread char *charset, unsigned int charset_len, unsigned int plaintext_len_min, unsigned int plaintext_len_max, thread ulong *plaintext_space_up_to_index, thread unsigned char *plaintext, thread unsigned int *plaintext_len) {
+inline void index_to_plaintext(ulong index, thread char *charset, unsigned int charset_len, unsigned int is_mask, device char *mask_charset_data, device unsigned int *mask_charset_lens, unsigned int plaintext_len_min, unsigned int plaintext_len_max, thread ulong *plaintext_space_up_to_index, thread unsigned char *plaintext, thread unsigned int *plaintext_len) {
 
   //printf("index_to_plaintext .CL\tindex: %x; charset[1]: %02x; charset_len: %d; plaintext_len_min: %d\n", index, charset[1],  charset_len, plaintext_len_min);
 
@@ -16,8 +16,14 @@ inline void index_to_plaintext(ulong index, thread char *charset, unsigned int c
 
   ulong index_x = index - plaintext_space_up_to_index[*plaintext_len - 1];
   for (int i = *plaintext_len - 1; i >= 0; i--) {
-    plaintext[i] = charset[index_x % charset_len];
-    index_x = index_x / charset_len;
+    if (is_mask) {
+      unsigned int sz = mask_charset_lens[i];
+      plaintext[i] = mask_charset_data[i * MAX_CHARSET_LEN + index_x % sz];
+      index_x /= sz;
+    } else {
+      plaintext[i] = charset[index_x % charset_len];
+      index_x = index_x / charset_len;
+    }
   }
 
   return;
@@ -79,8 +85,8 @@ inline ulong fill_plaintext_space_table(unsigned int charset_len, unsigned int p
 
 
 // Copies the plaintext_space_up_to_index array from device memory to thread memory.
-inline void copy_plaintext_space_up_to_index(thread ulong *dest, device ulong *src, unsigned int plaintext_len_max) {
-  for (int i = 0; i <= plaintext_len_max; i++)
+inline void copy_plaintext_space_up_to_index(thread ulong *dest, device ulong *src) {
+  for (int i = 0; i < MAX_PLAINTEXT_LEN; i++)
     dest[i] = src[i];
 }
 
@@ -89,6 +95,9 @@ inline ulong generate_rainbow_chain(
     unsigned int hash_type,
     thread char *charset,
     unsigned int charset_len,
+    unsigned int is_mask,
+    device char *mask_charset_data,
+    device unsigned int *mask_charset_lens,
     unsigned int plaintext_len_min,
     unsigned int plaintext_len_max,
     unsigned int reduction_offset,
@@ -106,7 +115,7 @@ inline ulong generate_rainbow_chain(
 
   ulong index = start;
   for (; pos < chain_len - 1; pos++) {
-    index_to_plaintext(index, charset, charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, plaintext_len);
+    index_to_plaintext(index, charset, charset_len, is_mask, mask_charset_data, mask_charset_lens, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, plaintext_len);
     do_hash(hash_type, plaintext, *plaintext_len, hash, hash_len);
     index = hash_to_index(hash, *hash_len, reduction_offset, plaintext_space_total, pos);
   }

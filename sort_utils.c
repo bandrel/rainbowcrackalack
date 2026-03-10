@@ -8,8 +8,8 @@
 #include "sort_utils.h"
 
 
-int is_sorted_rt(const uint64_t *data, uint64_t num_chains) {
-  uint64_t i;
+int is_sorted_rt(const uint64_t *data, unsigned int num_chains) {
+  unsigned int i;
   for (i = 0; i + 1 < num_chains; i++) {
     if (data[i * 2 + 1] > data[(i + 1) * 2 + 1])
       return 0;
@@ -26,7 +26,7 @@ int compute_sort_jobs_from_params(uint64_t free_ram, uint64_t max_file_size,
     return 1;
 
   {
-    uint64_t slots = free_ram / (max_file_size * 2);
+    uint64_t slots = free_ram / max_file_size;
     uint64_t cap = (uint64_t)cpu_cores * 2 + 2;
     if (slots > cap) slots = cap;
     jobs = (int)(slots * 8 / 10);

@@ -38,6 +38,7 @@
 #include "gpu_backend.h"
 
 #include "charset.h"
+#include "mask_parse.h"
 #include "misc.h"
 #include "shared.h"
 
@@ -234,7 +235,9 @@ unsigned int is_ntlm8(unsigned int hash_type, char *charset, unsigned int plaint
   if ((hash_type == HASH_NTLM) && \
       (strcmp(charset, CHARSET_ASCII_32_95) == 0) && \
       (plaintext_len_min == 8) && \
-      (plaintext_len_max == 8))
+      (plaintext_len_max == 8) && \
+      (reduction_offset == 0) && \
+      (chain_len == 422000))
     return 1;
   else
     return 0;
@@ -252,66 +255,6 @@ unsigned int is_ntlm9(unsigned int hash_type, char *charset, unsigned int plaint
     return 1;
   else
     return 0;
-}
-
-
-/* Returns 1 if the parameters form the standard NetNTLMv1 7-byte set, otherwise 0. */
-unsigned int is_netntlmv1_7(unsigned int hash_type, char *charset_name, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int chain_len) {
-  if ((hash_type == HASH_NETNTLMV1) && \
-      (strcmp(charset_name, "byte") == 0) && \
-      (plaintext_len_min == 7) && \
-      (plaintext_len_max == 7) && \
-      (chain_len == 881689))
-    return 1;
-  else
-    return 0;
-}
-
-
-/* Returns 1 if the parameters form the Markov NTLM 8 set, otherwise 0. */
-unsigned int is_markov_ntlm8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov) {
-  if ((use_markov) && \
-      (hash_type == HASH_NTLM) && \
-      (strcmp(charset, CHARSET_ASCII_32_95) == 0) && \
-      (plaintext_len_min == 8) && \
-      (plaintext_len_max == 8))
-    return 1;
-  else
-    return 0;
-}
-
-
-/* Returns 1 if the parameters form the Markov NTLM 9 set, otherwise 0. */
-unsigned int is_markov_ntlm9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov) {
-  if ((use_markov) && \
-      (hash_type == HASH_NTLM) && \
-      (strcmp(charset, CHARSET_ASCII_32_95) == 0) && \
-      (plaintext_len_min == 9) && \
-      (plaintext_len_max == 9) && \
-      (reduction_offset == 0) && \
-      (chain_len == 803000))
-    return 1;
-  else
-    return 0;
-}
-
-
-/* Returns 1 if the parameters form the standard NTLM 10 set, otherwise 0. */
-unsigned int is_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max) {
-  return (hash_type == HASH_NTLM)
-      && (strcmp(charset, CHARSET_ASCII_32_95) == 0)
-      && (plaintext_len_min == 10)
-      && (plaintext_len_max == 10);
-}
-
-
-/* Returns 1 if the parameters form the Markov NTLM 10 set, otherwise 0. */
-unsigned int is_markov_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, int use_markov) {
-  return (use_markov)
-      && (hash_type == HASH_NTLM)
-      && (strcmp(charset, CHARSET_ASCII_32_95) == 0)
-      && (plaintext_len_min == 10)
-      && (plaintext_len_max == 10);
 }
 
 
@@ -358,22 +301,9 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
   else
     strncpy(rt_filename, rt_filename_orig, sizeof(rt_filename) - 1);
 
-  /* Ensure that the filename ends in .rt, .rtc, or .rti2. */
-  if (!str_ends_with(rt_filename, ".rt") && !str_ends_with(rt_filename, ".rtc") && !str_ends_with(rt_filename, ".rti2"))
+  /* Ensure that the filename ends in .rt or .rtc. */
+  if (!str_ends_with(rt_filename, ".rt") && !str_ends_with(rt_filename, ".rtc"))
     return;
-
-  /* Strip "_distrrtgen" and any bracketed tags from the part field (e.g.
-   * "..._distrrtgen[p][i]_066.rti2" → "..._066.rti2") so the sscanf below
-   * can parse the numeric part number. */
-  {
-    char *dg = strstr(rt_filename, "_distrrtgen");
-    if (dg != NULL) {
-      /* Find the last underscore after distrrtgen to locate the part number. */
-      char *last_us = strrchr(dg + 1, '_');
-      if (last_us != NULL)
-        memmove(dg, last_us, strlen(last_us) + 1);
-    }
-  }
 
   /* Manually pick out the strings from the filename.  sscanf() can't be used because
    * a buffer overflow can occur (note that the MinGW system doesn't support the
@@ -398,19 +328,11 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
       strncpy(rt_params->charset_name, charset_name_ptr, sizeof(rt_params->charset_name) - 1);
       rt_params->charset_name[sizeof(rt_params->charset_name) - 1] = '\0';
 
-      /* Extract Markov keyspace from charset name if present (e.g. "ascii-32-95-mk1000000"). */
-      {
-        char *mk = strstr(rt_params->charset_name, "-mk");
-        if (mk) {
-          rt_params->markov_keyspace = strtoull(mk + 3, NULL, 10);
-          *mk = '\0';
-        } else {
-          rt_params->markov_keyspace = 0;
-        }
-      }
+      /* Decode filename-safe mask encoding ('%' -> '?') for mask charsets. */
+      mask_decode_from_filename(rt_params->charset_name);
 
       /* Now parse the unsigned integers. */
-      if (sscanf(suffix, "%u-%u_%u_%ux%"SCNu64"_%u", &rt_params->plaintext_len_min, &rt_params->plaintext_len_max, &rt_params->table_index, &rt_params->chain_len, &rt_params->num_chains, &rt_params->table_part) == 6) {
+      if (sscanf(suffix, "%u-%u_%u_%ux%u_%u", &rt_params->plaintext_len_min, &rt_params->plaintext_len_max, &rt_params->table_index, &rt_params->chain_len, &rt_params->num_chains, &rt_params->table_part) == 6) {
 
 
 	/* Calculate the reduction offset from the table index. */
@@ -421,7 +343,7 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
 	/* Ensure that the hash type and character set is valid, the plaintext
 	 * length min & max are set properly, and the chain length is set. */
 	if ((rt_params->hash_type != HASH_UNDEFINED) && \
-	    (validate_charset(rt_params->charset_name) != NULL) && \
+	    (validate_charset(rt_params->charset_name) != NULL || is_mask_string(rt_params->charset_name)) && \
 	    (rt_params->plaintext_len_min > 0) && \
 	    (rt_params->plaintext_len_min <= rt_params->plaintext_len_max) && \
 	    (rt_params->plaintext_len_max <= MAX_PLAINTEXT_LEN) && \
@@ -450,20 +372,6 @@ unsigned int parse_uint_arg(const char *s, const char *name) {
     exit(-1);
   }
   return (unsigned int)val;
-}
-
-
-/* Parses a CLI argument as a non-negative uint64_t.
- * Exits with an error message if the value is not a valid integer. */
-uint64_t parse_uint64_arg(const char *s, const char *name) {
-  char *end;
-  errno = 0;
-  unsigned long long val = strtoull(s, &end, 10);
-  if (errno != 0 || end == s || *end != '\0') {
-    fprintf(stderr, "Error: %s must be a valid non-negative integer, got '%s'.\n", name, s);
-    exit(-1);
-  }
-  return (uint64_t)val;
 }
 
 

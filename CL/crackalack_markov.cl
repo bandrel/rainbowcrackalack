@@ -15,13 +15,16 @@ __kernel void crackalack_markov(
     __global unsigned int *g_pos_start,
     __global unsigned long *g_plaintext_space_up_to_index,
     __global unsigned long *g_plaintext_space_total,
+    __global unsigned int *g_is_mask,
+    __global char *g_mask_charset_data,
+    __global unsigned int *g_mask_charset_lens,
     __constant unsigned char *g_sorted_pos0,
-    __global const unsigned char *g_sorted_bigram,
-    __global unsigned int *g_max_positions)
+    __constant unsigned char *g_sorted_bigram)
 {
   /* Markov generation uses fixed-length plaintexts (plaintext_len_min == plaintext_len_max,
-   * enforced by the host). g_plaintext_len_min and g_plaintext_space_up_to_index are
-   * accepted for ABI compatibility with crackalack.cl but are not used here. */
+   * enforced by the host). g_plaintext_len_min, g_plaintext_space_up_to_index, g_is_mask,
+   * g_mask_charset_data, and g_mask_charset_lens are accepted for ABI compatibility with
+   * crackalack.cl but are not used here. */
     unsigned int hash_type = *g_hash_type;
     char charset[MAX_CHARSET_LEN];
     unsigned int plaintext_len_max = *g_plaintext_len_max;
@@ -29,7 +32,6 @@ __kernel void crackalack_markov(
     unsigned int chain_len = *g_chain_len;
     unsigned long index = g_indices[get_global_id(0)];
     unsigned int pos = *g_pos_start;
-    unsigned int max_positions = *g_max_positions;
 
     unsigned int charset_len = *g_charset_len;
     g_memcpy((unsigned char *)charset, (unsigned char __global *)g_charset, charset_len);
@@ -49,7 +51,7 @@ __kernel void crackalack_markov(
      */
     for (; pos < chain_len - 1; pos++) {
         index_to_plaintext_markov(index, charset, charset_len,
-                                  plaintext_len_max, max_positions,
+                                  plaintext_len_max,
                                   g_sorted_pos0, g_sorted_bigram,
                                   plaintext);
         do_hash(hash_type, plaintext, plaintext_len_max, hash, &hash_len);
