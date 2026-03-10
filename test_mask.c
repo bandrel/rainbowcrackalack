@@ -660,6 +660,215 @@ static int group_g(void)
 }
 
 
+/* --- Group H: mask completeness and specifier disjointness --- */
+static int group_h(void)
+{
+    int ok = 1;
+
+    /* MC-01: ?d?d exhaustion - all 100 indices unique, all match [0-9][0-9] */
+    {
+        Mask m;
+        char mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+        unsigned int mask_lens[MAX_PLAINTEXT_LEN];
+        uint64_t pspace[MAX_PLAINTEXT_LEN + 1];
+
+        if (mask_parse("?d?d", &m, NULL, NULL, NULL, NULL) != 0) {
+            fprintf(stderr, "MC-01: mask_parse failed\n"); ok = 0;
+        } else {
+            mask_to_gpu_buffers(&m, mask_data, mask_lens);
+            fill_plaintext_space_table_mask(mask_lens, (unsigned int)m.length, pspace);
+
+            unsigned int seen[100];
+            memset(seen, 0, sizeof(seen));
+            int mc01_ok = 1;
+            for (uint64_t idx = 0; idx < 100; idx++) {
+                char pt[MAX_PLAINTEXT_LEN + 1] = {0};
+                unsigned int ptlen = 0;
+                index_to_plaintext_mask(idx, mask_lens, mask_data, (unsigned int)m.length,
+                                         pspace, pt, &ptlen);
+                if (ptlen != 2) {
+                    fprintf(stderr, "MC-01 failed: idx %llu len=%u\n",
+                            (unsigned long long)idx, ptlen);
+                    mc01_ok = 0; break;
+                }
+                if (pt[0] < '0' || pt[0] > '9' || pt[1] < '0' || pt[1] > '9') {
+                    fprintf(stderr, "MC-01 failed: idx %llu non-digit chars\n",
+                            (unsigned long long)idx);
+                    mc01_ok = 0; break;
+                }
+                int key = (pt[0] - '0') * 10 + (pt[1] - '0');
+                if (seen[key]) {
+                    fprintf(stderr, "MC-01 failed: duplicate at idx %llu\n",
+                            (unsigned long long)idx);
+                    mc01_ok = 0; break;
+                }
+                seen[key] = 1;
+            }
+            if (!mc01_ok) ok = 0;
+        }
+    }
+
+    /* MC-02: ?l?d exhaustion - all 260 indices unique, match [a-z][0-9] */
+    {
+        Mask m;
+        char mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+        unsigned int mask_lens[MAX_PLAINTEXT_LEN];
+        uint64_t pspace[MAX_PLAINTEXT_LEN + 1];
+
+        if (mask_parse("?l?d", &m, NULL, NULL, NULL, NULL) != 0) {
+            fprintf(stderr, "MC-02: mask_parse failed\n"); ok = 0;
+        } else {
+            mask_to_gpu_buffers(&m, mask_data, mask_lens);
+            fill_plaintext_space_table_mask(mask_lens, (unsigned int)m.length, pspace);
+
+            unsigned int seen[260];
+            memset(seen, 0, sizeof(seen));
+            int mc02_ok = 1;
+            for (uint64_t idx = 0; idx < 260; idx++) {
+                char pt[MAX_PLAINTEXT_LEN + 1] = {0};
+                unsigned int ptlen = 0;
+                index_to_plaintext_mask(idx, mask_lens, mask_data, (unsigned int)m.length,
+                                         pspace, pt, &ptlen);
+                if (ptlen != 2) {
+                    fprintf(stderr, "MC-02 failed: idx %llu len=%u\n",
+                            (unsigned long long)idx, ptlen);
+                    mc02_ok = 0; break;
+                }
+                if (pt[0] < 'a' || pt[0] > 'z' || pt[1] < '0' || pt[1] > '9') {
+                    fprintf(stderr, "MC-02 failed: idx %llu chars out of range\n",
+                            (unsigned long long)idx);
+                    mc02_ok = 0; break;
+                }
+                int key = (pt[0] - 'a') * 10 + (pt[1] - '0');
+                if (seen[key]) {
+                    fprintf(stderr, "MC-02 failed: duplicate at idx %llu\n",
+                            (unsigned long long)idx);
+                    mc02_ok = 0; break;
+                }
+                seen[key] = 1;
+            }
+            if (!mc02_ok) ok = 0;
+        }
+    }
+
+    /* MC-03: ?u?d exhaustion - all 260 indices unique, match [A-Z][0-9] */
+    {
+        Mask m;
+        char mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+        unsigned int mask_lens[MAX_PLAINTEXT_LEN];
+        uint64_t pspace[MAX_PLAINTEXT_LEN + 1];
+
+        if (mask_parse("?u?d", &m, NULL, NULL, NULL, NULL) != 0) {
+            fprintf(stderr, "MC-03: mask_parse failed\n"); ok = 0;
+        } else {
+            mask_to_gpu_buffers(&m, mask_data, mask_lens);
+            fill_plaintext_space_table_mask(mask_lens, (unsigned int)m.length, pspace);
+
+            unsigned int seen[260];
+            memset(seen, 0, sizeof(seen));
+            int mc03_ok = 1;
+            for (uint64_t idx = 0; idx < 260; idx++) {
+                char pt[MAX_PLAINTEXT_LEN + 1] = {0};
+                unsigned int ptlen = 0;
+                index_to_plaintext_mask(idx, mask_lens, mask_data, (unsigned int)m.length,
+                                         pspace, pt, &ptlen);
+                if (ptlen != 2) {
+                    fprintf(stderr, "MC-03 failed: idx %llu len=%u\n",
+                            (unsigned long long)idx, ptlen);
+                    mc03_ok = 0; break;
+                }
+                if (pt[0] < 'A' || pt[0] > 'Z' || pt[1] < '0' || pt[1] > '9') {
+                    fprintf(stderr, "MC-03 failed: idx %llu chars out of range\n",
+                            (unsigned long long)idx);
+                    mc03_ok = 0; break;
+                }
+                int key = (pt[0] - 'A') * 10 + (pt[1] - '0');
+                if (seen[key]) {
+                    fprintf(stderr, "MC-03 failed: duplicate at idx %llu\n",
+                            (unsigned long long)idx);
+                    mc03_ok = 0; break;
+                }
+                seen[key] = 1;
+            }
+            if (!mc03_ok) ok = 0;
+        }
+    }
+
+    /* MC-04: First/last boundary for ?l?d?u (6760 items) */
+    {
+        Mask m;
+        char mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+        unsigned int mask_lens[MAX_PLAINTEXT_LEN];
+        uint64_t pspace[MAX_PLAINTEXT_LEN + 1];
+
+        if (mask_parse("?l?d?u", &m, NULL, NULL, NULL, NULL) != 0) {
+            fprintf(stderr, "MC-04: mask_parse failed\n"); ok = 0;
+        } else {
+            mask_to_gpu_buffers(&m, mask_data, mask_lens);
+            fill_plaintext_space_table_mask(mask_lens, (unsigned int)m.length, pspace);
+
+            char pt0[MAX_PLAINTEXT_LEN + 1] = {0};
+            char ptlast[MAX_PLAINTEXT_LEN + 1] = {0};
+            unsigned int ptlen = 0;
+
+            index_to_plaintext_mask(0, mask_lens, mask_data, (unsigned int)m.length,
+                                     pspace, pt0, &ptlen);
+            if (ptlen != 3 || pt0[0] < 'a' || pt0[0] > 'z' ||
+                pt0[1] < '0' || pt0[1] > '9' || pt0[2] < 'A' || pt0[2] > 'Z') {
+                fprintf(stderr, "MC-04 failed: index 0 = \"%.*s\" invalid\n",
+                        (int)ptlen, pt0);
+                ok = 0;
+            }
+            ptlen = 0;
+            index_to_plaintext_mask(6759, mask_lens, mask_data, (unsigned int)m.length,
+                                     pspace, ptlast, &ptlen);
+            if (ptlen != 3 || ptlast[0] < 'a' || ptlast[0] > 'z' ||
+                ptlast[1] < '0' || ptlast[1] > '9' || ptlast[2] < 'A' || ptlast[2] > 'Z') {
+                fprintf(stderr, "MC-04 failed: index 6759 = \"%.*s\" invalid\n",
+                        (int)ptlen, ptlast);
+                ok = 0;
+            }
+        }
+    }
+
+    /* MC-05: Specifier disjointness - ?l, ?u, ?d, ?s produce disjoint char sets */
+    {
+        Mask ml, mu, md, ms;
+        if (mask_parse("?l", &ml, NULL, NULL, NULL, NULL) != 0 ||
+            mask_parse("?u", &mu, NULL, NULL, NULL, NULL) != 0 ||
+            mask_parse("?d", &md, NULL, NULL, NULL, NULL) != 0 ||
+            mask_parse("?s", &ms, NULL, NULL, NULL, NULL) != 0) {
+            fprintf(stderr, "MC-05: mask_parse failed\n"); ok = 0;
+        } else {
+            /* Build sets */
+            unsigned int l_set[256] = {0}, u_set[256] = {0};
+            unsigned int d_set[256] = {0}, s_set[256] = {0};
+            for (int i = 0; i < ml.positions[0].size; i++)
+                l_set[(unsigned char)ml.positions[0].chars[i]] = 1;
+            for (int i = 0; i < mu.positions[0].size; i++)
+                u_set[(unsigned char)mu.positions[0].chars[i]] = 1;
+            for (int i = 0; i < md.positions[0].size; i++)
+                d_set[(unsigned char)md.positions[0].chars[i]] = 1;
+            for (int i = 0; i < ms.positions[0].size; i++)
+                s_set[(unsigned char)ms.positions[0].chars[i]] = 1;
+
+            int mc05_ok = 1;
+            for (int c = 0; c < 256; c++) {
+                int count = l_set[c] + u_set[c] + d_set[c] + s_set[c];
+                if (count > 1) {
+                    fprintf(stderr, "MC-05 failed: char 0x%02x in %d specifiers\n",
+                            (unsigned)c, count);
+                    mc05_ok = 0;
+                }
+            }
+            if (!mc05_ok) ok = 0;
+        }
+    }
+
+    return ok;
+}
+
+
 int test_mask(void)
 {
     int ok = 1;
@@ -671,6 +880,7 @@ int test_mask(void)
     ok &= group_e();
     ok &= group_f();
     ok &= group_g();
+    ok &= group_h();
 
     return ok;
 }
