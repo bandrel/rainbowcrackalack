@@ -174,7 +174,7 @@ echo "Sorting Markov table..."
 rm -f "$BINDIR"/rcracki.precalc.* "$BINDIR"/rainbowcrackalack_*.pot
 
 echo "Looking up hashes against Markov table..."
-markov_output=$("$BINDIR/crackalack_lookup" "$TMPDIR/markov_tables/" "$TMPDIR/hashes.txt" 2>&1) || true
+markov_output=$("$BINDIR/crackalack_lookup" "$TMPDIR/markov_tables/" "$TMPDIR/hashes.txt" --markov "$MARKOV" 2>&1) || true
 
 # --- Parse results ---
 # When num_cracked > 0: "   Of the N hashes loaded, M were cracked, or PP.PP%."
