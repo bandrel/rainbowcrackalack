@@ -76,7 +76,7 @@ echo ""
 
 # Sample passwords: printable ASCII (0x20-0x7e = ascii-32-95)
 echo "Sampling $SAMPLE_SIZE passwords from rockyou.txt..."
-grep -E "^[ -~]{${PT_LEN}}$" "$ROCKYOU" | shuf -n "$SAMPLE_SIZE" > "$TMPDIR/passwords.txt"
+LC_ALL=C grep -E "^[ -~]{${PT_LEN}}$" "$ROCKYOU" | shuf -n "$SAMPLE_SIZE" > "$TMPDIR/passwords.txt"
 actual_count=$(wc -l < "$TMPDIR/passwords.txt" | tr -d ' ')
 echo "  Got $actual_count passwords."
 
