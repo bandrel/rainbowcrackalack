@@ -4,28 +4,45 @@ set -euo pipefail
 # Markov vs standard rainbow table accuracy comparison.
 #
 # Trains against a rockyou.txt sample, generates a standard table and a
-# Markov-ordered table at identical ~50% keyspace coverage, then compares
-# crack rates against a held-out set of real-world 5-char passwords.
+# Markov-ordered table at identical ~100% keyspace coverage, then compares
+# crack rates against a held-out set of real-world passwords.
 #
-# Parameters: ascii-32-95, length 5, chain_len=100000, num_chains=53600
-# (~50% coverage: 1-(1-100000/7737809375)^53600 ~= 0.50)
-#
-# Usage: ./test_markov_accuracy.sh <path/to/rockyou.txt> [path/to/model.markov]
+# Usage: ./test_markov_accuracy.sh <path/to/rockyou.txt> [path/to/model.markov] [plaintext_len]
+# plaintext_len defaults to 5. NUM_CHAINS is auto-scaled to ~100% keyspace coverage.
 
 ROCKYOU="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MARKOV="${2:-$SCRIPT_DIR/rockyou.markov}"
+PT_LEN="${3:-5}"
 BINDIR="$SCRIPT_DIR"
 
-SAMPLE_SIZE=500
+# Convert MARKOV to absolute path (resolve relative paths before we cd into TMPDIR)
+if [[ ! "$MARKOV" = /* ]]; then
+    MARKOV="$(cd "$(dirname "$MARKOV")" && pwd)/$(basename "$MARKOV")"
+fi
+
 CHAIN_LEN=100000
-NUM_CHAINS=53600
-PT_LEN=5
 
 if [ -z "$ROCKYOU" ]; then
-    echo "Usage: $0 <path/to/rockyou.txt> [path/to/model.markov]"
+    echo "Usage: $0 <path/to/rockyou.txt> [path/to/model.markov] [plaintext_len]"
     exit 1
 fi
+
+if ! [[ "$PT_LEN" =~ ^[0-9]+$ ]] || [ "$PT_LEN" -lt 2 ]; then
+    echo "ERROR: plaintext_len must be an integer >= 2 (got: $PT_LEN)"
+    exit 1
+fi
+
+# Compute NUM_CHAINS and SAMPLE_SIZE dynamically for ~100% coverage
+read -r NUM_CHAINS SAMPLE_SIZE < <(awk -v pt_len="$PT_LEN" -v chain_len="$CHAIN_LEN" 'BEGIN {
+    keyspace = 1
+    for (i = 0; i < pt_len; i++) keyspace *= 95
+    n = int(keyspace / chain_len) + 1
+    if (n < 1) n = 1
+    s = (keyspace < 500 ? int(keyspace) : 500)
+    if (s < 1) s = 1
+    print n, s
+}')
 
 if [ ! -r "$ROCKYOU" ]; then
     echo "ERROR: rockyou.txt not readable: $ROCKYOU"
@@ -54,12 +71,12 @@ trap cleanup EXIT
 ln -sfn "$BINDIR/Metal" "$TMPDIR/Metal" 2>/dev/null || true
 ln -sfn "$BINDIR/CL" "$TMPDIR/CL" 2>/dev/null || true
 
-echo "=== Markov Accuracy Test (ascii-32-95, len=$PT_LEN, ~50% coverage, N=$SAMPLE_SIZE passwords) ==="
+echo "=== Markov Accuracy Test (ascii-32-95, len=$PT_LEN, ~100% coverage, N=$SAMPLE_SIZE passwords) ==="
 echo ""
 
-# Sample passwords: 5-char printable ASCII (0x20-0x7e = ascii-32-95)
+# Sample passwords: printable ASCII (0x20-0x7e = ascii-32-95)
 echo "Sampling $SAMPLE_SIZE passwords from rockyou.txt..."
-grep -E '^[ -~]{5}$' "$ROCKYOU" | shuf -n "$SAMPLE_SIZE" > "$TMPDIR/passwords.txt"
+grep -E "^[ -~]{${PT_LEN}}$" "$ROCKYOU" | shuf -n "$SAMPLE_SIZE" > "$TMPDIR/passwords.txt"
 actual_count=$(wc -l < "$TMPDIR/passwords.txt" | tr -d ' ')
 echo "  Got $actual_count passwords."
 
@@ -126,7 +143,7 @@ uv run python3 "$TMPDIR/ntlm_hash.py" < "$TMPDIR/passwords.txt" > "$TMPDIR/hashe
 echo ""
 echo "Generating standard table (chain_len=$CHAIN_LEN, num_chains=$NUM_CHAINS)..."
 mkdir -p "$TMPDIR/standard_tables"
-(cd "$TMPDIR" && "$BINDIR/crackalack_gen" ntlm ascii-32-95 $PT_LEN $PT_LEN 0 $CHAIN_LEN $NUM_CHAINS 0)
+(cd "$TMPDIR" && "$BINDIR/crackalack_gen" ntlm ascii-32-95 "$PT_LEN" "$PT_LEN" 0 "$CHAIN_LEN" "$NUM_CHAINS" 0)
 mv "$TMPDIR"/*.rt "$TMPDIR/standard_tables/"
 
 echo "Sorting standard table..."
@@ -142,7 +159,7 @@ standard_output=$("$BINDIR/crackalack_lookup" "$TMPDIR/standard_tables/" "$TMPDI
 echo ""
 echo "Generating Markov table (chain_len=$CHAIN_LEN, num_chains=$NUM_CHAINS)..."
 mkdir -p "$TMPDIR/markov_tables"
-(cd "$TMPDIR" && "$BINDIR/crackalack_gen" ntlm ascii-32-95 $PT_LEN $PT_LEN 0 $CHAIN_LEN $NUM_CHAINS 0 --markov "$MARKOV")
+(cd "$TMPDIR" && "$BINDIR/crackalack_gen" ntlm ascii-32-95 "$PT_LEN" "$PT_LEN" 0 "$CHAIN_LEN" "$NUM_CHAINS" 0 --markov "$MARKOV")
 mv "$TMPDIR"/*.rt "$TMPDIR/markov_tables/"
 
 echo "Sorting Markov table..."
