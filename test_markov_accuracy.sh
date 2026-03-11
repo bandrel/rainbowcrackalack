@@ -137,7 +137,7 @@ if _got != _expected:
 for line in sys.stdin:
     print(ntlm(line.rstrip('\n')))
 PYEOF
-uv run python3 "$TMPDIR/ntlm_hash.py" < "$TMPDIR/passwords.txt" > "$TMPDIR/hashes.txt"
+python3 "$TMPDIR/ntlm_hash.py" < "$TMPDIR/passwords.txt" > "$TMPDIR/hashes.txt"
 
 # --- Standard table ---
 echo ""
