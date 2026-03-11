@@ -70,6 +70,7 @@ trap cleanup EXIT
 
 ln -sfn "$BINDIR/Metal" "$TMPDIR/Metal" 2>/dev/null || true
 ln -sfn "$BINDIR/CL" "$TMPDIR/CL" 2>/dev/null || true
+ln -sfn "$BINDIR/shared.h" "$TMPDIR/shared.h" 2>/dev/null || true
 
 echo "=== Markov Accuracy Test (ascii-32-95, len=$PT_LEN, ~100% coverage, N=$SAMPLE_SIZE passwords) ==="
 echo ""
