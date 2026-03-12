@@ -32,6 +32,7 @@
 #include <sys/stat.h>
 
 #include "gpu_backend.h"
+#include "parallel_sort.h"
 #include "sort_utils.h"
 #include "terminal_color.h"
 #include "version.h"
@@ -280,8 +281,10 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex) {
   {
     int gpu_ok = gpu_sort(data, num_chains);
     pthread_mutex_unlock(gpu_mutex);
-    if (gpu_ok != 0 || !is_sorted_rt(data, num_chains))
-      qsort(data, num_chains, CHAIN_SIZE, compare_by_end_index);
+    if (gpu_ok != 0 || !is_sorted_rt(data, num_chains)) {
+      if (parallel_sort_rt(data, num_chains, get_cpu_cores()) != 0)
+        qsort(data, num_chains, CHAIN_SIZE, compare_by_end_index);
+    }
   }
 
   f = fopen(filename, "wb");
