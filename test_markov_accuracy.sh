@@ -282,8 +282,9 @@ SANITY_HASH=$($PYTHON_CMD "$TMPDIR/ntlm_hash.py" <<< "$SANITY_PW")
 echo "$SANITY_HASH" > "$TMPDIR/sanity_hash.txt"
 echo "  Testing pipeline with password '$SANITY_PW' (hash=$SANITY_HASH)..."
 
-# Standard sanity: generate a small table covering full keyspace
+# Standard sanity: generate a small table (capped for large keyspaces)
 SANITY_CHAINS=$(( (KEYSPACE / CHAIN_LEN) + 1 ))
+if [ "$SANITY_CHAINS" -gt 10000 ]; then SANITY_CHAINS=10000; fi
 mkdir -p "$TMPDIR/sanity_std"
 "$BINDIR/crackalack_gen" ntlm ascii-32-95 "$PT_LEN" "$PT_LEN" 0 "$CHAIN_LEN" "$SANITY_CHAINS" 0 2>&1 | tail -3 | sed 's/^/  /'
 mv ./*.rt "$TMPDIR/sanity_std/"
@@ -293,7 +294,7 @@ sanity_std_out=$("$BINDIR/crackalack_lookup" "$TMPDIR/sanity_std/" "$TMPDIR/sani
 sanity_std_cracked=$(echo "$sanity_std_out" | parse_cracked)
 echo "  Standard pipeline: cracked=${sanity_std_cracked:-PARSE_ERROR}"
 
-# Markov sanity (full keyspace)
+# Markov sanity (same chain count)
 mkdir -p "$TMPDIR/sanity_mkv"
 "$BINDIR/crackalack_gen" ntlm ascii-32-95 "$PT_LEN" "$PT_LEN" 0 "$CHAIN_LEN" "$SANITY_CHAINS" 0 --markov "$MARKOV" --markov-keyspace "$KEYSPACE" 2>&1 | tail -3 | sed 's/^/  /'
 mv ./*.rt "$TMPDIR/sanity_mkv/"
