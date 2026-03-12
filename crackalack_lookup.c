@@ -153,6 +153,9 @@ typedef struct {
   uint8_t *sorted_pos0;    /* Points into the global markov model; not owned. */
   uint8_t *sorted_bigram;  /* Points into the global markov model; not owned. */
   unsigned int markov_charset_len;
+
+  int precompute_gpu_ready;
+  int false_alarm_gpu_ready;
 } thread_args;
 
 
@@ -1011,10 +1014,13 @@ void *host_thread_false_alarm(void *ptr) {
     kernel_name = "false_alarm_check_markov";
   }
 
-  /* Load the kernel. */
-  gpu->context = CLCREATECONTEXT(context_callback, &(gpu->device));
-  gpu->queue = CLCREATEQUEUE(gpu->context, gpu->device);
-  load_kernel(gpu->context, 1, &(gpu->device), kernel_path, kernel_name, &(gpu->program), &(gpu->kernel), args->hash_type);
+  /* Compile kernel once and reuse across table iterations. */
+  if (!args->false_alarm_gpu_ready) {
+    gpu->context = CLCREATECONTEXT(context_callback, &(gpu->device));
+    gpu->queue = CLCREATEQUEUE(gpu->context, gpu->device);
+    load_kernel(gpu->context, 1, &(gpu->device), kernel_path, kernel_name, &(gpu->program), &(gpu->kernel), args->hash_type);
+    args->false_alarm_gpu_ready = 1;
+  }
 
   /* These variables are set so the CLCREATEARG* macros work correctly. */
   context = gpu->context;
@@ -1033,6 +1039,7 @@ void *host_thread_false_alarm(void *ptr) {
     CLRELEASEPROGRAM(gpu->program);
     CLRELEASEQUEUE(gpu->queue);
     CLRELEASECONTEXT(gpu->context);
+    args->false_alarm_gpu_ready = 0;
     pthread_exit(NULL);
     return NULL;
   }
@@ -1158,13 +1165,25 @@ void *host_thread_false_alarm(void *ptr) {
     CLFREEBUFFER(sorted_bigram_buffer);
   }
 
-  CLRELEASEKERNEL(gpu->kernel);
-  CLRELEASEPROGRAM(gpu->program);
-  CLRELEASEQUEUE(gpu->queue);
-  CLRELEASECONTEXT(gpu->context);
+  /* Context/program/kernel/queue are kept alive for reuse across tables.
+   * They are released by release_false_alarm_gpu(). */
 
   pthread_exit(NULL);
   return NULL;
+}
+
+
+static void release_false_alarm_gpu(unsigned int num_devices, thread_args *args) {
+  unsigned int i;
+  for (i = 0; i < num_devices; i++) {
+    if (args[i].false_alarm_gpu_ready) {
+      CLRELEASEKERNEL(args[i].gpu.kernel);
+      CLRELEASEPROGRAM(args[i].gpu.program);
+      CLRELEASEQUEUE(args[i].gpu.queue);
+      CLRELEASECONTEXT(args[i].gpu.context);
+      args[i].false_alarm_gpu_ready = 0;
+    }
+  }
 }
 
 
@@ -1237,10 +1256,13 @@ void *host_thread_precompute(void *ptr) {
     kernel_name = "precompute_markov";
   }
 
-  /* Load the kernel. */
-  gpu->context = CLCREATECONTEXT(context_callback, &(gpu->device));
-  gpu->queue = CLCREATEQUEUE(gpu->context, gpu->device);
-  load_kernel(gpu->context, 1, &(gpu->device), kernel_path, kernel_name, &(gpu->program), &(gpu->kernel), args->hash_type);
+  /* Compile kernel once and reuse across invocations. */
+  if (!args->precompute_gpu_ready) {
+    gpu->context = CLCREATECONTEXT(context_callback, &(gpu->device));
+    gpu->queue = CLCREATEQUEUE(gpu->context, gpu->device);
+    load_kernel(gpu->context, 1, &(gpu->device), kernel_path, kernel_name, &(gpu->program), &(gpu->kernel), args->hash_type);
+    args->precompute_gpu_ready = 1;
+  }
 
   /* These variables are set so the CLCREATEARG* macros work correctly. */
   context = gpu->context;
@@ -1257,6 +1279,7 @@ void *host_thread_precompute(void *ptr) {
     CLRELEASEPROGRAM(gpu->program);
     CLRELEASEQUEUE(gpu->queue);
     CLRELEASECONTEXT(gpu->context);
+    args->precompute_gpu_ready = 0;
     pthread_exit(NULL);
     return NULL;
   }
@@ -1407,13 +1430,25 @@ void *host_thread_precompute(void *ptr) {
     CLFREEBUFFER(sorted_bigram_buffer);
   }
 
-  CLRELEASEKERNEL(gpu->kernel);
-  CLRELEASEPROGRAM(gpu->program);
-  CLRELEASEQUEUE(gpu->queue);
-  CLRELEASECONTEXT(gpu->context);
+  /* Context/program/kernel/queue are kept alive for reuse across hashes.
+   * They are released by release_precompute_gpu(). */
 
   pthread_exit(NULL);
   return NULL;
+}
+
+
+static void release_precompute_gpu(unsigned int num_devices, thread_args *args) {
+  unsigned int i;
+  for (i = 0; i < num_devices; i++) {
+    if (args[i].precompute_gpu_ready) {
+      CLRELEASEKERNEL(args[i].gpu.kernel);
+      CLRELEASEPROGRAM(args[i].gpu.program);
+      CLRELEASEQUEUE(args[i].gpu.queue);
+      CLRELEASECONTEXT(args[i].gpu.context);
+      args[i].precompute_gpu_ready = 0;
+    }
+  }
 }
 
 
@@ -2780,6 +2815,9 @@ int main(int ac, char **av) {
     seconds_to_human_time(time_precomp_str, sizeof(time_precomp_str), time_precomp);
     printf("\nPre-computation finished in %s.\n\n", time_precomp_str);  fflush(stdout);
 
+    /* Release precompute GPU resources before false alarm phase reuses gpu_dev. */
+    release_precompute_gpu(num_devices, args);
+
     /* Warn if precomputed indices are consuming excessive RAM. */
     check_memory_usage();
 
@@ -2787,6 +2825,9 @@ int main(int ac, char **av) {
     total_tables = config_table_count;
     start_timer(&search_start_time);
     search_tables(total_tables, ppi_head, args);
+
+    /* Release false alarm GPU resources before next config group iteration. */
+    release_false_alarm_gpu(num_devices, args);
 
     pthread_join(preload_thread_id, NULL);
   }
