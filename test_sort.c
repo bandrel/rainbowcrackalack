@@ -1,11 +1,14 @@
 /*
  * Rainbow Crackalack: test_sort.c
- * CPU-only tests for sort_utils.c helper functions.
+ * CPU-only tests for sort_utils.c and parallel_sort.c helper functions.
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
+#include "parallel_sort.h"
 #include "sort_utils.h"
 #include "test_sort.h"
 
@@ -92,15 +95,17 @@ static int group_b(void)
     int ok = 1;
     uint64_t gb = (uint64_t)1024 * 1024 * 1024;
 
-    /* JSP-01: ample RAM and cores; capped by num_files. */
-    if (compute_sort_jobs_from_params(8*gb, gb, 8, 4) != 4)
+    /* JSP-01: ample RAM and cores; capped by num_files.
+     * 8GB / (1GB * 2) = 4 slots, jobs = 4*0.8 = 3, min(3,4) = 3. */
+    if (compute_sort_jobs_from_params(8*gb, gb, 8, 4) != 3)
         { fprintf(stderr, "JSP-01 failed\n"); ok = 0; }
 
-    /* JSP-02: capped by cpu_cores before num_files. */
+    /* JSP-02: capped by cpu_cores before num_files.
+     * 16GB / (1GB * 2) = 8 slots, jobs = 8*0.8 = 6, min(6,4) = 4. */
     if (compute_sort_jobs_from_params(16*gb, gb, 4, 10) != 4)
         { fprintf(stderr, "JSP-02 failed\n"); ok = 0; }
 
-    /* JSP-03: RAM-limited: 2 GB free / 2 GB file = 0.8 jobs -> clamped to 1. */
+    /* JSP-03: RAM-limited: 2 GB free / (2 GB * 2) = 0 slots -> clamped to 1. */
     if (compute_sort_jobs_from_params(2*gb, 2*gb, 16, 10) != 1)
         { fprintf(stderr, "JSP-03 failed\n"); ok = 0; }
 
@@ -120,9 +125,9 @@ static int group_b(void)
     if (compute_sort_jobs_from_params(64*gb, gb, 3, 20) != 3)
         { fprintf(stderr, "JSP-07 failed\n"); ok = 0; }
 
-    /* JSP-08: file exactly fills 80% boundary - 10 GB free, 1 GB file.
-     * (10 * 0.8) / 1 = 8 jobs; capped by 6 cores -> 6. */
-    if (compute_sort_jobs_from_params(10*gb, gb, 6, 20) != 6)
+    /* JSP-08: 10 GB free / (1 GB * 2) = 5 slots, jobs = 5*0.8 = 4,
+     * min(4,6) = 4. */
+    if (compute_sort_jobs_from_params(10*gb, gb, 6, 20) != 4)
         { fprintf(stderr, "JSP-08 failed\n"); ok = 0; }
 
     /* JSP-09: cpu_cores == 0 is clamped to 1. */
@@ -145,12 +150,173 @@ static int group_b(void)
 }
 
 
+/* --- Group C: parallel_sort_rt --- */
+
+static int verify_sorted(const uint64_t *data, unsigned int n) {
+    unsigned int i;
+    for (i = 0; i + 1 < n; i++) {
+        if (data[i * 2 + 1] > data[(i + 1) * 2 + 1])
+            return 0;
+    }
+    return 1;
+}
+
+static int verify_start_indices_preserved(const uint64_t *sorted,
+                                           unsigned int n,
+                                           uint64_t expected_start_sum) {
+    uint64_t sum = 0;
+    unsigned int i;
+    for (i = 0; i < n; i++)
+        sum += sorted[i * 2];
+    return sum == expected_start_sum;
+}
+
+static int group_c(void)
+{
+    int ok = 1;
+
+    /* PSR-01: 0 chains. */
+    {
+        uint64_t dummy[2] = {0, 0};
+        if (parallel_sort_rt(dummy, 0, 4) != 0)
+            { fprintf(stderr, "PSR-01 failed\n"); ok = 0; }
+    }
+
+    /* PSR-02: 1 chain. */
+    {
+        uint64_t data[2] = {42, 99};
+        if (parallel_sort_rt(data, 1, 4) != 0 || data[0] != 42 || data[1] != 99)
+            { fprintf(stderr, "PSR-02 failed\n"); ok = 0; }
+    }
+
+    /* PSR-03: num_threads > num_chains (small data, falls back to qsort). */
+    {
+        uint64_t data[6] = {1, 30, 2, 10, 3, 20};
+        if (parallel_sort_rt(data, 3, 100) != 0 || !verify_sorted(data, 3))
+            { fprintf(stderr, "PSR-03 failed\n"); ok = 0; }
+    }
+
+    /* PSR-04: random data, 2048 chains, 4 threads. */
+    {
+        unsigned int n = 2048;
+        uint64_t *data = malloc(n * 2 * sizeof(uint64_t));
+        uint64_t start_sum = 0;
+        unsigned int i;
+        srand(12345);
+        for (i = 0; i < n; i++) {
+            data[i * 2]     = (uint64_t)rand();
+            data[i * 2 + 1] = (uint64_t)rand() << 16 | (uint64_t)rand();
+            start_sum += data[i * 2];
+        }
+        if (parallel_sort_rt(data, n, 4) != 0 ||
+            !verify_sorted(data, n) ||
+            !verify_start_indices_preserved(data, n, start_sum))
+            { fprintf(stderr, "PSR-04 failed\n"); ok = 0; }
+        free(data);
+    }
+
+    /* PSR-05: already sorted data. */
+    {
+        unsigned int n = 2048;
+        uint64_t *data = malloc(n * 2 * sizeof(uint64_t));
+        unsigned int i;
+        for (i = 0; i < n; i++) {
+            data[i * 2]     = i + 100;
+            data[i * 2 + 1] = i;
+        }
+        if (parallel_sort_rt(data, n, 4) != 0 || !verify_sorted(data, n))
+            { fprintf(stderr, "PSR-05 failed\n"); ok = 0; }
+        free(data);
+    }
+
+    /* PSR-06: reverse sorted data. */
+    {
+        unsigned int n = 2048;
+        uint64_t *data = malloc(n * 2 * sizeof(uint64_t));
+        unsigned int i;
+        for (i = 0; i < n; i++) {
+            data[i * 2]     = i;
+            data[i * 2 + 1] = n - 1 - i;
+        }
+        if (parallel_sort_rt(data, n, 4) != 0 || !verify_sorted(data, n))
+            { fprintf(stderr, "PSR-06 failed\n"); ok = 0; }
+        free(data);
+    }
+
+    /* PSR-07: all duplicate endpoints. */
+    {
+        unsigned int n = 2048;
+        uint64_t *data = malloc(n * 2 * sizeof(uint64_t));
+        unsigned int i;
+        for (i = 0; i < n; i++) {
+            data[i * 2]     = i;
+            data[i * 2 + 1] = 42;
+        }
+        if (parallel_sort_rt(data, n, 4) != 0 || !verify_sorted(data, n))
+            { fprintf(stderr, "PSR-07 failed\n"); ok = 0; }
+        free(data);
+    }
+
+    /* PSR-08: uneven chunks - 2049 chains / 4 threads. */
+    {
+        unsigned int n = 2049;
+        uint64_t *data = malloc(n * 2 * sizeof(uint64_t));
+        unsigned int i;
+        srand(67890);
+        for (i = 0; i < n; i++) {
+            data[i * 2]     = (uint64_t)rand();
+            data[i * 2 + 1] = (uint64_t)rand() << 16 | (uint64_t)rand();
+        }
+        if (parallel_sort_rt(data, n, 4) != 0 || !verify_sorted(data, n))
+            { fprintf(stderr, "PSR-08 failed\n"); ok = 0; }
+        free(data);
+    }
+
+    /* PSR-09: uneven chunks - 1025 chains / 3 threads. */
+    {
+        unsigned int n = 1025;
+        uint64_t *data = malloc(n * 2 * sizeof(uint64_t));
+        unsigned int i;
+        srand(11111);
+        for (i = 0; i < n; i++) {
+            data[i * 2]     = (uint64_t)rand();
+            data[i * 2 + 1] = (uint64_t)rand() << 16 | (uint64_t)rand();
+        }
+        if (parallel_sort_rt(data, n, 3) != 0 || !verify_sorted(data, n))
+            { fprintf(stderr, "PSR-09 failed\n"); ok = 0; }
+        free(data);
+    }
+
+    /* PSR-10: stress test - 100K chains, 8 threads. */
+    {
+        unsigned int n = 100000;
+        uint64_t *data = malloc(n * 2 * sizeof(uint64_t));
+        uint64_t start_sum = 0;
+        unsigned int i;
+        srand(99999);
+        for (i = 0; i < n; i++) {
+            data[i * 2]     = (uint64_t)rand() << 32 | (uint64_t)rand();
+            data[i * 2 + 1] = (uint64_t)rand() << 32 | (uint64_t)rand();
+            start_sum += data[i * 2];
+        }
+        if (parallel_sort_rt(data, n, 8) != 0 ||
+            !verify_sorted(data, n) ||
+            !verify_start_indices_preserved(data, n, start_sum))
+            { fprintf(stderr, "PSR-10 failed\n"); ok = 0; }
+        free(data);
+    }
+
+    return ok;
+}
+
+
 int test_sort(void)
 {
     int ok = 1;
 
     ok &= group_a();
     ok &= group_b();
+    ok &= group_c();
 
     return ok;
 }
