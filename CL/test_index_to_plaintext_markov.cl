@@ -1,3 +1,4 @@
+#include "shared.h"
 #include "rt_markov.cl"
 #include "string.cl"
 
