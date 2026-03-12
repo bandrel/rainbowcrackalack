@@ -168,7 +168,8 @@ run_lookup() {
 
 # --- Setup ---
 
-TMPDIR=$(mktemp -d)
+TMPDIR="./tmp/markov_test_$$"
+mkdir -p "$TMPDIR"
 cleanup() {
     rm -rf "$TMPDIR"
 }
