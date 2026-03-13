@@ -17,10 +17,7 @@ __kernel void false_alarm_check(
     __global unsigned int *g_start_index_positions,
     __global unsigned long *g_hash_base_indices,
     __global unsigned int *g_exec_block_scaler,
-    __global unsigned long *g_plaintext_indices,
-    __global unsigned int *g_is_mask,
-    __global char *g_mask_charset_data,
-    __global unsigned int *g_mask_charset_lens) {
+    __global unsigned long *g_plaintext_indices) {
 
   int index_pos = (*g_num_start_indices - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
   if (index_pos < 0)
@@ -38,7 +35,6 @@ __kernel void false_alarm_check(
   unsigned int plaintext_len_min = *g_plaintext_len_min;
   unsigned int plaintext_len_max = *g_plaintext_len_max;
   unsigned int reduction_offset = *g_reduction_offset;
-  unsigned int is_mask = *g_is_mask;
   unsigned long plaintext_space_total = *g_plaintext_space_total;
   unsigned long plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
 
@@ -50,7 +46,7 @@ __kernel void false_alarm_check(
 
 
   for (unsigned int pos = 0; pos < endpoint + 1; pos++) {
-    index_to_plaintext(index, charset, charset_len, is_mask, g_mask_charset_data, g_mask_charset_lens, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
+    index_to_plaintext(index, charset, charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
     do_hash(hash_type, plaintext, plaintext_len, hash, &hash_len);
 
     //printf("hash_type: %d, plaintext: %x, plaintext_len: %x, hash: %x\n", hash_type, plaintext, plaintext_len, hash);

@@ -40,7 +40,6 @@
 #include "file_lock.h"
 #include "gws.h"
 #include "hash_validate.h"
-#include "mask_parse.h"
 #include "misc.h"
 #include "shared.h"
 #include "terminal_color.h"
@@ -130,12 +129,9 @@ typedef struct {
 
   unsigned int initial_chains_per_execution;
 
-  unsigned int is_mask;
-  char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
-  unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
-
   int     use_markov;
   char    markov_path[1024];
+  uint64_t markov_keyspace;
 
   gpu_dev gpu;
 } thread_args;
@@ -180,10 +176,11 @@ size_t user_provided_gws = 0;
 /* Markov mode state set by --markov flag. */
 static int    use_markov = 0;
 static char   markov_path[1024] = {0};
+static uint64_t markov_keyspace = 0;
 
 
 void print_usage_and_exit(char *prog_name, int exit_code) {
-  fprintf(stderr, "Usage: %s hash_algorithm charset_name plaintext_min_length plaintext_max_length table_index chain_length number_of_chains [part_index | -bench] [-gws GWS]\n\nExample: %s ntlm ascii-32-95 9 9 0 803000 67108864 0\n\n", prog_name, prog_name);
+  fprintf(stderr, "Usage: %s hash_algorithm charset_name plaintext_min_length plaintext_max_length table_index chain_length number_of_chains [part_index | -bench] [-gws GWS] [--markov FILE] [--markov-keyspace N]\n\nExample: %s ntlm ascii-32-95 9 9 0 803000 67108864 0\n\n", prog_name, prog_name);
   exit(exit_code);
 }
 
@@ -267,15 +264,13 @@ void *host_thread(void *ptr) {
   gpu_queue queue = NULL;
   gpu_kernel kernel = NULL;
 
-  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, is_mask_buffer = NULL, mask_data_buffer = NULL, mask_lens_buffer = NULL;
+  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL;
   gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
 
   gpu_uint pos_start = 0;
   markov_model markov = {0};
 
-  if (args->is_mask) {
-    charset_len = 0;
-  } else if ((args->charset != NULL) && (strlen(args->charset) == 0)) {
+  if ((args->charset != NULL) && (strlen(args->charset) == 0)) {
     charset_len = 256;
   } else {
     charset_len = strlen(args->charset);
@@ -308,7 +303,7 @@ void *host_thread(void *ptr) {
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized MD5_9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
-  } else if (!args->is_mask) {
+  } else {
     printf("%sWARNING: non-optimized kernel will be used since non-standard options were given!  Generation will be much slower.  (Hint: use \"crackalack_gen ntlm ascii-32-95 8 8 0 422000 67108864 X\" for optimized NTLM8 generation, or \"crackalack_gen ntlm ascii-32-95 9 9 0 803000 67108864 X\" for optimized NTLM9 generation.)%s\n", YELLOWB, CLR); fflush(stdout);
   }
 
@@ -472,9 +467,6 @@ void *host_thread(void *ptr) {
       CLFREEBUFFER(pos_start_buffer);
       CLFREEBUFFER(pspace_table_buffer);
       CLFREEBUFFER(pspace_total_buffer);
-      CLFREEBUFFER(is_mask_buffer);
-      CLFREEBUFFER(mask_data_buffer);
-      CLFREEBUFFER(mask_lens_buffer);
       if (args->use_markov) {
         CLFREEBUFFER(sorted_pos0_buffer);
         CLFREEBUFFER(sorted_bigram_buffer);
@@ -496,8 +488,8 @@ void *host_thread(void *ptr) {
     if (hash_type_buffer == NULL) {
       uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
       gpu_ulong pspace_total;
-      if (args->is_mask)
-        pspace_total = fill_plaintext_space_table_mask(args->mask_charset_lens, args->plaintext_len_max, pspace_up_to_index);
+      if (args->markov_keyspace > 0)
+        pspace_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, pspace_up_to_index);
       else
         pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
 
@@ -513,12 +505,9 @@ void *host_thread(void *ptr) {
       CLCREATEARG(8, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(9, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
       CLCREATEARG(10, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
-      CLCREATEARG(11, is_mask_buffer, CL_RO, args->is_mask, sizeof(gpu_uint));
-      CLCREATEARG_ARRAY(12, mask_data_buffer, CL_RO, args->mask_charset_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN);
-      CLCREATEARG_ARRAY(13, mask_lens_buffer, CL_RO, args->mask_charset_lens, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
       if (args->use_markov) {
-        CLCREATEARG_ARRAY(14, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
-        CLCREATEARG_ARRAY(15, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.charset_len * markov.charset_len * sizeof(uint8_t));
+        CLCREATEARG_ARRAY(11, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
+        CLCREATEARG_ARRAY(12, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.charset_len * markov.charset_len * sizeof(uint8_t));
       }
     } else {
       CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
@@ -686,14 +675,6 @@ int main(int ac, char **av) {
   uint64_t part_index = 0;
   int i = 0;
   int charset_len = 0;
-  unsigned int is_mask = 0;
-  Mask mask;
-  char mask_charset_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
-  unsigned int mask_charset_lens[MAX_PLAINTEXT_LEN];
-
-  memset(&mask, 0, sizeof(mask));
-  memset(mask_charset_data, 0, sizeof(mask_charset_data));
-  memset(mask_charset_lens, 0, sizeof(mask_charset_lens));
 
 
   ENABLE_CONSOLE_COLOR();
@@ -746,6 +727,21 @@ int main(int ac, char **av) {
       i++;
       strncpy(markov_path, av[i], sizeof(markov_path) - 1);
       use_markov = 1;
+    } else if (strcmp(av[i], "--markov-keyspace") == 0) {
+      if (i + 1 >= ac) {
+        fprintf(stderr, "--markov-keyspace requires a value\n");
+        return -1;
+      }
+      i++;
+      {
+        char *end;
+        errno = 0;
+        markov_keyspace = strtoull(av[i], &end, 10);
+        if (errno != 0 || end == av[i] || *end != '\0' || markov_keyspace == 0) {
+          fprintf(stderr, "Error: --markov-keyspace must be a positive integer, got '%s'.\n", av[i]);
+          return -1;
+        }
+      }
     } else {
       fprintf(stderr, "Unknown option: %s\n", av[i]);
       print_usage_and_exit(av[0], -1);
@@ -757,8 +753,17 @@ int main(int ac, char **av) {
   CHECK_MEMORY_SIZE();
 
 
-  /* Encode '?' as '%' in mask names so filenames are shell-safe. */
-  mask_encode_for_filename(charset_name, charset_name_safe, sizeof(charset_name_safe));
+  /* Copy charset_name to charset_name_safe. */
+  strncpy(charset_name_safe, charset_name, sizeof(charset_name_safe) - 1);
+  charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
+
+  /* When using Markov keyspace, append -mkN to the charset field in the filename. */
+  if (markov_keyspace > 0) {
+    char tmp[sizeof(charset_name_safe)];
+    snprintf(tmp, sizeof(tmp), "%s-mk%"PRIu64, charset_name_safe, markov_keyspace);
+    strncpy(charset_name_safe, tmp, sizeof(charset_name_safe) - 1);
+    charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
+  }
 
   /* Format the filename based on the user options. */
   snprintf(filename, sizeof(filename) - 1, "%s_%s#%u-%u_%u_%ux%u_%"PRIu64".rt", hash_name, charset_name_safe, plaintext_len_min, plaintext_len_max, table_index, chain_len, total_chains_in_table, part_index);
@@ -775,33 +780,18 @@ int main(int ac, char **av) {
   }
 
 
-  if (is_mask_string(charset_name)) {
-    if (mask_parse(charset_name, &mask, NULL, NULL, NULL, NULL) != 0) {
-      fprintf(stderr, "Error: invalid mask \"%s\".\n", charset_name);
-      exit(-1);
-    }
-    if ((unsigned int)mask.length != plaintext_len_min || (unsigned int)mask.length != plaintext_len_max) {
-      fprintf(stderr, "Error: mask length (%d) must equal plaintext_min (%u) and plaintext_max (%u).\n", mask.length, plaintext_len_min, plaintext_len_max);
-      exit(-1);
-    }
-    is_mask = 1;
-    mask_to_gpu_buffers(&mask, mask_charset_data, mask_charset_lens);
-    charset = "";
-    charset_len = 0;
-  } else {
-    charset = validate_charset(charset_name);
-    if (charset == NULL) {
-      char buf[256] = {0};
+  charset = validate_charset(charset_name);
+  if (charset == NULL) {
+    char buf[256] = {0};
 
-      get_valid_charsets(buf, sizeof(buf));
-      fprintf(stderr, "Error: charset \"%s\" not supported.  Valid values are: %s", charset_name, buf);
-      exit(-1);
-    }
-    if (strcmp(charset_name, "byte") == 0) {
-      charset_len = 256;
-    } else {
-      charset_len = strlen(charset);
-    }
+    get_valid_charsets(buf, sizeof(buf));
+    fprintf(stderr, "Error: charset \"%s\" not supported.  Valid values are: %s", charset_name, buf);
+    exit(-1);
+  }
+  if (strcmp(charset_name, "byte") == 0) {
+    charset_len = 256;
+  } else {
+    charset_len = strlen(charset);
   }
 
 
@@ -825,6 +815,11 @@ int main(int ac, char **av) {
 
   if (use_markov && plaintext_len_min != plaintext_len_max) {
     fprintf(stderr, "Error: --markov requires fixed-length plaintext (min_len must equal max_len)\n");
+    return -1;
+  }
+
+  if (markov_keyspace > 0 && !use_markov) {
+    fprintf(stderr, "Error: --markov-keyspace requires --markov to also be specified.\n");
     return -1;
   }
 
@@ -915,8 +910,8 @@ int main(int ac, char **av) {
     } else {
 
       uint64_t plaintext_space_total;
-      if (is_mask)
-        plaintext_space_total = fill_plaintext_space_table_mask(mask_charset_lens, plaintext_len_max, plaintext_space_up_to_index);
+      if (markov_keyspace > 0)
+        plaintext_space_total = fill_plaintext_space_markov_keyspace(markov_keyspace, plaintext_len_max, plaintext_space_up_to_index);
       else
         plaintext_space_total = fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
       
@@ -989,12 +984,8 @@ int main(int ac, char **av) {
     args[i].chain_len = chain_len;
     args[i].filename = filename;
     args[i].initial_chains_per_execution = INITIAL_CHAINS_PER_EXECUTION;
-    args[i].is_mask = is_mask;
-    if (is_mask) {
-      memcpy(args[i].mask_charset_data, mask_charset_data, sizeof(args[i].mask_charset_data));
-      memcpy(args[i].mask_charset_lens, mask_charset_lens, sizeof(args[i].mask_charset_lens));
-    }
     args[i].use_markov = use_markov;
+    args[i].markov_keyspace = markov_keyspace;
     snprintf(args[i].markov_path, sizeof(args[i].markov_path), "%s", markov_path);
     args[i].gpu.device_number = i;
     args[i].gpu.device = devices[i];

@@ -197,52 +197,44 @@ static int group_h(void)
              p.chain_len != 803000)
         { fprintf(stderr, "PRP-02b failed: NTLM9 field mismatch\n"); ok = 0; }
 
-    /* PRP-03: valid mask table - charset_name should contain '?' after decode */
-    strncpy(fn, "ntlm_%l%d%d%d#4-4_0_100000x1000000_0.rt", sizeof(fn));
-    parse_rt_params(&p, fn);
-    if (!p.parsed)
-        { fprintf(stderr, "PRP-03 failed: mask table not parsed\n"); ok = 0; }
-    else if (strchr(p.charset_name, '?') == NULL)
-        { fprintf(stderr, "PRP-03b failed: charset_name '%s' missing '?'\n", p.charset_name); ok = 0; }
-
-    /* PRP-04: absolute path stripped */
+    /* PRP-03: absolute path stripped */
     strncpy(fn, "/path/to/ntlm_ascii-32-95#8-8_0_422000x67108864_0.rt", sizeof(fn));
     parse_rt_params(&p, fn);
     if (!p.parsed)
-        { fprintf(stderr, "PRP-04 failed: absolute path not handled\n"); ok = 0; }
+        { fprintf(stderr, "PRP-03 failed: absolute path not handled\n"); ok = 0; }
 
-    /* PRP-05: wrong extension */
+    /* PRP-04: wrong extension */
     strncpy(fn, "ntlm_ascii-32-95#8-8_0_422000x67108864_0.txt", sizeof(fn));
     parse_rt_params(&p, fn);
     if (p.parsed)
-        { fprintf(stderr, "PRP-05 failed: .txt extension accepted\n"); ok = 0; }
+        { fprintf(stderr, "PRP-04 failed: .txt extension accepted\n"); ok = 0; }
 
-    /* PRP-06: unknown hash type */
+    /* PRP-05: unknown hash type */
     strncpy(fn, "sha1_ascii-32-95#8-8_0_422000x67108864_0.rt", sizeof(fn));
     parse_rt_params(&p, fn);
     if (p.parsed)
-        { fprintf(stderr, "PRP-06 failed: sha1 hash accepted\n"); ok = 0; }
+        { fprintf(stderr, "PRP-05 failed: sha1 hash accepted\n"); ok = 0; }
 
-    /* PRP-07: malformed (missing '#') */
+    /* PRP-06: malformed (missing '#') */
     strncpy(fn, "ntlm-ascii-32-95-8-8_0_422000x67108864_0.rt", sizeof(fn));
     parse_rt_params(&p, fn);
     if (p.parsed)
-        { fprintf(stderr, "PRP-07 failed: malformed filename accepted\n"); ok = 0; }
+        { fprintf(stderr, "PRP-06 failed: malformed filename accepted\n"); ok = 0; }
 
-    /* PRP-08: zero chain_len */
+    /* PRP-07: zero chain_len */
     strncpy(fn, "ntlm_ascii-32-95#8-8_0_0x67108864_0.rt", sizeof(fn));
     parse_rt_params(&p, fn);
     if (p.parsed)
-        { fprintf(stderr, "PRP-08 failed: zero chain_len accepted\n"); ok = 0; }
+        { fprintf(stderr, "PRP-07 failed: zero chain_len accepted\n"); ok = 0; }
 
-    /* PRP-09: plaintext_len_max == MAX_PLAINTEXT_LEN (16) - regression for
+    /* PRP-08: plaintext_len_max == MAX_PLAINTEXT_LEN (16) - regression for
      * bug where '<' was used instead of '<=' in parse_rt_params validation. */
     strncpy(fn, "ntlm_ascii-32-95#16-16_0_100000x67108864_0.rt", sizeof(fn));
     parse_rt_params(&p, fn);
     if (!p.parsed)
-        { fprintf(stderr, "PRP-09 failed: plaintext_len_max==16 rejected\n"); ok = 0; }
+        { fprintf(stderr, "PRP-08 failed: plaintext_len_max==16 rejected\n"); ok = 0; }
     else if (p.plaintext_len_max != 16)
-        { fprintf(stderr, "PRP-09b failed: plaintext_len_max=%u\n", p.plaintext_len_max); ok = 0; }
+        { fprintf(stderr, "PRP-08b failed: plaintext_len_max=%u\n", p.plaintext_len_max); ok = 0; }
 
     return ok;
 }

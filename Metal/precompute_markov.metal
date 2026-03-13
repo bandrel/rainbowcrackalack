@@ -21,11 +21,9 @@ kernel void precompute_markov(
     device ulong *g_output [[buffer(12)]],
     device ulong *g_plaintext_space_up_to_index [[buffer(13)]],
     device ulong *g_plaintext_space_total [[buffer(14)]],
-    device unsigned int *g_is_mask [[buffer(15)]],
-    device char *g_mask_charset_data [[buffer(16)]],
-    device unsigned int *g_mask_charset_lens [[buffer(17)]],
-    constant unsigned char *g_sorted_pos0 [[buffer(18)]],
-    constant unsigned char *g_sorted_bigram [[buffer(19)]],
+    constant unsigned char *g_sorted_pos0 [[buffer(15)]],
+    constant unsigned char *g_sorted_bigram [[buffer(16)]],
+    device unsigned int *g_max_positions [[buffer(17)]],
     uint gid [[thread_position_in_grid]]) {
 
   long target_chain_len = (*g_chain_len - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
@@ -49,6 +47,7 @@ kernel void precompute_markov(
   unsigned int plaintext_len_max = *g_plaintext_len_max;
   unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
   unsigned int chain_len = *g_chain_len;
+  unsigned int max_positions = *g_max_positions;
   copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index);
   ulong plaintext_space_total = *g_plaintext_space_total;
 
@@ -57,7 +56,7 @@ kernel void precompute_markov(
   index = hash_to_index(hash, hash_len, reduction_offset, plaintext_space_total, target_chain_len - 1);
 
   for(unsigned int i = target_chain_len; i < chain_len - 1; i++) {
-    index_to_plaintext_markov(index, charset, charset_len, plaintext_len_max, g_sorted_pos0, g_sorted_bigram, plaintext);
+    index_to_plaintext_markov(index, charset, charset_len, plaintext_len_max, max_positions, g_sorted_pos0, g_sorted_bigram, plaintext);
     plaintext_len = plaintext_len_max;
     do_hash(hash_type, plaintext, plaintext_len, hash, &hash_len);
     index = hash_to_index(hash, hash_len, reduction_offset, plaintext_space_total, i);

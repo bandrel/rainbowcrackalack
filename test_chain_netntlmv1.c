@@ -117,7 +117,6 @@ static int gpu_test_netntlmv1_chain(gpu_device device, gpu_context context,
         TABLE_INDEX_TO_REDUCTION_OFFSET(t->table_index);
     gpu_uint chain_len = t->chain_len;
     gpu_uint pos_start = 0;
-    gpu_uint is_mask = 0;
 
     /* plaintext_space_up_to_index and plaintext_space_total for the GPU. */
     gpu_ulong pspace_up_to[MAX_PLAINTEXT_LEN] = {0};
@@ -140,17 +139,11 @@ static int gpu_test_netntlmv1_chain(gpu_device device, gpu_context context,
     }
     indices[0] = (gpu_ulong)t->start;
 
-    /* Dummy mask buffers (is_mask=0 so they are unused). */
-    char dummy_mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN] = {0};
-    gpu_uint dummy_mask_lens[MAX_PLAINTEXT_LEN] = {0};
-
     gpu_buffer hash_type_buf = NULL, charset_buf = NULL, charset_len_buf = NULL;
     gpu_buffer len_min_buf = NULL, len_max_buf = NULL;
     gpu_buffer reduc_buf = NULL, chain_len_buf = NULL;
     gpu_buffer indices_buf = NULL, pos_start_buf = NULL;
     gpu_buffer pspace_up_to_buf = NULL, pspace_total_buf = NULL;
-    gpu_buffer is_mask_buf = NULL;
-    gpu_buffer mask_data_buf = NULL, mask_lens_buf = NULL;
 
     queue = CLCREATEQUEUE(context, device);
 
@@ -168,11 +161,6 @@ static int gpu_test_netntlmv1_chain(gpu_device device, gpu_context context,
     CLCREATEARG_ARRAY(9, pspace_up_to_buf, CL_RO,
                       pspace_up_to, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
     CLCREATEARG(10, pspace_total_buf, CL_RO, pspace_total, sizeof(pspace_total));
-    CLCREATEARG(11, is_mask_buf, CL_RO, is_mask, sizeof(is_mask));
-    CLCREATEARG_ARRAY(12, mask_data_buf, CL_RO,
-                      dummy_mask_data, sizeof(dummy_mask_data));
-    CLCREATEARG_ARRAY(13, mask_lens_buf, CL_RO,
-                      dummy_mask_lens, sizeof(dummy_mask_lens));
 
     CLRUNKERNEL(queue, kernel, &global_work_size);
     CLFLUSH(queue);
@@ -201,9 +189,6 @@ static int gpu_test_netntlmv1_chain(gpu_device device, gpu_context context,
     CLFREEBUFFER(pos_start_buf);
     CLFREEBUFFER(pspace_up_to_buf);
     CLFREEBUFFER(pspace_total_buf);
-    CLFREEBUFFER(is_mask_buf);
-    CLFREEBUFFER(mask_data_buf);
-    CLFREEBUFFER(mask_lens_buf);
     CLRELEASEQUEUE(queue);
 
     FREE(indices);

@@ -22,11 +22,9 @@ kernel void false_alarm_check_markov(
     device ulong *g_hash_base_indices [[buffer(13)]],
     device unsigned int *g_exec_block_scaler [[buffer(14)]],
     device ulong *g_plaintext_indices [[buffer(15)]],
-    device unsigned int *g_is_mask [[buffer(16)]],
-    device char *g_mask_charset_data [[buffer(17)]],
-    device unsigned int *g_mask_charset_lens [[buffer(18)]],
-    constant unsigned char *g_sorted_pos0 [[buffer(19)]],
-    constant unsigned char *g_sorted_bigram [[buffer(20)]],
+    constant unsigned char *g_sorted_pos0 [[buffer(16)]],
+    constant unsigned char *g_sorted_bigram [[buffer(17)]],
+    device unsigned int *g_max_positions [[buffer(18)]],
     uint gid [[thread_position_in_grid]]) {
 
   int index_pos = (*g_num_start_indices - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
@@ -44,6 +42,7 @@ kernel void false_alarm_check_markov(
   unsigned int hash_type = *g_hash_type;
   unsigned int plaintext_len_max = *g_plaintext_len_max;
   unsigned int reduction_offset = *g_reduction_offset;
+  unsigned int max_positions = *g_max_positions;
   ulong plaintext_space_total = *g_plaintext_space_total;
   ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1];
 
@@ -55,7 +54,7 @@ kernel void false_alarm_check_markov(
 
 
   for (unsigned int pos = 0; pos < endpoint + 1; pos++) {
-    index_to_plaintext_markov(index, charset, charset_len, plaintext_len_max, g_sorted_pos0, g_sorted_bigram, plaintext);
+    index_to_plaintext_markov(index, charset, charset_len, plaintext_len_max, max_positions, g_sorted_pos0, g_sorted_bigram, plaintext);
     plaintext_len = plaintext_len_max;
     do_hash(hash_type, plaintext, plaintext_len, hash, &hash_len);
 

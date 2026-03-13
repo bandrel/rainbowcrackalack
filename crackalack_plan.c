@@ -24,7 +24,7 @@
 
 #include "charset.h"
 #include "markov.h"
-#include "mask_parse.h"
+#include "shared.h"
 
 /* Compute keyspace for a named charset across [min_len, max_len]. */
 static int charset_keyspace(const char *name, unsigned int min_len,
@@ -58,31 +58,6 @@ static int charset_keyspace(const char *name, unsigned int min_len,
         keyspace += power;
     }
     *out_keyspace = keyspace;
-    return 0;
-}
-
-/* Compute keyspace for a mask string across [min_len, max_len].
- * For a fixed-length mask, only min_len == max_len makes sense; if they
- * differ we sum keyspace over each length where the mask length matches. */
-static int mask_keyspace_range(const char *mask_str, unsigned int min_len,
-                               unsigned int max_len, uint64_t *out_keyspace) {
-    Mask m;
-    if (mask_parse(mask_str, &m, NULL, NULL, NULL, NULL) != 0)
-        return -1;
-
-    unsigned int mask_len = (unsigned int)m.length;
-
-    /* Validate that the mask length falls within [min_len, max_len]. */
-    if (mask_len < min_len || mask_len > max_len) {
-        fprintf(stderr,
-                "Warning: mask length %u is outside [%u, %u]; "
-                "treating keyspace as 0.\n",
-                mask_len, min_len, max_len);
-        *out_keyspace = 0;
-        return 0;
-    }
-
-    *out_keyspace = mask_keyspace(&m);
     return 0;
 }
 
@@ -154,17 +129,10 @@ static int cmd_estimate(int argc, char **argv) {
     }
 
     uint64_t keyspace = 0;
-
-    if (is_mask_string(charset_or_mask)) {
-        if (mask_keyspace_range(charset_or_mask, min_len, max_len,
-                                &keyspace) != 0)
-            return 1;
-    } else {
-        uint64_t dummy_clen;
-        if (charset_keyspace(charset_or_mask, min_len, max_len,
-                             &keyspace, &dummy_clen) != 0)
-            return 1;
-    }
+    uint64_t dummy_clen;
+    if (charset_keyspace(charset_or_mask, min_len, max_len,
+                         &keyspace, &dummy_clen) != 0)
+        return 1;
 
     if (keyspace == 0) {
         fprintf(stderr, "Error: computed keyspace is 0.\n");
@@ -228,17 +196,10 @@ static int cmd_recommend(int argc, char **argv) {
     }
 
     uint64_t keyspace = 0;
-
-    if (is_mask_string(charset_or_mask)) {
-        if (mask_keyspace_range(charset_or_mask, min_len, max_len,
-                                &keyspace) != 0)
-            return 1;
-    } else {
-        uint64_t dummy_clen;
-        if (charset_keyspace(charset_or_mask, min_len, max_len,
-                             &keyspace, &dummy_clen) != 0)
-            return 1;
-    }
+    uint64_t dummy_clen;
+    if (charset_keyspace(charset_or_mask, min_len, max_len,
+                         &keyspace, &dummy_clen) != 0)
+        return 1;
 
     if (keyspace == 0) {
         fprintf(stderr, "Error: computed keyspace is 0.\n");
@@ -293,12 +254,32 @@ static int cmd_recommend(int argc, char **argv) {
 
 static int cmd_train(int argc, char **argv) {
     if (argc < 1) {
-        fprintf(stderr, "Usage: crackalack_plan train <wordlist> [charset]\n");
+        fprintf(stderr, "Usage: crackalack_plan train <wordlist> [charset] [--max-positions N]\n");
+        fprintf(stderr, "  Default charset: ascii-32-95\n");
+        fprintf(stderr, "  Default max-positions: %d (position-aware bigram tables)\n",
+                MARKOV_DEFAULT_MAX_POSITIONS);
         return 1;
     }
 
     const char *wordlist_path = argv[0];
-    const char *charset_name = (argc >= 2) ? argv[1] : "ascii-32-95";
+    const char *charset_name = "ascii-32-95";
+    unsigned int max_positions = 0;  /* 0 = use default */
+
+    /* Parse remaining arguments */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--max-positions") == 0 && i + 1 < argc) {
+            max_positions = (unsigned int)atoi(argv[++i]);
+            if (max_positions == 0) {
+                fprintf(stderr, "Error: --max-positions must be >= 1\n");
+                return 1;
+            }
+        } else if (argv[i][0] != '-') {
+            charset_name = argv[i];
+        } else {
+            fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+            return 1;
+        }
+    }
 
     const char *base = strrchr(wordlist_path, '/');
     base = base ? base + 1 : wordlist_path;
@@ -321,7 +302,7 @@ static int cmd_train(int argc, char **argv) {
     unsigned int charset_len = (unsigned int)strlen(charset_string);
 
     markov_model model = {0};
-    if (markov_train(wordlist_path, charset_string, charset_len, &model) != 0) {
+    if (markov_train(wordlist_path, charset_string, charset_len, max_positions, &model) != 0) {
         markov_free(&model);
         return 1;
     }
@@ -331,8 +312,10 @@ static int cmd_train(int argc, char **argv) {
         return 1;
     }
 
+    unsigned int saved_max_positions = model.max_positions;
     markov_free(&model);
-    printf("Trained model written to '%s'\n", output_path);
+    printf("Trained position-aware model (max_positions=%u) written to '%s'\n",
+           saved_max_positions, output_path);
     return 0;
 }
 
@@ -345,7 +328,10 @@ static void print_usage(void) {
             "<chain_len> <num_chains>\n"
             "  recommend <hash> <charset_or_mask> <min_len> <max_len> "
             "<target_pct>\n"
-            "  train <wordlist> [charset]\n");
+            "  train <wordlist> [charset] [--max-positions N]\n"
+            "\n"
+            "The train command creates position-aware Markov models (v3).\n"
+            "Use --max-positions to control the number of position tables.\n");
 }
 
 int main(int argc, char **argv) {

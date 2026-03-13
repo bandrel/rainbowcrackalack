@@ -330,6 +330,11 @@ for coverage in "${COVERAGE_LEVELS[@]}"; do
 
     num_chains=$(( KEYSPACE * coverage / 100 / CHAIN_LEN ))
     if [ "$num_chains" -lt 1 ]; then num_chains=1; fi
+    # Cap at uint32_t max (crackalack_gen uses 32-bit chain counts)
+    if [ "$num_chains" -gt 4294967295 ]; then
+        echo "  WARNING: Capping num_chains from $num_chains to 4294967295 (uint32_t max)"
+        num_chains=4294967295
+    fi
 
     echo "  Requested chains: $num_chains (keyspace=$KEYSPACE, chain_len=$CHAIN_LEN)"
 

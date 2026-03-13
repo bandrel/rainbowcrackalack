@@ -18,6 +18,7 @@ using namespace metal;
  *   6  g_debug
  *   7  g_sorted_pos0      (constant)
  *   8  g_sorted_bigram    (constant)
+ *   9  g_max_positions
  */
 kernel void test_index_to_plaintext_markov(
     device char           *g_charset          [[buffer(0)]],
@@ -29,18 +30,20 @@ kernel void test_index_to_plaintext_markov(
     device unsigned char  *g_debug             [[buffer(6)]],
     constant unsigned char *g_sorted_pos0      [[buffer(7)]],
     constant unsigned char *g_sorted_bigram    [[buffer(8)]],
+    device unsigned int   *g_max_positions     [[buffer(9)]],
     uint gid [[thread_position_in_grid]])
 {
     char         charset[MAX_CHARSET_LEN];
     unsigned int charset_len   = *g_charset_len;
     unsigned int plaintext_len = *g_plaintext_len;
+    unsigned int max_positions = *g_max_positions;
     ulong        index         = *g_index;
     unsigned char plaintext[MAX_PLAINTEXT_LEN];
 
     g_memcpy((thread unsigned char *)charset, (device unsigned char *)g_charset, charset_len);
 
     index_to_plaintext_markov(index, charset, charset_len, plaintext_len,
-                               g_sorted_pos0, g_sorted_bigram, plaintext);
+                               max_positions, g_sorted_pos0, g_sorted_bigram, plaintext);
 
     *g_plaintext_len_out = plaintext_len;
     for (unsigned int i = 0; i < plaintext_len; i++)
