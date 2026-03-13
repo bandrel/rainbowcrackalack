@@ -14,7 +14,8 @@
  *   5  g_plaintext_len_out - output decoded length
  *   6  g_debug            - debug scratch buffer
  *   7  g_sorted_pos0      - charset_len-entry sorted position-0 table
- *   8  g_sorted_bigram    - charset_len^2-entry sorted bigram table
+ *   8  g_sorted_bigram    - max_positions * charset_len^2 sorted bigram table
+ *   9  g_max_positions    - number of position-specific bigram tables
  */
 __kernel void test_index_to_plaintext_markov(
     __global char          *g_charset,
@@ -25,18 +26,20 @@ __kernel void test_index_to_plaintext_markov(
     __global unsigned int  *g_plaintext_len_out,
     __global unsigned char *g_debug,
     __constant unsigned char *g_sorted_pos0,
-    __constant unsigned char *g_sorted_bigram)
+    __constant unsigned char *g_sorted_bigram,
+    __global unsigned int  *g_max_positions)
 {
     char         charset[MAX_CHARSET_LEN];
     unsigned int charset_len   = *g_charset_len;
     unsigned int plaintext_len = *g_plaintext_len;
+    unsigned int max_positions = *g_max_positions;
     unsigned long index        = *g_index;
     unsigned char plaintext[MAX_PLAINTEXT_LEN];
 
     g_memcpy((unsigned char *)charset, (unsigned char __global *)g_charset, charset_len);
 
     index_to_plaintext_markov(index, charset, charset_len, plaintext_len,
-                               g_sorted_pos0, g_sorted_bigram, plaintext);
+                               max_positions, g_sorted_pos0, g_sorted_bigram, plaintext);
 
     *g_plaintext_len_out = plaintext_len;
     for (unsigned int i = 0; i < plaintext_len; i++)
