@@ -265,7 +265,7 @@ void *host_thread(void *ptr) {
   gpu_kernel kernel = NULL;
 
   gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
+  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
 
   gpu_uint pos_start = 0;
   markov_model markov = {0};
@@ -470,6 +470,7 @@ void *host_thread(void *ptr) {
       if (args->use_markov) {
         CLFREEBUFFER(sorted_pos0_buffer);
         CLFREEBUFFER(sorted_bigram_buffer);
+        CLFREEBUFFER(max_positions_buffer);
         markov_free(&markov);
       }
 
@@ -507,7 +508,8 @@ void *host_thread(void *ptr) {
       CLCREATEARG(10, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
       if (args->use_markov) {
         CLCREATEARG_ARRAY(11, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
-        CLCREATEARG_ARRAY(12, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.charset_len * markov.charset_len * sizeof(uint8_t));
+        CLCREATEARG_ARRAY(12, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.max_positions * markov.charset_len * markov.charset_len * sizeof(uint8_t));
+        CLCREATEARG(13, max_positions_buffer, CL_RO, markov.max_positions, sizeof(gpu_uint));
       }
     } else {
       CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
@@ -1050,7 +1052,7 @@ int main(int ac, char **av) {
     /* Verify that the new table is valid. */
     printf("Now verifying rainbow table... ");
     fflush(stdout);
-    if (!verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1)) {
+    if (!verify_rainbowtable_file(filename, use_markov ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1)) {
       char log_filename[256] = {0};
 
       get_rt_log_filename(log_filename, sizeof(log_filename), filename);
