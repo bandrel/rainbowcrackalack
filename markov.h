@@ -24,7 +24,7 @@
 #define MARKOV_VERSION 1
 
 /* Default max positions for position-aware training */
-#define MARKOV_DEFAULT_MAX_POSITIONS 10
+#define MARKOV_DEFAULT_MAX_POSITIONS 16
 
 /* In-memory Markov model after loading/training. */
 typedef struct {
