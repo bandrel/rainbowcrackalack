@@ -32,7 +32,8 @@ static int group_a(void)
 
     markov_model m;
     memset(&m, 0, sizeof(m));
-    m.charset_len  = 3;
+    m.charset_len   = 3;
+    m.max_positions = 1;  /* single bigram table for this test */
     memcpy(m.charset, "abc", 3);
     m.pos0_freq    = pos0_freq;
     m.bigram_freq  = bigram_freq;
@@ -104,6 +105,7 @@ static int group_b(void)
     markov_model m;
     memset(&m, 0, sizeof(m));
     m.charset_len   = 3;
+    m.max_positions = 1;  /* single bigram table for this test */
     memcpy(m.charset, "abc", 3);
     m.pos0_freq     = pos0_freq;
     m.bigram_freq   = bigram_freq;
@@ -179,7 +181,7 @@ static int group_c(void)
 
     markov_model m;
     memset(&m, 0, sizeof(m));
-    if (markov_train(corpus_path, "abc", 3, &m) != 0) {
+    if (markov_train(corpus_path, "abc", 3, 0, &m) != 0) {
         fprintf(stderr, "MT: markov_train failed\n");
         remove(corpus_path);
         /* markov_train zeroes the model on failure, so markov_free is safe but a no-op. */
@@ -292,7 +294,7 @@ static int group_d(void)
     } else {
         fclose(fp);
         memset(&m, 0, sizeof(m));
-        if (markov_train(empty_path, "abc", 3, &m) != -1) {
+        if (markov_train(empty_path, "abc", 3, 0, &m) != -1) {
             fprintf(stderr, "ME-03 failed: expected -1 for empty corpus\n");
             ok = 0;
         }
@@ -315,14 +317,14 @@ static int group_e(void)
 
     /* ME-04: charset_len == 0 returns -1 */
     memset(&m, 0, sizeof(m));
-    if (markov_train("/dev/null", "abc", 0, &m) != -1) {
+    if (markov_train("/dev/null", "abc", 0, 0, &m) != -1) {
         fprintf(stderr, "ME-04 failed: expected -1 for charset_len==0\n");
         ok = 0;
     }
 
     /* ME-05: charset_len > 256 returns -1 */
     memset(&m, 0, sizeof(m));
-    if (markov_train("/dev/null", "abc", 257, &m) != -1) {
+    if (markov_train("/dev/null", "abc", 257, 0, &m) != -1) {
         fprintf(stderr, "ME-05 failed: expected -1 for charset_len==257\n");
         ok = 0;
     }
@@ -341,7 +343,7 @@ static int group_e(void)
             fclose(fp);
 
             memset(&m, 0, sizeof(m));
-            if (markov_train(path, "abc", 3, &m) != -1) {
+            if (markov_train(path, "abc", 3, 0, &m) != -1) {
                 fprintf(stderr, "ME-06 failed: expected -1 for all-OOB corpus\n");
                 ok = 0;
             }
@@ -364,7 +366,7 @@ static int group_e(void)
             fclose(fp);
 
             memset(&m, 0, sizeof(m));
-            if (markov_train(path, "abc", 3, &m) != 0) {
+            if (markov_train(path, "abc", 3, 0, &m) != 0) {
                 fprintf(stderr, "ME-07 failed: markov_train returned error\n");
                 ok = 0;
             } else {
@@ -415,11 +417,12 @@ static int group_f(void)
     markov_model m;
     memset(&m, 0, sizeof(m));
     m.charset_len   = 3;
+    m.max_positions = 1;
     memcpy(m.charset, "abc", 3);
     m.pos0_freq     = pos0_freq;
     m.bigram_freq   = bigram_freq;
     m.sorted_pos0   = malloc(3 * sizeof(uint8_t));
-    m.sorted_bigram = malloc(9 * sizeof(uint8_t));
+    m.sorted_bigram = malloc(m.max_positions * 9 * sizeof(uint8_t));
 
     if (!m.sorted_pos0 || !m.sorted_bigram) {
         fprintf(stderr, "group_f: out of memory\n");
@@ -525,7 +528,7 @@ static int group_g(void)
 
         markov_model m;
         memset(&m, 0, sizeof(m));
-        if (markov_train(corpus_path, "abc", 3, &m) != 0) {
+        if (markov_train(corpus_path, "abc", 3, 0, &m) != 0) {
             fprintf(stderr, "MQ-01: markov_train failed\n");
             ok = 0; remove(corpus_path); goto mq01_done;
         }
@@ -560,7 +563,7 @@ mq01_done:;
 
         markov_model m;
         memset(&m, 0, sizeof(m));
-        if (markov_train(corpus_path, "ab", 2, &m) != 0) {
+        if (markov_train(corpus_path, "ab", 2, 0, &m) != 0) {
             fprintf(stderr, "MQ-02: markov_train failed\n");
             ok = 0; remove(corpus_path); goto mq02_done;
         }
@@ -615,7 +618,7 @@ mq02_done:;
 
         markov_model m;
         memset(&m, 0, sizeof(m));
-        if (markov_train(corpus_path, "abc", 3, &m) != 0) {
+        if (markov_train(corpus_path, "abc", 3, 0, &m) != 0) {
             fprintf(stderr, "MQ-03: markov_train failed\n");
             ok = 0; remove(corpus_path); goto mq03_done;
         }
@@ -671,7 +674,7 @@ mq03_done:;
 
         markov_model m;
         memset(&m, 0, sizeof(m));
-        if (markov_train(corpus_path, "abc", 3, &m) != 0) {
+        if (markov_train(corpus_path, "abc", 3, 0, &m) != 0) {
             fprintf(stderr, "MQ-04: markov_train failed\n");
             ok = 0; remove(corpus_path); goto mq04_done;
         }

@@ -62,6 +62,7 @@ struct _rt_parameters {
   unsigned int num_chains;
   unsigned int table_part;
 
+  uint64_t markov_keyspace; /* 0 = not Markov; >0 = truncated keyspace */
   unsigned int parsed; /* Set to 1 if parameters successfully parsed, otherwise 0. */
 };
 typedef struct _rt_parameters rt_parameters;
