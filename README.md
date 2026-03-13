@@ -63,29 +63,6 @@ The `--markov` flag works with MD5 the same way it does with NTLM:
 
     # ./crackalack_gen md5 ascii-32-95 8 8 0 422000 67108864 0 --markov md5_rockyou.markov
 
-#### Generating tables with mask charsets
-
-In addition to named charsets (e.g. `ascii-32-95`), `crackalack_gen` accepts hashcat-style mask strings that define a per-position character set:
-
-| Specifier | Characters |
-|-----------|------------|
-| `?l` | a-z (26) |
-| `?u` | A-Z (26) |
-| `?d` | 0-9 (10) |
-| `?s` | printable non-alphanumeric ASCII: ` !"#$%&'()*+,-./:;<=>?@[\]^_{|}~` (33) |
-| `?a` | `?l + ?u + ?d + ?s` (95) |
-| `?b` | all 256 byte values |
-
-Literal characters are also supported (e.g. `P?d?d?d` covers P000-P999).
-
-Example - generate a table covering all 4-character passwords matching `[A-Z][a-z][0-9][symbol]`:
-
-    # ./crackalack_gen ntlm '?u?l?d?s' 4 4 0 10000 223080 0
-
-**Note:** mask characters (`?`) are stored as `%` in the output filename to keep filenames shell-safe (e.g. `?u?l?d?s` → `ntlm_%u%l%d%s#4-4_...`).
-
-**Note:** `crackalack_verify -q` (quick mode) skips CPU chain verification for mask tables.
-
 #### Sorting tables before lookup
 
 Tables must be sorted by end index before they can be used with `crackalack_lookup`. Pass one or more `.rt` files:
@@ -112,13 +89,28 @@ Given full generation parameters, `crackalack_plan estimate` prints file size an
 
 #### Recommending chain parameters for a target coverage
 
-    # ./crackalack_plan recommend ntlm '?l?d?d?d' 4 4 50%
+    # ./crackalack_plan recommend ntlm ascii-32-95 8 8 50%
 
 #### Training a Markov model from a wordlist
 
     # ./crackalack_plan train rockyou.txt
 
-Recommended minimum wordlist size: **1M passwords**. The bigram model has 95x95 = 9,025 transition parameters; ~1M real training words provide reliable estimates for all common bigrams.
+By default, this creates a **position-aware model** with 10 position tables, where different character positions have their own bigram transition probabilities. This captures real password patterns - e.g., capital letters at the start, numbers at the end.
+
+**Position-aware models**
+
+To control the number of position tables, use the `--max-positions` flag:
+
+    # ./crackalack_plan train rockyou.txt ascii-32-95 --max-positions 5
+
+Arguments:
+- `<wordlist>` - The password file to train on (one password per line)
+- `[charset]` - Character set name (default: `ascii-32-95`)
+- `[--max-positions N]` - Number of position-specific bigram tables (default: 10)
+
+Positions 0 through N-1 get unique bigram tables. Positions >= N reuse the last table. This allows the model to be space-efficient for very long passwords while still capturing early-position patterns.
+
+Recommended minimum wordlist size: **1M passwords**. For position-aware models with 10 positions, each position has 95x95 = 9,025 transition parameters; ~1M real training words provide reliable estimates for all common bigrams at each position.
 
 | Wordlist size | Model quality |
 |---------------|---------------|
@@ -207,9 +199,9 @@ Then starting the build with:
 ### v1.4
  - Added macOS Apple Silicon support via Metal GPU backend.
  - Added `crackalack_sort` tool for sorting tables by end index before lookup, with parallel multi-file sorting and automatic worker-count tuning.
- - Added mask charset support (`?l`, `?u`, `?d`, `?s`, `?a`, `?b`, custom positions) compatible with hashcat mask syntax.
  - Added `crackalack_plan` tool with `estimate`, `recommend`, and `train` subcommands.
  - Added Markov model support: `--markov <file>` flag on both `crackalack_gen` and `crackalack_lookup` for probability-biased table generation and lookup.
+ - Added position-aware Markov models: position-specific bigram tables capture real password patterns (e.g., capitals at start, numbers at end). Train with `--max-positions N` to control position table count (default: 10).
 
 ### v1.3 (February 26, 2021)
  - Improved speed of NTLM9 precomputation by 9.5x and false alarm checks by 4.5x!

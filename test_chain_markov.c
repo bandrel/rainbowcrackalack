@@ -93,11 +93,9 @@ static uint64_t cpu_markov_chain(uint64_t start, unsigned int chain_len,
  *   8  pos_start
  *   9  plaintext_space_up_to_index (unused in markov)
  *  10  plaintext_space_total
- *  11  is_mask (unused in markov)
- *  12  mask_charset_data (unused in markov)
- *  13  mask_charset_lens (unused in markov)
- *  14  sorted_pos0 (constant)
- *  15  sorted_bigram (constant)
+ *  11  sorted_pos0 (constant)
+ *  12  sorted_bigram (constant)
+ *  13  max_positions
  */
 static int gpu_test_markov_chain(gpu_device device, gpu_context context,
                                   gpu_kernel kernel,
@@ -116,7 +114,6 @@ static int gpu_test_markov_chain(gpu_device device, gpu_context context,
     gpu_uint reduction_offset  = TABLE_INDEX_TO_REDUCTION_OFFSET(t->table_index);
     gpu_uint chain_len_val     = (gpu_uint)t->chain_len;
     gpu_uint pos_start         = 0;
-    gpu_uint is_mask           = 0;
 
     /* pspace_total = charset_len ^ plaintext_len */
     gpu_ulong pspace_total = 1;
@@ -130,18 +127,15 @@ static int gpu_test_markov_chain(gpu_device device, gpu_context context,
     if (!indices) { fprintf(stderr, "gpu_test_markov_chain: OOM\n"); exit(-1); }
     indices[0] = (gpu_ulong)t->start;
 
-    char dummy_mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
-    gpu_uint dummy_mask_lens[MAX_PLAINTEXT_LEN];
-    memset(dummy_mask_data, 0, sizeof(dummy_mask_data));
-    memset(dummy_mask_lens, 0, sizeof(dummy_mask_lens));
+    gpu_uint max_positions_val = (gpu_uint)model->max_positions;
 
     gpu_buffer hash_type_buf = NULL, charset_buf = NULL, charset_len_buf = NULL;
     gpu_buffer plen_min_buf = NULL, plen_max_buf = NULL;
     gpu_buffer reduc_buf = NULL, chain_len_buf = NULL;
     gpu_buffer indices_buf = NULL, pos_start_buf = NULL;
     gpu_buffer pspace_up_to_buf = NULL, pspace_total_buf = NULL;
-    gpu_buffer is_mask_buf = NULL, mask_data_buf = NULL, mask_lens_buf = NULL;
     gpu_buffer sorted_pos0_buf = NULL, sorted_bigram_buf = NULL;
+    gpu_buffer max_positions_buf = NULL;
 
     queue = CLCREATEQUEUE(context, device);
 
@@ -157,14 +151,11 @@ static int gpu_test_markov_chain(gpu_device device, gpu_context context,
     CLCREATEARG_ARRAY(9, pspace_up_to_buf, CL_RO, pspace_up_to,
                       MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
     CLCREATEARG(10, pspace_total_buf,   CL_RO, pspace_total,    sizeof(pspace_total));
-    CLCREATEARG(11, is_mask_buf,        CL_RO, is_mask,         sizeof(is_mask));
-    CLCREATEARG_ARRAY(12, mask_data_buf, CL_RO, dummy_mask_data, sizeof(dummy_mask_data));
-    CLCREATEARG_ARRAY(13, mask_lens_buf, CL_RO, dummy_mask_lens,
-                      MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
-    CLCREATEARG_ARRAY(14, sorted_pos0_buf, CL_RO, model->sorted_pos0,
+    CLCREATEARG_ARRAY(11, sorted_pos0_buf, CL_RO, model->sorted_pos0,
                       MC_CHARSET_LEN * sizeof(uint8_t));
-    CLCREATEARG_ARRAY(15, sorted_bigram_buf, CL_RO, model->sorted_bigram,
-                      MC_CHARSET_LEN * MC_CHARSET_LEN * sizeof(uint8_t));
+    CLCREATEARG_ARRAY(12, sorted_bigram_buf, CL_RO, model->sorted_bigram,
+                      model->max_positions * MC_CHARSET_LEN * MC_CHARSET_LEN * sizeof(uint8_t));
+    CLCREATEARG(13, max_positions_buf, CL_RO, max_positions_val, sizeof(max_positions_val));
 
     CLRUNKERNEL(queue, kernel, &global_work_size);
     CLFLUSH(queue);
@@ -193,11 +184,9 @@ static int gpu_test_markov_chain(gpu_device device, gpu_context context,
     CLFREEBUFFER(pos_start_buf);
     CLFREEBUFFER(pspace_up_to_buf);
     CLFREEBUFFER(pspace_total_buf);
-    CLFREEBUFFER(is_mask_buf);
-    CLFREEBUFFER(mask_data_buf);
-    CLFREEBUFFER(mask_lens_buf);
     CLFREEBUFFER(sorted_pos0_buf);
     CLFREEBUFFER(sorted_bigram_buf);
+    CLFREEBUFFER(max_positions_buf);
     CLRELEASEQUEUE(queue);
 
     FREE(indices);
@@ -212,7 +201,7 @@ int test_chain_markov(gpu_device device, gpu_context context, gpu_kernel kernel)
     unsigned int num_tests = (unsigned int)(sizeof(markov_chain_tests) /
                                             sizeof(markov_chain_tests[0]));
 
-    /* Build synthetic model */
+    /* Build synthetic model with max_positions=1 (single bigram table) */
     uint64_t pos0_freq[3]   = {10, 30, 20};
     uint64_t bigram_freq[9] = {5, 15, 10,
                                 1,  1, 50,
@@ -221,11 +210,12 @@ int test_chain_markov(gpu_device device, gpu_context context, gpu_kernel kernel)
     markov_model m;
     memset(&m, 0, sizeof(m));
     m.charset_len   = MC_CHARSET_LEN;
+    m.max_positions = 1;
     memcpy(m.charset, MC_CHARSET, MC_CHARSET_LEN);
     m.pos0_freq     = pos0_freq;
     m.bigram_freq   = bigram_freq;
     m.sorted_pos0   = malloc(MC_CHARSET_LEN * sizeof(uint8_t));
-    m.sorted_bigram = malloc(MC_CHARSET_LEN * MC_CHARSET_LEN * sizeof(uint8_t));
+    m.sorted_bigram = malloc(m.max_positions * MC_CHARSET_LEN * MC_CHARSET_LEN * sizeof(uint8_t));
 
     if (!m.sorted_pos0 || !m.sorted_bigram) {
         fprintf(stderr, "test_chain_markov: OOM\n");

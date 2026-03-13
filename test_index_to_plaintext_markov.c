@@ -91,6 +91,7 @@ static int gpu_test_i2p_markov(gpu_device device, gpu_context context,
                                 gpu_kernel kernel,
                                 const uint8_t *sorted_pos0,
                                 const uint8_t *sorted_bigram,
+                                unsigned int max_positions,
                                 uint64_t index,
                                 unsigned int plaintext_len,
                                 const char *expected)
@@ -103,6 +104,7 @@ static int gpu_test_i2p_markov(gpu_device device, gpu_context context,
     gpu_buffer plaintext_buf = NULL, plen_out_buf   = NULL;
     gpu_buffer debug_buf    = NULL;
     gpu_buffer sorted_pos0_buf = NULL, sorted_bigram_buf = NULL;
+    gpu_buffer max_positions_buf = NULL;
 
     unsigned char *plaintext = NULL;
     unsigned char *debug_ptr = NULL;
@@ -111,6 +113,7 @@ static int gpu_test_i2p_markov(gpu_device device, gpu_context context,
     gpu_uint plen_val        = (gpu_uint)plaintext_len;
     gpu_ulong index_val      = (gpu_ulong)index;
     gpu_uint plen_out        = 0;
+    gpu_uint max_positions_val = (gpu_uint)max_positions;
 
     queue = CLCREATEQUEUE(context, device);
 
@@ -126,7 +129,8 @@ static int gpu_test_i2p_markov(gpu_device device, gpu_context context,
     CLCREATEARG_DEBUG(6, debug_buf, debug_ptr);
     CLCREATEARG_ARRAY(7, sorted_pos0_buf, CL_RO, sorted_pos0, CHARSET_LEN * sizeof(uint8_t));
     CLCREATEARG_ARRAY(8, sorted_bigram_buf, CL_RO, sorted_bigram,
-                      CHARSET_LEN * CHARSET_LEN * sizeof(uint8_t));
+                      max_positions * CHARSET_LEN * CHARSET_LEN * sizeof(uint8_t));
+    CLCREATEARG(9, max_positions_buf,     CL_RO, max_positions_val, sizeof(gpu_uint));
 
     CLRUNKERNEL(queue, kernel, &global_work_size);
     CLFLUSH(queue);
@@ -154,6 +158,7 @@ static int gpu_test_i2p_markov(gpu_device device, gpu_context context,
     CLFREEBUFFER(debug_buf);
     CLFREEBUFFER(sorted_pos0_buf);
     CLFREEBUFFER(sorted_bigram_buf);
+    CLFREEBUFFER(max_positions_buf);
     CLRELEASEQUEUE(queue);
 
     FREE(plaintext);
@@ -170,7 +175,7 @@ int test_index_to_plaintext_markov(gpu_device device, gpu_context context,
     unsigned int num_tests = (unsigned int)(sizeof(markov_i2p_tests) /
                                             sizeof(markov_i2p_tests[0]));
 
-    /* Build synthetic model */
+    /* Build synthetic model with max_positions=1 (single bigram table) */
     uint64_t pos0_freq[3]   = {10, 30, 20};
     uint64_t bigram_freq[9] = {5, 15, 10,
                                 1,  1, 50,
@@ -179,11 +184,12 @@ int test_index_to_plaintext_markov(gpu_device device, gpu_context context,
     markov_model m;
     memset(&m, 0, sizeof(m));
     m.charset_len   = CHARSET_LEN;
+    m.max_positions = 1;
     memcpy(m.charset, TEST_CHARSET, CHARSET_LEN);
     m.pos0_freq     = pos0_freq;
     m.bigram_freq   = bigram_freq;
     m.sorted_pos0   = malloc(CHARSET_LEN * sizeof(uint8_t));
-    m.sorted_bigram = malloc(CHARSET_LEN * CHARSET_LEN * sizeof(uint8_t));
+    m.sorted_bigram = malloc(m.max_positions * CHARSET_LEN * CHARSET_LEN * sizeof(uint8_t));
 
     if (!m.sorted_pos0 || !m.sorted_bigram) {
         fprintf(stderr, "test_index_to_plaintext_markov: OOM\n");
@@ -199,6 +205,7 @@ int test_index_to_plaintext_markov(gpu_device device, gpu_context context,
         tests_passed &= cpu_test_i2p_markov(&m, t->index, t->plaintext_len, t->expected);
         tests_passed &= gpu_test_i2p_markov(device, context, kernel,
                                              m.sorted_pos0, m.sorted_bigram,
+                                             m.max_positions,
                                              t->index, t->plaintext_len,
                                              t->expected);
     }
