@@ -13,10 +13,7 @@ __kernel void crackalack(
     __global unsigned long *g_indices,
     __global unsigned int *g_pos_start,
     __global unsigned long *g_plaintext_space_up_to_index,
-    __global unsigned long *g_plaintext_space_total,
-    __global unsigned int *g_is_mask,
-    __global char *g_mask_charset_data,
-    __global unsigned int *g_mask_charset_lens) {
+    __global unsigned long *g_plaintext_space_total) {
 
   unsigned int hash_type = *g_hash_type;
   char charset[MAX_CHARSET_LEN];
@@ -26,7 +23,6 @@ __kernel void crackalack(
   unsigned int chain_len = *g_chain_len;
   unsigned long start_index = g_indices[get_global_id(0)];
   unsigned int pos = *g_pos_start;
-  unsigned int is_mask = *g_is_mask;
 
   unsigned int charset_len = *g_charset_len;
   g_memcpy((unsigned char *)charset, (unsigned char __global *)g_charset, charset_len);
@@ -45,9 +41,6 @@ __kernel void crackalack(
         hash_type,
         charset,
         charset_len,
-        is_mask,
-        g_mask_charset_data,
-        g_mask_charset_lens,
         plaintext_len_min,
         plaintext_len_max,
         reduction_offset,

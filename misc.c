@@ -38,7 +38,6 @@
 #include "gpu_backend.h"
 
 #include "charset.h"
-#include "mask_parse.h"
 #include "misc.h"
 #include "shared.h"
 
@@ -328,8 +327,16 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
       strncpy(rt_params->charset_name, charset_name_ptr, sizeof(rt_params->charset_name) - 1);
       rt_params->charset_name[sizeof(rt_params->charset_name) - 1] = '\0';
 
-      /* Decode filename-safe mask encoding ('%' -> '?') for mask charsets. */
-      mask_decode_from_filename(rt_params->charset_name);
+      /* Extract Markov keyspace from charset name if present (e.g. "ascii-32-95-mk1000000"). */
+      {
+        char *mk = strstr(rt_params->charset_name, "-mk");
+        if (mk) {
+          rt_params->markov_keyspace = strtoull(mk + 3, NULL, 10);
+          *mk = '\0';
+        } else {
+          rt_params->markov_keyspace = 0;
+        }
+      }
 
       /* Now parse the unsigned integers. */
       if (sscanf(suffix, "%u-%u_%u_%ux%u_%u", &rt_params->plaintext_len_min, &rt_params->plaintext_len_max, &rt_params->table_index, &rt_params->chain_len, &rt_params->num_chains, &rt_params->table_part) == 6) {
@@ -343,7 +350,7 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
 	/* Ensure that the hash type and character set is valid, the plaintext
 	 * length min & max are set properly, and the chain length is set. */
 	if ((rt_params->hash_type != HASH_UNDEFINED) && \
-	    (validate_charset(rt_params->charset_name) != NULL || is_mask_string(rt_params->charset_name)) && \
+	    (validate_charset(rt_params->charset_name) != NULL) && \
 	    (rt_params->plaintext_len_min > 0) && \
 	    (rt_params->plaintext_len_min <= rt_params->plaintext_len_max) && \
 	    (rt_params->plaintext_len_max <= MAX_PLAINTEXT_LEN) && \

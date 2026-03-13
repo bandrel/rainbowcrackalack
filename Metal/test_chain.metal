@@ -37,9 +37,6 @@ kernel void test_chain(
     HASH_TYPE,
     charset,
     charset_len,
-    0,              /* is_mask: non-mask test */
-    g_charset,      /* mask_charset_data: unused when is_mask=0 */
-    g_plaintext_len_min, /* mask_charset_lens: unused when is_mask=0 */
     plaintext_len_min,
     plaintext_len_max,
     reduction_offset,

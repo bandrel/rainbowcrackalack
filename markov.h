@@ -21,24 +21,30 @@
 #include <stdint.h>
 
 #define MARKOV_MAGIC "RCLM"
-#define MARKOV_VERSION 2
+#define MARKOV_VERSION 1
+
+/* Default max positions for position-aware training */
+#define MARKOV_DEFAULT_MAX_POSITIONS 10
 
 /* In-memory Markov model after loading/training. */
 typedef struct {
   unsigned int  charset_len;
+  unsigned int  max_positions;      /* number of position-specific bigram tables */
   char          charset[256];       /* the charset characters in order */
   uint64_t     *pos0_freq;          /* [charset_len] - position-0 counts */
-  uint64_t     *bigram_freq;        /* [charset_len * charset_len] - bigram counts */
+  uint64_t     *bigram_freq;        /* [max_positions * charset_len * charset_len] - per-position bigram counts */
   /* Sorted lookup tables for GPU (built after load/train) */
   uint8_t      *sorted_pos0;        /* [charset_len] - char indices sorted by freq desc (max charset_len 255) */
-  uint8_t      *sorted_bigram;      /* [charset_len * charset_len] - per-prev sorted indices (max charset_len 255) */
+  uint8_t      *sorted_bigram;      /* [max_positions * charset_len * charset_len] - per-position sorted indices */
 } markov_model;
 
 /* Train a model from a wordlist file.
  * charset must be exactly the characters allowed (e.g. ascii-32-95 string).
+ * max_positions: number of position-specific bigram tables (0 = use default).
  * Returns 0 on success, -1 on error (with message to stderr). */
 int markov_train(const char *wordlist_path, const char *charset,
-                 unsigned int charset_len, markov_model *model);
+                 unsigned int charset_len, unsigned int max_positions,
+                 markov_model *model);
 
 /* Write model to .markov file. Returns 0 on success, -1 on error. */
 int markov_save(const char *path, const markov_model *model);
