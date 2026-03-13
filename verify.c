@@ -70,6 +70,27 @@ int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigne
       }
       expected_start++;
     }
+  } else if (table_type == VERIFY_TABLE_TYPE_MARKOV) {
+    /* Markov tables have probability-ranked start indices (not sequential).
+     * Only check for non-zero end indices and within-bounds indices. */
+    for (i = 0; i < num_chains; i++) {
+      start = rainbowtable[i * 2];
+      end = rainbowtable[(i * 2) + 1];
+
+      if (end == 0) {
+	fprintf(stderr, "Chain #%u has an end value of zero!\n", i);
+	*error_chain_num = i;
+	return 0;
+      }
+
+      /* For Markov tables, end index must be within the full keyspace (plaintext_space_total).
+       * Start index can be within the markov_keyspace which may be smaller. */
+      if ((plaintext_space_total > 0) && (end >= plaintext_space_total)) {
+	fprintf(stderr, "End index is greater or equal to the plaintext space total!\n\n\tEnd index:   %"PRIu64"\nPlaintext space total: %"PRIu64"\n\n", end, plaintext_space_total);
+	*error_chain_num = i;
+	return 0;
+      }
+    }
   } else if (table_type == VERIFY_TABLE_TYPE_LOOKUP) {
     uint64_t last_end = 0;
 

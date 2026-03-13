@@ -148,6 +148,7 @@ typedef struct {
   uint8_t *sorted_pos0;    /* Points into the global markov model; not owned. */
   uint8_t *sorted_bigram;  /* Points into the global markov model; not owned. */
   unsigned int markov_charset_len;
+  unsigned int markov_max_positions;
 
   int precompute_gpu_ready;
   int false_alarm_gpu_ready;
@@ -912,7 +913,7 @@ void *host_thread_false_alarm(void *ptr) {
   char *kernel_path = FALSE_ALARM_KERNEL_PATH, *kernel_name = "false_alarm_check";
 
   gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
+  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
   /*gpu_buffer debug_ulong_buffer = NULL;*/
 
   gpu_ulong *start_indices = NULL, *hash_base_indices = NULL, *plaintext_indices = NULL, *output_block = NULL;
@@ -1077,7 +1078,8 @@ void *host_thread_false_alarm(void *ptr) {
   CLCREATEARG_ARRAY(15, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
   if (args->use_markov) {
     CLCREATEARG_ARRAY(16, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
-    CLCREATEARG_ARRAY(17, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
+    CLCREATEARG_ARRAY(17, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_max_positions * args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
+    CLCREATEARG(18, max_positions_buffer, CL_RO, args->markov_max_positions, sizeof(gpu_uint));
   }
 
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
@@ -1131,6 +1133,7 @@ void *host_thread_false_alarm(void *ptr) {
   if (args->use_markov) {
     CLFREEBUFFER(sorted_pos0_buffer);
     CLFREEBUFFER(sorted_bigram_buffer);
+    CLFREEBUFFER(max_positions_buffer);
   }
 
   /* Context/program/kernel/queue are kept alive for reuse across tables.
@@ -1165,7 +1168,7 @@ void *host_thread_precompute(void *ptr) {
   int err = 0;
   char *kernel_path = PRECOMPUTE_KERNEL_PATH, *kernel_name = "precompute";
 
-  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL/*, debug_buffer = NULL*/;
+  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL/*, debug_buffer = NULL*/;
 
   size_t gws = 0;
   gpu_ulong *output = NULL, *output_block = NULL;
@@ -1314,7 +1317,8 @@ void *host_thread_precompute(void *ptr) {
     CLCREATEARG(14, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
     if (args->use_markov) {
       CLCREATEARG_ARRAY(15, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
-      CLCREATEARG_ARRAY(16, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
+      CLCREATEARG_ARRAY(16, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_max_positions * args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
+      CLCREATEARG(17, max_positions_buffer, CL_RO, args->markov_max_positions, sizeof(gpu_uint));
     }
   }
 
@@ -1354,7 +1358,7 @@ void *host_thread_precompute(void *ptr) {
 
   /*
   printf("GPU %u: ", gpu->device_number);
-  for (i = 0; i < output_len; i++) {
+  for (unsigned int i = 0; i < output_len; i++) {
     printf("%"PRIu64" ", output[i]);
   }
   printf("\n");
@@ -1379,6 +1383,7 @@ void *host_thread_precompute(void *ptr) {
   if (args->use_markov) {
     CLFREEBUFFER(sorted_pos0_buffer);
     CLFREEBUFFER(sorted_bigram_buffer);
+    CLFREEBUFFER(max_positions_buffer);
   }
 
   /* Context/program/kernel/queue are kept alive for reuse across hashes.
@@ -2664,6 +2669,7 @@ int main(int ac, char **av) {
       args[i].sorted_pos0       = g_markov.sorted_pos0;
       args[i].sorted_bigram     = g_markov.sorted_bigram;
       args[i].markov_charset_len = g_markov.charset_len;
+      args[i].markov_max_positions = g_markov.max_positions;
     }
   }
 
