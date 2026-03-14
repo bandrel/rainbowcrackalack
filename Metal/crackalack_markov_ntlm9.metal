@@ -18,7 +18,7 @@ kernel void crackalack_markov_ntlm9(
     device ulong *unused6 [[buffer(9)]],
     device unsigned int *unused7 [[buffer(10)]],
     constant unsigned char *g_sorted_pos0 [[buffer(11)]],
-    constant unsigned char *g_sorted_bigram [[buffer(12)]],
+    device const unsigned char *g_sorted_bigram [[buffer(12)]],
     device unsigned int *unused8 [[buffer(13)]],
     uint gid [[thread_position_in_grid]]) {
   ulong index = g_indices[gid];

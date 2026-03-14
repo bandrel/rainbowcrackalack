@@ -21,7 +21,7 @@ kernel void false_alarm_check_markov_ntlm9(
     device unsigned int *g_exec_block_scaler [[buffer(13)]],
     device ulong *g_plaintext_indices [[buffer(14)]],
     constant unsigned char *g_sorted_pos0 [[buffer(15)]],
-    constant unsigned char *g_sorted_bigram [[buffer(16)]],
+    device const unsigned char *g_sorted_bigram [[buffer(16)]],
     device unsigned int *unused7 [[buffer(17)]],
     uint gid [[thread_position_in_grid]]) {
 

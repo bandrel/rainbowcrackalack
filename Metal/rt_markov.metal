@@ -22,7 +22,7 @@ inline void index_to_plaintext_markov(
     unsigned int plaintext_len,
     unsigned int max_positions,
     constant unsigned char *sorted_pos0,
-    constant unsigned char *sorted_bigram,
+    device const unsigned char *sorted_bigram,
     thread unsigned char *plaintext)
 {
     /* Position 0: rank within the most-probable first characters. */

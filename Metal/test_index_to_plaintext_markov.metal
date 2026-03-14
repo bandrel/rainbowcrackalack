@@ -29,7 +29,7 @@ kernel void test_index_to_plaintext_markov(
     device unsigned int   *g_plaintext_len_out [[buffer(5)]],
     device unsigned char  *g_debug             [[buffer(6)]],
     constant unsigned char *g_sorted_pos0      [[buffer(7)]],
-    constant unsigned char *g_sorted_bigram    [[buffer(8)]],
+    device const unsigned char *g_sorted_bigram    [[buffer(8)]],
     device unsigned int   *g_max_positions     [[buffer(9)]],
     uint gid [[thread_position_in_grid]])
 {
