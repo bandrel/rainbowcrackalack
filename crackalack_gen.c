@@ -202,16 +202,18 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
 }
 
 
-/* Computes a hash of table generation parameters for checkpoint validation. */
+/* Computes a hash of table generation parameters for checkpoint validation (FNV-1a). */
 static uint64_t compute_params_hash(unsigned int hash_type, unsigned int plaintext_len_min,
                                     unsigned int plaintext_len_max, unsigned int table_index,
                                     unsigned int chain_len) {
-  uint64_t hash = 0;
-  hash ^= (uint64_t)hash_type;
-  hash ^= ((uint64_t)plaintext_len_min << 8);
-  hash ^= ((uint64_t)plaintext_len_max << 16);
-  hash ^= ((uint64_t)table_index << 24);
-  hash ^= ((uint64_t)chain_len << 32);
+  uint64_t hash = 0xcbf29ce484222325ULL;  /* FNV offset basis */
+  const uint64_t prime = 0x100000001b3ULL; /* FNV prime */
+  unsigned int params[] = {hash_type, plaintext_len_min, plaintext_len_max, table_index, chain_len};
+  const unsigned char *p = (const unsigned char *)params;
+  for (size_t i = 0; i < sizeof(params); i++) {
+    hash ^= p[i];
+    hash *= prime;
+  }
   return hash;
 }
 
@@ -272,12 +274,11 @@ void *writer_thread_func(void *ptr) {
 
     write_chains(ws->filename, 1, ws->start_buf[ws->active_idx], batch_size, ws->end_buf[ws->active_idx], batch_size, ws->device_number);
 
-    /* Track recent ends for CRC64 computation */
-    for (size_t j = 0; j < batch_size && ws->recent_idx < 1000; j++) {
-      ws->recent_ends[ws->recent_idx++] = ws->end_buf[ws->active_idx][j];
+    /* Track recent ends for CRC64 computation (circular buffer) */
+    for (size_t j = 0; j < batch_size; j++) {
+      ws->recent_ends[ws->recent_idx % 1000] = ws->end_buf[ws->active_idx][j];
+      ws->recent_idx++;
     }
-    if (ws->recent_idx >= 1000)
-      ws->recent_idx = 0;  /* Wrap around */
 
     ws->total_chains_written += batch_size;
     ws->last_written_start = ws->start_buf[ws->active_idx][batch_size - 1];
@@ -285,9 +286,10 @@ void *writer_thread_func(void *ptr) {
 
     /* Update checkpoint */
     if (ws->checkpoint_enabled) {
+      size_t recent_count = ws->recent_idx < 1000 ? ws->recent_idx : 1000;
       checkpoint_update(ws->table_filename, ws->total_chains_written,
                        ws->last_written_start, ws->last_written_end,
-                       ws->recent_ends, 1000);
+                       ws->recent_ends, recent_count);
     }
 
     pthread_mutex_lock(&ws->mutex);
@@ -977,7 +979,13 @@ int main(int ac, char **av) {
     uint64_t chains_done = 0;
 
     /* Try checkpoint-based resume first */
-    if (checkpoint_get_resume_point(filename, &start_index, &chains_done, NULL) == 0) {
+    char resume_device_name[256] = {0};
+    get_platforms_and_devices(-1, MAX_NUM_PLATFORMS, platforms, &num_platforms, MAX_NUM_DEVICES, devices, &num_devices, 0);
+    if (num_devices > 0)
+      get_device_str(devices[0], CL_DEVICE_NAME, resume_device_name, sizeof(resume_device_name) - 1);
+    else
+      strncpy(resume_device_name, "unknown", sizeof(resume_device_name) - 1);
+    if (checkpoint_get_resume_point(filename, &start_index, &chains_done, resume_device_name) == 0) {
       printf("Resuming from checkpoint: %"PRIu64" chains already generated (%.1f%%)\n",
              chains_done, (100.0 * chains_done) / total_chains_in_table);
       start_index++;  /* Start at next chain */
