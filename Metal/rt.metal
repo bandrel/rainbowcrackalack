@@ -79,8 +79,8 @@ inline ulong fill_plaintext_space_table(unsigned int charset_len, unsigned int p
 
 
 // Copies the plaintext_space_up_to_index array from device memory to thread memory.
-inline void copy_plaintext_space_up_to_index(thread ulong *dest, device ulong *src) {
-  for (int i = 0; i < MAX_PLAINTEXT_LEN; i++)
+inline void copy_plaintext_space_up_to_index(thread ulong *dest, device ulong *src, unsigned int plaintext_len_max) {
+  for (int i = 0; i <= plaintext_len_max; i++)
     dest[i] = src[i];
 }
 

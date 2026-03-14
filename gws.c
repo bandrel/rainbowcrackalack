@@ -67,8 +67,125 @@ unsigned int get_optimal_gws(gpu_device device) {
       return 82 * 512;
 #endif
 
+    else if (strcmp(name, "NVIDIA GeForce RTX 4090") == 0)
+#ifdef _WIN32
+      return 128 * 256;
+#else
+      return 128 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 4080 SUPER") == 0)
+#ifdef _WIN32
+      return 80 * 256;
+#else
+      return 80 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 4080") == 0)
+#ifdef _WIN32
+      return 76 * 256;
+#else
+      return 76 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 4070 Ti SUPER") == 0)
+#ifdef _WIN32
+      return 66 * 256;
+#else
+      return 66 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 4070 Ti") == 0)
+#ifdef _WIN32
+      return 60 * 256;
+#else
+      return 60 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 4070 SUPER") == 0)
+#ifdef _WIN32
+      return 56 * 256;
+#else
+      return 56 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 4070") == 0)
+#ifdef _WIN32
+      return 46 * 256;
+#else
+      return 46 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 4060 Ti") == 0)
+#ifdef _WIN32
+      return 34 * 256;
+#else
+      return 34 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 4060") == 0)
+#ifdef _WIN32
+      return 24 * 256;
+#else
+      return 24 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 3080 Ti") == 0)
+#ifdef _WIN32
+      return 80 * 256;
+#else
+      return 80 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 3080") == 0)
+#ifdef _WIN32
+      return 68 * 256;
+#else
+      return 68 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 3070 Ti") == 0)
+#ifdef _WIN32
+      return 48 * 256;
+#else
+      return 48 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 3070") == 0)
+#ifdef _WIN32
+      return 46 * 256;
+#else
+      return 46 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 3060 Ti") == 0)
+#ifdef _WIN32
+      return 38 * 256;
+#else
+      return 38 * 512;
+#endif
+
+    else if (strcmp(name, "NVIDIA GeForce RTX 3060") == 0)
+#ifdef _WIN32
+      return 28 * 256;
+#else
+      return 28 * 512;
+#endif
+
     else if (strcmp(name, "Tesla V100-SXM2-16GB") == 0) /* Amazon EC2 p3.2xlarge instance */
       return 80 * 512;
+
+    else {
+      gpu_uint compute_units = 0;
+      get_device_uint(device, CL_DEVICE_MAX_COMPUTE_UNITS, &compute_units);
+      if (compute_units > 0) {
+#ifdef _WIN32
+        return compute_units * 256;
+#else
+        return compute_units * 512;
+#endif
+      }
+    }
   }
 
   if (strcmp(vendor, "Advanced Micro Devices, Inc.") == 0) {
@@ -82,14 +199,47 @@ unsigned int get_optimal_gws(gpu_device device) {
 
 #ifdef USE_METAL
   if (strcmp(vendor, "Apple") == 0) {
-    if (strstr(name, "M1") != NULL)
-      return 256 * 256;
+    if (strstr(name, "M4 Max") != NULL)
+      return 512 * 512;
+    else if (strstr(name, "M4 Pro") != NULL)
+      return 384 * 512;
+    else if (strstr(name, "M4") != NULL)
+      return 256 * 512;
+    else if (strstr(name, "M3 Max") != NULL)
+      return 512 * 512;
+    else if (strstr(name, "M3 Pro") != NULL)
+      return 384 * 384;
+    else if (strstr(name, "M3") != NULL)
+      return 256 * 384;
+    else if (strstr(name, "M2 Ultra") != NULL)
+      return 512 * 384;
+    else if (strstr(name, "M2 Max") != NULL)
+      return 384 * 384;
+    else if (strstr(name, "M2 Pro") != NULL)
+      return 256 * 384;
     else if (strstr(name, "M2") != NULL)
       return 256 * 256;
-    else if (strstr(name, "M3") != NULL)
+    else if (strstr(name, "M1 Ultra") != NULL)
+      return 384 * 384;
+    else if (strstr(name, "M1 Max") != NULL)
+      return 256 * 384;
+    else if (strstr(name, "M1 Pro") != NULL)
       return 256 * 256;
-    else if (strstr(name, "M4") != NULL)
+    else if (strstr(name, "M1") != NULL)
       return 256 * 256;
+    else {
+      /* Unknown Apple Silicon - memory-based heuristic */
+      gpu_ulong mem_size = 0;
+      get_device_ulong(device, CL_DEVICE_GLOBAL_MEM_SIZE, &mem_size);
+      if (mem_size > 64ULL * 1024 * 1024 * 1024)
+        return 512 * 512;
+      else if (mem_size > 32ULL * 1024 * 1024 * 1024)
+        return 384 * 384;
+      else if (mem_size > 16ULL * 1024 * 1024 * 1024)
+        return 256 * 384;
+      else
+        return 256 * 256;
+    }
   }
 #endif
 

@@ -40,7 +40,7 @@ __kernel void precompute(
   unsigned int plaintext_len_max = *g_plaintext_len_max;
   unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
   unsigned int chain_len = *g_chain_len;
-  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index);
+  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index, plaintext_len_max);
   unsigned long plaintext_space_total = *g_plaintext_space_total;
 
 

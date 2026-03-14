@@ -88,8 +88,8 @@ inline unsigned long fill_plaintext_space_table(unsigned int charset_len, unsign
 
 
 // Copies the plaintext_space_up_to_index array from global memory to local memory.
-inline void copy_plaintext_space_up_to_index(unsigned long *dest, __global unsigned long *src) {
-  for (int i = 0; i < MAX_PLAINTEXT_LEN; i++)
+inline void copy_plaintext_space_up_to_index(unsigned long *dest, __global unsigned long *src, unsigned int plaintext_len_max) {
+  for (int i = 0; i <= plaintext_len_max; i++)
     dest[i] = src[i];
 }
 
