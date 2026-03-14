@@ -20,7 +20,7 @@ kernel void precompute_markov_ntlm9(
     device ulong *unused7 [[buffer(12)]],
     device ulong *unused8 [[buffer(13)]],
     constant unsigned char *g_sorted_pos0 [[buffer(14)]],
-    constant unsigned char *g_sorted_bigram [[buffer(15)]],
+    device const unsigned char *g_sorted_bigram [[buffer(15)]],
     device unsigned int *unused9 [[buffer(16)]],
     uint gid [[thread_position_in_grid]]) {
 

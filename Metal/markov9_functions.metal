@@ -10,7 +10,7 @@ inline void index_to_plaintext_markov9(
     constant char *charset,
     unsigned int charset_len,
     constant unsigned char *sorted_pos0,
-    constant unsigned char *sorted_bigram,
+    device const unsigned char *sorted_bigram,
     thread unsigned char *plaintext)
 {
     ulong cs2 = (ulong)charset_len * charset_len;
