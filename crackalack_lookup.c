@@ -64,8 +64,12 @@
 #define PRECOMPUTE_MD5_9_KERNEL_PATH "precompute_md5_9.cl"
 #ifdef USE_METAL
 #define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.metal"
+#define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.metal"
+#define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.metal"
 #else
 #define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
+#define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.cl"
+#define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.cl"
 #endif
 
 #define FALSE_ALARM_KERNEL_PATH "false_alarm_check.cl"
@@ -75,8 +79,12 @@
 #define FALSE_ALARM_MD5_9_KERNEL_PATH "false_alarm_check_md5_9.cl"
 #ifdef USE_METAL
 #define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.metal"
+#define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.metal"
+#define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "false_alarm_check_markov_ntlm9.metal"
 #else
 #define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.cl"
+#define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.cl"
+#define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "false_alarm_check_markov_ntlm9.cl"
 #endif
 
 #define HASH_FILE_FORMAT_PLAIN 1
@@ -983,10 +991,27 @@ void *host_thread_false_alarm(void *ptr) {
     }
   }
 
-  /* When --markov is active, override with the Markov false alarm kernel. */
+  /* When --markov is active, override with the Markov false alarm kernel.
+   * Use optimized Markov fast-path kernels for NTLM8/NTLM9 when parameters match. */
   if (args->use_markov) {
-    kernel_path = FALSE_ALARM_MARKOV_KERNEL_PATH;
-    kernel_name = "false_alarm_check_markov";
+    if (is_markov_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
+      kernel_path = FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH;
+      kernel_name = "false_alarm_check_markov_ntlm8";
+      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
+        printf("\nNote: optimized Markov NTLM8 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+        printed_false_alarm_optimized_message = 1;
+      }
+    } else if (is_markov_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
+      kernel_path = FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH;
+      kernel_name = "false_alarm_check_markov_ntlm9";
+      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
+        printf("\nNote: optimized Markov NTLM9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+        printed_false_alarm_optimized_message = 1;
+      }
+    } else {
+      kernel_path = FALSE_ALARM_MARKOV_KERNEL_PATH;
+      kernel_name = "false_alarm_check_markov";
+    }
   }
 
   /* Compile kernel once and reuse across table iterations. */
@@ -1221,10 +1246,27 @@ void *host_thread_precompute(void *ptr) {
     }
   }
 
-  /* When --markov is active, override with the Markov precompute kernel. */
+  /* When --markov is active, override with the Markov precompute kernel.
+   * Use optimized Markov fast-path kernels for NTLM8/NTLM9 when parameters match. */
   if (args->use_markov) {
-    kernel_path = PRECOMPUTE_MARKOV_KERNEL_PATH;
-    kernel_name = "precompute_markov";
+    if (is_markov_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
+      kernel_path = PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH;
+      kernel_name = "precompute_markov_ntlm8";
+      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
+        printf("\nNote: optimized Markov NTLM8 kernel will be used for precomputation.\n\n"); fflush(stdout);
+        printed_precompute_optimized_message = 1;
+      }
+    } else if (is_markov_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
+      kernel_path = PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH;
+      kernel_name = "precompute_markov_ntlm9";
+      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
+        printf("\nNote: optimized Markov NTLM9 kernel will be used for precomputation.\n\n"); fflush(stdout);
+        printed_precompute_optimized_message = 1;
+      }
+    } else {
+      kernel_path = PRECOMPUTE_MARKOV_KERNEL_PATH;
+      kernel_name = "precompute_markov";
+    }
   }
 
   /* Compile kernel once and reuse across invocations. */
@@ -1865,7 +1907,7 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
 unsigned int _rt_binary_search(gpu_ulong *rainbow_table, unsigned int low, unsigned int high, gpu_ulong search_index, gpu_ulong *start) {
   unsigned int chain = 0;
 
-  while (high - low > 8) {
+  while (high - low > 16) {
     unsigned int mid = ((high - low) / 2) + low;
     if (search_index >= rainbow_table[(mid * 2) + 1])
       low = mid;
@@ -1873,7 +1915,25 @@ unsigned int _rt_binary_search(gpu_ulong *rainbow_table, unsigned int low, unsig
       high = mid;
   }
 
-  for (chain = low; chain < high; chain++) {
+  unsigned int remaining = high - low;
+  chain = low;
+
+  while (remaining >= 4) {
+    gpu_ulong e0 = rainbow_table[(chain * 2) + 1];
+    gpu_ulong e1 = rainbow_table[((chain + 1) * 2) + 1];
+    gpu_ulong e2 = rainbow_table[((chain + 2) * 2) + 1];
+    gpu_ulong e3 = rainbow_table[((chain + 3) * 2) + 1];
+
+    if (e0 == search_index) { *start = rainbow_table[chain * 2]; return 1; }
+    if (e1 == search_index) { *start = rainbow_table[(chain + 1) * 2]; return 1; }
+    if (e2 == search_index) { *start = rainbow_table[(chain + 2) * 2]; return 1; }
+    if (e3 == search_index) { *start = rainbow_table[(chain + 3) * 2]; return 1; }
+
+    chain += 4;
+    remaining -= 4;
+  }
+
+  for (; chain < high; chain++) {
     if (search_index == rainbow_table[(chain * 2) + 1]) {
       *start = rainbow_table[chain * 2];
       return 1;
@@ -1891,7 +1951,22 @@ void *rt_binary_search_thread(void *ptr) {
   gpu_ulong start = 0;
 
   args->num_local_results = 0;
-  args->local_results_capacity = 256;
+
+  unsigned int estimated_matches = 256;
+  {
+    precomputed_and_potential_indices *ppi_temp = args->ppi_head;
+    unsigned int total_queries = 0;
+    while (ppi_temp != NULL) {
+      if (ppi_temp->plaintext == NULL)
+        total_queries += ppi_temp->num_precomputed_end_indices;
+      ppi_temp = ppi_temp->next;
+    }
+    estimated_matches = (total_queries / 100) + 1;
+    if (estimated_matches < 256) estimated_matches = 256;
+    if (estimated_matches > 65536) estimated_matches = 65536;
+  }
+  args->local_results_capacity = estimated_matches;
+
   args->local_results = calloc(args->local_results_capacity, sizeof(search_result_entry));
   if (args->local_results == NULL) {
     fprintf(stderr, "Failed to allocate thread-local search results buffer.\n");

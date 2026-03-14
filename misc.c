@@ -257,6 +257,36 @@ unsigned int is_ntlm9(unsigned int hash_type, char *charset, unsigned int plaint
 }
 
 
+/* Returns 1 if the parameters form the Markov NTLM 8 set, otherwise 0. */
+unsigned int is_markov_ntlm8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov) {
+  if ((use_markov) && \
+      (hash_type == HASH_NTLM) && \
+      (strcmp(charset, CHARSET_ASCII_32_95) == 0) && \
+      (plaintext_len_min == 8) && \
+      (plaintext_len_max == 8) && \
+      (reduction_offset == 0) && \
+      (chain_len == 422000))
+    return 1;
+  else
+    return 0;
+}
+
+
+/* Returns 1 if the parameters form the Markov NTLM 9 set, otherwise 0. */
+unsigned int is_markov_ntlm9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov) {
+  if ((use_markov) && \
+      (hash_type == HASH_NTLM) && \
+      (strcmp(charset, CHARSET_ASCII_32_95) == 0) && \
+      (plaintext_len_min == 9) && \
+      (plaintext_len_max == 9) && \
+      (reduction_offset == 0) && \
+      (chain_len == 803000))
+    return 1;
+  else
+    return 0;
+}
+
+
 /* Returns 1 if the parameters form the MD5 8-character ascii-32-95 set, otherwise 0. */
 unsigned int is_md5_8(unsigned int hash_type, char *charset,
                        unsigned int plaintext_len_min,
