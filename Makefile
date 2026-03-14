@@ -126,6 +126,7 @@ $(OBJDIR)/%.o: %.m | $(OBJDIR)
 
 $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/charset.o \
+	$(OBJDIR)/checkpoint.o \
 	$(OBJDIR)/clock.o \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_gen.o \

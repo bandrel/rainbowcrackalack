@@ -34,6 +34,7 @@
 #include "gpu_backend.h"
 
 #include "charset.h"
+#include "checkpoint.h"
 #include "markov.h"
 #include "clock.h"
 #include "cpu_rt_functions.h"
@@ -121,6 +122,13 @@ typedef struct {
   unsigned int active_idx;   /* Which buffer the writer is processing */
   unsigned int pending_idx;  /* Which buffer has pending data */
   int pending_ready;         /* 1 if pending_idx has data waiting */
+  uint64_t total_chains_written;  /* Running count of chains written */
+  uint64_t last_written_start;    /* Last chain's start index */
+  uint64_t last_written_end;      /* Last chain's end index */
+  uint64_t recent_ends[1000];     /* Rolling buffer of recent end indices */
+  size_t recent_idx;              /* Current position in rolling buffer */
+  char *table_filename;           /* Table filename for checkpoint updates */
+  int checkpoint_enabled;         /* Whether to update checkpoint */
 } writer_state;
 
 /* Struct to pass arguments to a host thread. */
@@ -194,6 +202,20 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
 }
 
 
+/* Computes a hash of table generation parameters for checkpoint validation. */
+static uint64_t compute_params_hash(unsigned int hash_type, unsigned int plaintext_len_min,
+                                    unsigned int plaintext_len_max, unsigned int table_index,
+                                    unsigned int chain_len) {
+  uint64_t hash = 0;
+  hash ^= (uint64_t)hash_type;
+  hash ^= ((uint64_t)plaintext_len_min << 8);
+  hash ^= ((uint64_t)plaintext_len_max << 16);
+  hash ^= ((uint64_t)table_index << 24);
+  hash ^= ((uint64_t)chain_len << 32);
+  return hash;
+}
+
+
 /* Outputs the number of chains created so far to stdout, along with the rate.
  * Optionally, an estimate of how much time is remaining is also given. */
 void output_progress(unsigned int calculate_time_remaining) {
@@ -244,10 +266,29 @@ void *writer_thread_func(void *ptr) {
 
     ws->active_idx = ws->pending_idx;
     ws->pending_ready = 0;
+    unsigned int batch_size = ws->buf_size[ws->active_idx];
     pthread_cond_signal(&ws->cond);  /* Signal pending buffer is free */
     pthread_mutex_unlock(&ws->mutex);
 
-    write_chains(ws->filename, 1, ws->start_buf[ws->active_idx], ws->buf_size[ws->active_idx], ws->end_buf[ws->active_idx], ws->buf_size[ws->active_idx], ws->device_number);
+    write_chains(ws->filename, 1, ws->start_buf[ws->active_idx], batch_size, ws->end_buf[ws->active_idx], batch_size, ws->device_number);
+
+    /* Track recent ends for CRC64 computation */
+    for (size_t j = 0; j < batch_size && ws->recent_idx < 1000; j++) {
+      ws->recent_ends[ws->recent_idx++] = ws->end_buf[ws->active_idx][j];
+    }
+    if (ws->recent_idx >= 1000)
+      ws->recent_idx = 0;  /* Wrap around */
+
+    ws->total_chains_written += batch_size;
+    ws->last_written_start = ws->start_buf[ws->active_idx][batch_size - 1];
+    ws->last_written_end = ws->end_buf[ws->active_idx][batch_size - 1];
+
+    /* Update checkpoint */
+    if (ws->checkpoint_enabled) {
+      checkpoint_update(ws->table_filename, ws->total_chains_written,
+                       ws->last_written_start, ws->last_written_end,
+                       ws->recent_ends, 1000);
+    }
 
     pthread_mutex_lock(&ws->mutex);
   }
@@ -437,6 +478,10 @@ void *host_thread(void *ptr) {
   ws.buf_size[1] = indices_size;
   ws.active_idx = 0;
   ws.pending_idx = 0;
+  ws.total_chains_written = first_generated_chain;  /* Start from resume point */
+  ws.recent_idx = 0;
+  ws.table_filename = args->filename;
+  ws.checkpoint_enabled = 1;  /* Enable by default */
   if ((ws.start_buf[0] == NULL) || (ws.start_buf[1] == NULL) || (ws.end_buf[0] == NULL) || (ws.end_buf[1] == NULL)) {
     fprintf(stderr, "Failed to create writer triple-buffers.\n");
     exit(-1);
@@ -697,6 +742,24 @@ void write_chains(char *filename, unsigned int chains_per_work_unit, gpu_ulong *
   if (start_indices_size > 0)
     rt_log(l, "\tWrote chains start indices from %"PRIu64" to %"PRIu64"\n", start_indices[0], start - 1);
 
+  /* Sync to disk to ensure data durability */
+#ifdef _WIN32
+  FlushFileBuffers(f);
+#else
+  fflush(f);
+  fsync(fileno(f));
+#endif
+
+  /* Verify write succeeded by checking file size */
+  rc_fseek(f, 0, RCSEEK_END);
+  uint64_t actual_size = rc_ftell(f);
+  uint64_t expected_size = (start_indices[start_indices_size - 1] - first_generated_chain + 1) * CHAIN_SIZE;
+  if (actual_size < expected_size) {
+    fprintf(stderr, "\nWarning: file size mismatch after write. Expected at least %"PRIu64", got %"PRIu64"\n",
+            expected_size, actual_size);
+    rt_log(l, "\tERROR: File size mismatch. Expected %"PRIu64", got %"PRIu64"\n",
+           expected_size, actual_size);
+  }
 
   rc_fclose(l);
   rc_fclose(f);
@@ -911,36 +974,49 @@ int main(int ac, char **av) {
   /* If the file already exists and isn't empty, then verify the file, and update
    * the start_index so that we resume generation. */
   if (file_size > 0) {
-    printf("\n  !! WARNING !!\n\nIt appears that the output table is partially generated.  An attempt to resume generation will be made, but know that this is experimental and may end up failing after hours of work.  A near-future release will further refine this feature.\n\n"); fflush(stdout);
+    uint64_t chains_done = 0;
 
-    verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1);
-
-    /* fopen()'s modes are weird.  Its easier to just re-open the file for reading
-     * at this point, rather than change the code above and re-use the open handle. */
-    f = rc_fopen(filename, 0);
-    if (f == NULL)
-      exit(-1);
-
-    /* The file size may be different now if the verification function, above,
-     * truncated it due to errors.  Ensure that at least one chain is in the file. */
-    rc_fseek(f, 0, RCSEEK_END);
-    if (rc_ftell(f) >= CHAIN_SIZE) {
-
-      /* Seek to the last starting index in the file and read it. */
-      rc_fseek(f, CHAIN_SIZE, RCSEEK_END);
-      rc_fread(&start_index, sizeof(start_index), 1, f);
-
-      start_index++;  /* Increment the index to the next one needed. */
+    /* Try checkpoint-based resume first */
+    if (checkpoint_get_resume_point(filename, &start_index, &chains_done, NULL) == 0) {
+      printf("Resuming from checkpoint: %"PRIu64" chains already generated (%.1f%%)\n",
+             chains_done, (100.0 * chains_done) / total_chains_in_table);
+      start_index++;  /* Start at next chain */
       first_generated_chain = start_index;
-
-      /* The number of chains left to generate would be the total requested by the
-       * user, minus the number of chains already in the file. */
-      rc_fseek(f, 0, RCSEEK_END);
-      num_chains_to_generate = total_chains_in_table - (rc_ftell(f) / CHAIN_SIZE);
-
+      num_chains_to_generate = total_chains_in_table - chains_done;
       resuming_table = 1;
+    } else {
+      /* No valid checkpoint - use legacy resume (experimental) */
+      printf("\n  !! WARNING !!\n\nPartially generated table found without checkpoint.\nAttempting legacy resume (experimental).\n\n"); fflush(stdout);
+
+      verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1);
+
+      /* fopen()'s modes are weird.  Its easier to just re-open the file for reading
+       * at this point, rather than change the code above and re-use the open handle. */
+      f = rc_fopen(filename, 0);
+      if (f == NULL)
+        exit(-1);
+
+      /* The file size may be different now if the verification function, above,
+       * truncated it due to errors.  Ensure that at least one chain is in the file. */
+      rc_fseek(f, 0, RCSEEK_END);
+      if (rc_ftell(f) >= CHAIN_SIZE) {
+
+        /* Seek to the last starting index in the file and read it. */
+        rc_fseek(f, CHAIN_SIZE, RCSEEK_END);
+        rc_fread(&start_index, sizeof(start_index), 1, f);
+
+        start_index++;  /* Increment the index to the next one needed. */
+        first_generated_chain = start_index;
+
+        /* The number of chains left to generate would be the total requested by the
+         * user, minus the number of chains already in the file. */
+        rc_fseek(f, 0, RCSEEK_END);
+        num_chains_to_generate = total_chains_in_table - (rc_ftell(f) / CHAIN_SIZE);
+
+        resuming_table = 1;
+      }
+      rc_fclose(f);
     }
-    rc_fclose(f);
   } else {  /* This is a new table. */
     uint64_t plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
 
@@ -985,6 +1061,19 @@ int main(int ac, char **av) {
     get_device_str(devices[0], CL_DEVICE_VENDOR, device_vendor, sizeof(device_vendor) - 1);
     if (strstr(device_vendor, "Advanced Micro Devices") != NULL)
       is_amd_gpu = 1;
+  }
+
+  /* Initialize checkpoint for new tables */
+  if (!resuming_table && num_devices > 0) {
+    char gpu_device_name[256] = {0};
+    uint64_t params_hash;
+
+    get_device_str(devices[0], CL_DEVICE_NAME, gpu_device_name, sizeof(gpu_device_name) - 1);
+    params_hash = compute_params_hash(hash_type, plaintext_len_min, plaintext_len_max, table_index, chain_len);
+
+    if (checkpoint_init(filename, gpu_device_name, params_hash) != 0) {
+      fprintf(stderr, "Warning: failed to initialize checkpoint file.\n");
+    }
   }
 
   /* Initialize the barrier.  This is used in some cases to ensure kernels across
@@ -1106,6 +1195,9 @@ int main(int ac, char **av) {
        * correct.  No need to keep this debugging info. */
       delete_rt_log(filename);
       printf("done!\n");
+
+      /* Remove checkpoint file since table is complete and verified */
+      checkpoint_remove(filename);
     }
   }
 
