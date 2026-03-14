@@ -12,14 +12,15 @@ kernel void false_alarm_check_md5_9(
     device unsigned int *unused5 [[buffer(4)]],
     device ulong *unused6 [[buffer(5)]],
     device ulong *unused7 [[buffer(6)]],
-    device unsigned int *g_device_num [[buffer(7)]],
-    device unsigned int *g_total_devices [[buffer(8)]],
-    device unsigned int *g_num_start_indices [[buffer(9)]],
-    device ulong *g_start_indices [[buffer(10)]],
-    device unsigned int *g_start_index_positions [[buffer(11)]],
-    device ulong *g_hash_base_indices [[buffer(12)]],
-    device unsigned int *g_exec_block_scaler [[buffer(13)]],
-    device ulong *g_plaintext_indices [[buffer(14)]],
+    device ulong *unused_pspace_table [[buffer(7)]],
+    device unsigned int *g_device_num [[buffer(8)]],
+    device unsigned int *g_total_devices [[buffer(9)]],
+    device unsigned int *g_num_start_indices [[buffer(10)]],
+    device ulong *g_start_indices [[buffer(11)]],
+    device unsigned int *g_start_index_positions [[buffer(12)]],
+    device ulong *g_hash_base_indices [[buffer(13)]],
+    device unsigned int *g_exec_block_scaler [[buffer(14)]],
+    device ulong *g_plaintext_indices [[buffer(15)]],
     uint gid [[thread_position_in_grid]]) {
 
   int index_pos = (*g_num_start_indices - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
