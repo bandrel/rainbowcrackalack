@@ -23,7 +23,7 @@ kernel void false_alarm_check_markov(
     device unsigned int *g_exec_block_scaler [[buffer(14)]],
     device ulong *g_plaintext_indices [[buffer(15)]],
     constant unsigned char *g_sorted_pos0 [[buffer(16)]],
-    constant unsigned char *g_sorted_bigram [[buffer(17)]],
+    device const unsigned char *g_sorted_bigram [[buffer(17)]],
     device unsigned int *g_max_positions [[buffer(18)]],
     uint gid [[thread_position_in_grid]]) {
 

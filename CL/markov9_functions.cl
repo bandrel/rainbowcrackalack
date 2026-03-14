@@ -10,7 +10,7 @@ inline void index_to_plaintext_markov9(
     __constant char *charset,
     unsigned int charset_len,
     __constant unsigned char *sorted_pos0,
-    __constant unsigned char *sorted_bigram,
+    __global const unsigned char *sorted_bigram,
     unsigned char *plaintext)
 {
     unsigned long cs2 = (unsigned long)charset_len * charset_len;

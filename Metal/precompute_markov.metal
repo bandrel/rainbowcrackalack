@@ -22,7 +22,7 @@ kernel void precompute_markov(
     device ulong *g_plaintext_space_up_to_index [[buffer(13)]],
     device ulong *g_plaintext_space_total [[buffer(14)]],
     constant unsigned char *g_sorted_pos0 [[buffer(15)]],
-    constant unsigned char *g_sorted_bigram [[buffer(16)]],
+    device const unsigned char *g_sorted_bigram [[buffer(16)]],
     device unsigned int *g_max_positions [[buffer(17)]],
     uint gid [[thread_position_in_grid]]) {
 

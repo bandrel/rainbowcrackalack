@@ -20,7 +20,7 @@ __kernel void false_alarm_check_markov(
     __global unsigned int *g_exec_block_scaler,
     __global unsigned long *g_plaintext_indices,
     __constant unsigned char *g_sorted_pos0,
-    __constant unsigned char *g_sorted_bigram,
+    __global const unsigned char *g_sorted_bigram,
     __global unsigned int *g_max_positions) {
 
   int index_pos = (*g_num_start_indices - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
