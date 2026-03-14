@@ -543,6 +543,14 @@ void *host_thread(void *ptr) {
         CLCREATEARG_ARRAY(11, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
         CLCREATEARG_ARRAY(12, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.max_positions * markov.charset_len * markov.charset_len * sizeof(uint8_t));
         CLCREATEARG(13, max_positions_buffer, CL_RO, markov.max_positions, sizeof(gpu_uint));
+      } else {
+        /* Fast-path kernels (NTLM8, NTLM9, etc.) expect 14 args even though they don't use 11-13.
+         * Provide dummy buffers to satisfy OpenCL's requirement that all kernel args be set. */
+        static uint8_t dummy_byte = 0;
+        static gpu_uint dummy_uint = 0;
+        CLCREATEARG(11, sorted_pos0_buffer, CL_RO, dummy_byte, sizeof(uint8_t));
+        CLCREATEARG(12, sorted_bigram_buffer, CL_RO, dummy_byte, sizeof(uint8_t));
+        CLCREATEARG(13, max_positions_buffer, CL_RO, dummy_uint, sizeof(gpu_uint));
       }
     } else {
       CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
