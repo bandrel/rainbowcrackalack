@@ -481,7 +481,7 @@ void *host_thread(void *ptr) {
   ws.total_chains_written = first_generated_chain;  /* Start from resume point */
   ws.recent_idx = 0;
   ws.table_filename = args->filename;
-  ws.checkpoint_enabled = 1;  /* Enable by default */
+  ws.checkpoint_enabled = (gpu->device_number == 0) ? 1 : 0;  /* Only device 0 updates checkpoint */
   if ((ws.start_buf[0] == NULL) || (ws.start_buf[1] == NULL) || (ws.end_buf[0] == NULL) || (ws.end_buf[1] == NULL)) {
     fprintf(stderr, "Failed to create writer triple-buffers.\n");
     exit(-1);
