@@ -956,7 +956,7 @@ int main(int ac, char **av) {
 
   /* If the file size implies that it is already complete, run the verifier on it. */
   if (file_size == ((uint64_t)total_chains_in_table * CHAIN_SIZE)) {
-    if (verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1)) {
+    if (verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL)) {
       /* The table is complete, so tell the user and exit. */
       printf("Table in \"%s\" already appears to be complete.  Terminating...\n", filename);
       exit(0);
@@ -996,7 +996,7 @@ int main(int ac, char **av) {
       /* No valid checkpoint - use legacy resume (experimental) */
       printf("\n  !! WARNING !!\n\nPartially generated table found without checkpoint.\nAttempting legacy resume (experimental).\n\n"); fflush(stdout);
 
-      verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1);
+      verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL);
 
       /* fopen()'s modes are weird.  Its easier to just re-open the file for reading
        * at this point, rather than change the code above and re-use the open handle. */
@@ -1192,7 +1192,7 @@ int main(int ac, char **av) {
     /* Verify that the new table is valid. */
     printf("Now verifying rainbow table... ");
     fflush(stdout);
-    if (!verify_rainbowtable_file(filename, use_markov ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1)) {
+    if (!verify_rainbowtable_file(filename, use_markov ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL)) {
       char log_filename[256] = {0};
 
       get_rt_log_filename(log_filename, sizeof(log_filename), filename);

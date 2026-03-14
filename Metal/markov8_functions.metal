@@ -6,63 +6,49 @@ inline void index_to_plaintext_markov8(
     constant char *charset,
     unsigned int charset_len,
     constant unsigned char *sorted_pos0,
-    constant unsigned char *sorted_bigram,
+    device const unsigned char *sorted_bigram,
     thread unsigned char *plaintext)
 {
-    ulong cs2 = (ulong)charset_len * charset_len;
+    unsigned int indexHi = (unsigned int)(index / 81450625UL);
+    unsigned int indexLo = (unsigned int)(index - 81450625UL * indexHi);
 
-    /* Position 0: rank within the most-probable first characters. */
-    unsigned int charset_idx = sorted_pos0[index % charset_len];
-    plaintext[0] = charset[charset_idx];
-    index /= charset_len;
-    unsigned int prev_charset_idx = charset_idx;
+    unsigned short group_23 = (unsigned short)(indexLo / 9025);
+    unsigned short group_01 = (unsigned short)(indexLo - (unsigned int)9025 * group_23);
+    unsigned short group_67 = (unsigned short)(indexHi / 9025);
+    unsigned short group_45 = (unsigned short)(indexHi - (unsigned int)9025 * group_67);
 
-    /* Position 1 (bigram table at position 0) */
-    ulong offset = (ulong)prev_charset_idx * charset_len;
-    charset_idx = sorted_bigram[offset + (index % charset_len)];
-    plaintext[1] = charset[charset_idx];
-    index /= charset_len;
-    prev_charset_idx = charset_idx;
+    unsigned char rank1 = (unsigned char)(group_01 / 95);
+    unsigned char rank0 = (unsigned char)(group_01 - (unsigned short)95 * rank1);
+    unsigned char rank3 = (unsigned char)(group_23 / 95);
+    unsigned char rank2 = (unsigned char)(group_23 - (unsigned short)95 * rank3);
+    unsigned char rank5 = (unsigned char)(group_45 / 95);
+    unsigned char rank4 = (unsigned char)(group_45 - (unsigned short)95 * rank5);
+    unsigned char rank7 = (unsigned char)(group_67 / 95);
+    unsigned char rank6 = (unsigned char)(group_67 - (unsigned short)95 * rank7);
 
-    /* Position 2 (bigram table at position 1) */
-    offset = cs2 + (ulong)prev_charset_idx * charset_len;
-    charset_idx = sorted_bigram[offset + (index % charset_len)];
-    plaintext[2] = charset[charset_idx];
-    index /= charset_len;
-    prev_charset_idx = charset_idx;
+    unsigned int ci = sorted_pos0[rank0];
+    plaintext[0] = ci + 32;
 
-    /* Position 3 (bigram table at position 2) */
-    offset = 2UL * cs2 + (ulong)prev_charset_idx * charset_len;
-    charset_idx = sorted_bigram[offset + (index % charset_len)];
-    plaintext[3] = charset[charset_idx];
-    index /= charset_len;
-    prev_charset_idx = charset_idx;
+    ci = sorted_bigram[ci * 95 + rank1];
+    plaintext[1] = ci + 32;
 
-    /* Position 4 (bigram table at position 3) */
-    offset = 3UL * cs2 + (ulong)prev_charset_idx * charset_len;
-    charset_idx = sorted_bigram[offset + (index % charset_len)];
-    plaintext[4] = charset[charset_idx];
-    index /= charset_len;
-    prev_charset_idx = charset_idx;
+    ci = sorted_bigram[9025 + ci * 95 + rank2];
+    plaintext[2] = ci + 32;
 
-    /* Position 5 (bigram table at position 4) */
-    offset = 4UL * cs2 + (ulong)prev_charset_idx * charset_len;
-    charset_idx = sorted_bigram[offset + (index % charset_len)];
-    plaintext[5] = charset[charset_idx];
-    index /= charset_len;
-    prev_charset_idx = charset_idx;
+    ci = sorted_bigram[18050 + ci * 95 + rank3];
+    plaintext[3] = ci + 32;
 
-    /* Position 6 (bigram table at position 5) */
-    offset = 5UL * cs2 + (ulong)prev_charset_idx * charset_len;
-    charset_idx = sorted_bigram[offset + (index % charset_len)];
-    plaintext[6] = charset[charset_idx];
-    index /= charset_len;
-    prev_charset_idx = charset_idx;
+    ci = sorted_bigram[27075 + ci * 95 + rank4];
+    plaintext[4] = ci + 32;
 
-    /* Position 7 (bigram table at position 6) */
-    offset = 6UL * cs2 + (ulong)prev_charset_idx * charset_len;
-    charset_idx = sorted_bigram[offset + (index % charset_len)];
-    plaintext[7] = charset[charset_idx];
+    ci = sorted_bigram[36100 + ci * 95 + rank5];
+    plaintext[5] = ci + 32;
+
+    ci = sorted_bigram[45125 + ci * 95 + rank6];
+    plaintext[6] = ci + 32;
+
+    ci = sorted_bigram[54150 + ci * 95 + rank7];
+    plaintext[7] = ci + 32;
 }
 
 
