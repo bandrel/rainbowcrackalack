@@ -268,11 +268,15 @@ static int cmd_train(int argc, char **argv) {
     /* Parse remaining arguments */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--max-positions") == 0 && i + 1 < argc) {
-            max_positions = (unsigned int)atoi(argv[++i]);
-            if (max_positions == 0) {
-                fprintf(stderr, "Error: --max-positions must be >= 1\n");
+            char *endp;
+            errno = 0;
+            unsigned long val = strtoul(argv[++i], &endp, 10);
+            if (errno != 0 || endp == argv[i] || *endp != '\0' || val == 0 || val > MAX_PLAINTEXT_LEN) {
+                fprintf(stderr, "Error: --max-positions must be in [1, %d], got '%s'\n",
+                        MAX_PLAINTEXT_LEN, argv[i]);
                 return 1;
             }
+            max_positions = (unsigned int)val;
         } else if (argv[i][0] != '-') {
             charset_name = argv[i];
         } else {
@@ -330,7 +334,7 @@ static void print_usage(void) {
             "<target_pct>\n"
             "  train <wordlist> [charset] [--max-positions N]\n"
             "\n"
-            "The train command creates position-aware Markov models (v3).\n"
+            "The train command creates position-aware Markov models (v1).\n"
             "Use --max-positions to control the number of position tables.\n");
 }
 

@@ -22,6 +22,7 @@
 #endif
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,21 +52,23 @@ static void crc64_init_table(uint64_t *table) {
   }
 }
 
+static uint64_t crc64_table[256];
+static pthread_once_t crc64_once = PTHREAD_ONCE_INIT;
+
+static void crc64_init_once(void) {
+  crc64_init_table(crc64_table);
+}
+
 /* Compute CRC64 of buffer. */
 static uint64_t crc64_compute(const void *data, size_t len) {
-  static uint64_t table[256];
-  static int table_initialized = 0;
   const unsigned char *p = (const unsigned char *)data;
   uint64_t crc = 0xFFFFFFFFFFFFFFFFULL;
   size_t i;
 
-  if (!table_initialized) {
-    crc64_init_table(table);
-    table_initialized = 1;
-  }
+  pthread_once(&crc64_once, crc64_init_once);
 
   for (i = 0; i < len; i++)
-    crc = table[(crc ^ p[i]) & 0xFF] ^ (crc >> 8);
+    crc = crc64_table[(crc ^ p[i]) & 0xFF] ^ (crc >> 8);
 
   return crc ^ 0xFFFFFFFFFFFFFFFFULL;
 }
