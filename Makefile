@@ -184,6 +184,7 @@ $(OUTDIR)/$(VERIFY_PROG): \
 	$(OBJDIR)/crackalack_verify.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/markov.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/verify.o
@@ -217,6 +218,7 @@ $(OUTDIR)/$(PERFECTIFY): \
 $(OUTDIR)/$(ENUMERATE): \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/enumerate_chain.o \
+	$(OBJDIR)/markov.o \
 	$(OBJDIR)/test_shared.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
