@@ -31,7 +31,7 @@ kernel void crackalack(
   unsigned int charset_len = *g_charset_len;
   g_memcpy((thread unsigned char *)charset, (device unsigned char *)g_charset, charset_len);
 
-  ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
+  ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1];
   unsigned char plaintext[MAX_PLAINTEXT_LEN];
   unsigned int plaintext_len = 0;
   unsigned char hash[MAX_HASH_OUTPUT_LEN];
