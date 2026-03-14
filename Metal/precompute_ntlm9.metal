@@ -13,12 +13,13 @@ kernel void precompute_ntlm9(
     device unsigned int *unused5 [[buffer(5)]],
     device unsigned int *unused6 [[buffer(6)]],
     device ulong *unused7 [[buffer(7)]],
-    device unsigned int *g_device_num [[buffer(8)]],
-    device unsigned int *g_total_devices [[buffer(9)]],
-    device unsigned int *g_exec_block_scaler [[buffer(10)]],
-    device ulong *g_output [[buffer(11)]],
-    device ulong *unused8 [[buffer(12)]],
-    device ulong *unused9 [[buffer(13)]],
+    device ulong *unused_chain_len [[buffer(8)]],
+    device unsigned int *g_device_num [[buffer(9)]],
+    device unsigned int *g_total_devices [[buffer(10)]],
+    device unsigned int *g_exec_block_scaler [[buffer(11)]],
+    device ulong *g_output [[buffer(12)]],
+    device ulong *unused8 [[buffer(13)]],
+    device ulong *unused9 [[buffer(14)]],
     uint gid [[thread_position_in_grid]]) {
 
   long target_chain_len = (803000 - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
