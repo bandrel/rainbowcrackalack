@@ -38,7 +38,7 @@ __kernel void false_alarm_check(
   unsigned long plaintext_space_total = *g_plaintext_space_total;
   unsigned long plaintext_space_up_to_index[MAX_PLAINTEXT_LEN];
 
-  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index);
+  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index, plaintext_len_max);
 
   unsigned long index = g_start_indices[index_pos], previous_index = 0;
   unsigned long hash_base_index = g_hash_base_indices[index_pos] % plaintext_space_total;
