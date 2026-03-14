@@ -51,6 +51,13 @@
 #define CRACKALACK_NTLM9_KERNEL_PATH "crackalack_ntlm9.cl"
 #define CRACKALACK_MD5_8_KERNEL_PATH "crackalack_md5_8.cl"
 #define CRACKALACK_MD5_9_KERNEL_PATH "crackalack_md5_9.cl"
+#ifdef USE_METAL
+#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.metal"
+#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.metal"
+#else
+#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.cl"
+#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.cl"
+#endif
 
 #define VERBOSE 1
 
@@ -105,13 +112,15 @@ typedef struct {
   pthread_t thread;
   pthread_mutex_t mutex;
   pthread_cond_t cond;
-  int ready;
   int shutdown;
   char *filename;
   unsigned int device_number;
-  gpu_ulong *start_buf;
-  gpu_ulong *end_buf;
-  unsigned int buf_size;
+  gpu_ulong *start_buf[2];
+  gpu_ulong *end_buf[2];
+  unsigned int buf_size[2];
+  unsigned int active_idx;   /* Which buffer the writer is processing */
+  unsigned int pending_idx;  /* Which buffer has pending data */
+  int pending_ready;         /* 1 if pending_idx has data waiting */
 } writer_state;
 
 /* Struct to pass arguments to a host thread. */
@@ -227,18 +236,20 @@ void *writer_thread_func(void *ptr) {
 
   pthread_mutex_lock(&ws->mutex);
   while (1) {
-    while (!ws->ready && !ws->shutdown)
+    while (!ws->pending_ready && !ws->shutdown)
       pthread_cond_wait(&ws->cond, &ws->mutex);
 
-    if (ws->shutdown && !ws->ready)
+    if (ws->shutdown && !ws->pending_ready)
       break;
 
+    ws->active_idx = ws->pending_idx;
+    ws->pending_ready = 0;
+    pthread_cond_signal(&ws->cond);  /* Signal pending buffer is free */
     pthread_mutex_unlock(&ws->mutex);
-    write_chains(ws->filename, 1, ws->start_buf, ws->buf_size, ws->end_buf, ws->buf_size, ws->device_number);
-    pthread_mutex_lock(&ws->mutex);
 
-    ws->ready = 0;
-    pthread_cond_signal(&ws->cond);
+    write_chains(ws->filename, 1, ws->start_buf[ws->active_idx], ws->buf_size[ws->active_idx], ws->end_buf[ws->active_idx], ws->buf_size[ws->active_idx], ws->device_number);
+
+    pthread_mutex_lock(&ws->mutex);
   }
   pthread_mutex_unlock(&ws->mutex);
 
@@ -309,20 +320,35 @@ void *host_thread(void *ptr) {
 
   /* When --markov is requested, switch to the Markov generation kernel.
    * The Markov kernel has the same interface as the generic crackalack kernel
-   * but adds sorted_pos0 and sorted_bigram as args 13 and 14. */
+   * but adds sorted_pos0 and sorted_bigram as args 13 and 14.
+   * Use optimized Markov fast-path kernels for NTLM8/NTLM9 when parameters match. */
   if (args->use_markov) {
-    if (strcmp(kernel_path, CRACKALACK_NTLM8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NTLM9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_9_KERNEL_PATH) == 0) {
+    if (is_markov_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
+      kernel_path = CRACKALACK_MARKOV_NTLM8_KERNEL_PATH;
+      kernel_name = "crackalack_markov_ntlm8";
       if (args->gpu.device_number == 0) {
-        printf("%sNote: --markov cannot use fast-path kernels. Falling back to Markov generic kernel.%s\n", YELLOWB, CLR); fflush(stdout);
+        printf("%sNote: optimized Markov NTLM8 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
       }
-    }
+    } else if (is_markov_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
+      kernel_path = CRACKALACK_MARKOV_NTLM9_KERNEL_PATH;
+      kernel_name = "crackalack_markov_ntlm9";
+      if (args->gpu.device_number == 0) {
+        printf("%sNote: optimized Markov NTLM9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
+      }
+    } else {
+      if (strcmp(kernel_path, CRACKALACK_NTLM8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NTLM9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_9_KERNEL_PATH) == 0) {
+        if (args->gpu.device_number == 0) {
+          printf("%sNote: --markov cannot use fast-path kernels. Falling back to Markov generic kernel.%s\n", YELLOWB, CLR); fflush(stdout);
+        }
+      }
 #ifdef USE_METAL
-    kernel_path = "crackalack_markov.metal";
-    kernel_name = "crackalack_markov";
+      kernel_path = "crackalack_markov.metal";
+      kernel_name = "crackalack_markov";
 #else
-    kernel_path = "crackalack_markov.cl";
-    kernel_name = "crackalack_markov";
+      kernel_path = "crackalack_markov.cl";
+      kernel_name = "crackalack_markov";
 #endif
+    }
   }
 
   /* Get the number of compute units in this device. */
@@ -399,15 +425,20 @@ void *host_thread(void *ptr) {
   }
 
   writer_state ws = {0};
-  ws.ready = 0;
+  ws.pending_ready = 0;
   ws.shutdown = 0;
   ws.filename = args->filename;
   ws.device_number = gpu->device_number;
-  ws.start_buf = calloc(indices_size, sizeof(gpu_ulong));
-  ws.end_buf = calloc(indices_size, sizeof(gpu_ulong));
-  ws.buf_size = indices_size;
-  if ((ws.start_buf == NULL) || (ws.end_buf == NULL)) {
-    fprintf(stderr, "Failed to create writer double-buffers.\n");
+  ws.start_buf[0] = calloc(indices_size, sizeof(gpu_ulong));
+  ws.start_buf[1] = calloc(indices_size, sizeof(gpu_ulong));
+  ws.end_buf[0] = calloc(indices_size, sizeof(gpu_ulong));
+  ws.end_buf[1] = calloc(indices_size, sizeof(gpu_ulong));
+  ws.buf_size[0] = indices_size;
+  ws.buf_size[1] = indices_size;
+  ws.active_idx = 0;
+  ws.pending_idx = 0;
+  if ((ws.start_buf[0] == NULL) || (ws.start_buf[1] == NULL) || (ws.end_buf[0] == NULL) || (ws.end_buf[1] == NULL)) {
+    fprintf(stderr, "Failed to create writer triple-buffers.\n");
     exit(-1);
   }
   pthread_mutex_init(&ws.mutex, NULL);
@@ -444,7 +475,7 @@ void *host_thread(void *ptr) {
     /* All chains generated, so shut down the writer thread and terminate. */
     if (thread_complete) {
       pthread_mutex_lock(&ws.mutex);
-      while (ws.ready)
+      while (ws.pending_ready)
         pthread_cond_wait(&ws.cond, &ws.mutex);
       ws.shutdown = 1;
       pthread_cond_signal(&ws.cond);
@@ -453,8 +484,10 @@ void *host_thread(void *ptr) {
 
       pthread_mutex_destroy(&ws.mutex);
       pthread_cond_destroy(&ws.cond);
-      FREE(ws.start_buf);
-      FREE(ws.end_buf);
+      FREE(ws.start_buf[0]);
+      FREE(ws.start_buf[1]);
+      FREE(ws.end_buf[0]);
+      FREE(ws.end_buf[1]);
 
       CLFREEBUFFER(hash_type_buffer);
       CLFREEBUFFER(charset_buffer);
@@ -559,14 +592,16 @@ void *host_thread(void *ptr) {
       thread_complete = 1;
     else {
 
-      /* Wait for the previous async write to complete, then hand off data. */
+      /* Wait for a free buffer, then hand off data. */
       pthread_mutex_lock(&ws.mutex);
-      while (ws.ready)
+      while (ws.pending_ready)
         pthread_cond_wait(&ws.cond, &ws.mutex);
-      memcpy(ws.start_buf, start_indices, indices_size * sizeof(gpu_ulong));
-      memcpy(ws.end_buf, end_indices, indices_size * sizeof(gpu_ulong));
-      ws.buf_size = indices_size;
-      ws.ready = 1;
+      unsigned int free_idx = 1 - ws.active_idx;  /* Use the non-active buffer */
+      memcpy(ws.start_buf[free_idx], start_indices, indices_size * sizeof(gpu_ulong));
+      memcpy(ws.end_buf[free_idx], end_indices, indices_size * sizeof(gpu_ulong));
+      ws.buf_size[free_idx] = indices_size;
+      ws.pending_idx = free_idx;
+      ws.pending_ready = 1;
       pthread_cond_signal(&ws.cond);
       pthread_mutex_unlock(&ws.mutex);
 

@@ -33,7 +33,7 @@ __kernel void crackalack(
   unsigned char hash[MAX_HASH_OUTPUT_LEN];
   unsigned int hash_len;
 
-  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index);
+  copy_plaintext_space_up_to_index(plaintext_space_up_to_index, g_plaintext_space_up_to_index, plaintext_len_max);
   unsigned long plaintext_space_total = *g_plaintext_space_total;
 
   // Generate a chain, and store it in the local buffer.
