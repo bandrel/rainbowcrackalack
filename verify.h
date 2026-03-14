@@ -2,6 +2,7 @@
 #define _VERIFY_H
 
 #include <inttypes.h>
+#include "markov.h"
 
 
 #define VERIFY_TABLE_TYPE_LOOKUP 2
@@ -25,7 +26,7 @@ void _print_chain_error(uint64_t random_chain, uint64_t start, uint64_t actual_e
 
 int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, unsigned int *error_chain_num);
 
-int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify);
+int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify, const markov_model *markov);
 
 int verify_chains_recompute(const char *filename, uint64_t start_chain, uint64_t count, int hash_type, const char *charset, int chain_len);
 
