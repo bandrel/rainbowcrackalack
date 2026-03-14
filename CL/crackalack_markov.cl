@@ -16,7 +16,7 @@ __kernel void crackalack_markov(
     __global unsigned long *g_plaintext_space_up_to_index,
     __global unsigned long *g_plaintext_space_total,
     __constant unsigned char *g_sorted_pos0,
-    __constant unsigned char *g_sorted_bigram,
+    __global const unsigned char *g_sorted_bigram,
     __global unsigned int *g_max_positions)
 {
   /* Markov generation uses fixed-length plaintexts (plaintext_len_min == plaintext_len_max,

@@ -26,7 +26,7 @@ __kernel void test_index_to_plaintext_markov(
     __global unsigned int  *g_plaintext_len_out,
     __global unsigned char *g_debug,
     __constant unsigned char *g_sorted_pos0,
-    __constant unsigned char *g_sorted_bigram,
+    __global const unsigned char *g_sorted_bigram,
     __global unsigned int  *g_max_positions)
 {
     char         charset[MAX_CHARSET_LEN];
