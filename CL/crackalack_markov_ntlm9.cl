@@ -15,7 +15,7 @@ __kernel void crackalack_markov_ntlm9(
     __global unsigned long *unused6,
     __global unsigned int *unused7,
     __constant unsigned char *g_sorted_pos0,
-    __constant unsigned char *g_sorted_bigram,
+    __global const unsigned char *g_sorted_bigram,
     __global unsigned int *unused8) {
   unsigned long index = g_indices[get_global_id(0)];
   unsigned char plaintext[9];
