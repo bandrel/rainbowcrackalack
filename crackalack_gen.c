@@ -307,6 +307,7 @@ void *host_thread(void *ptr) {
   gpu_dev *gpu = &(args->gpu);
 
   char *kernel_path = CRACKALACK_KERNEL_PATH, *kernel_name = "crackalack";
+  int using_fast_path_kernel = 0;
   size_t gws = 0, kernel_work_group_size = 0, kernel_preferred_work_group_size_multiple = 0;
   uint64_t *start_indices = NULL, *end_indices = NULL;
   unsigned int i = 0, indices_size = 0, thread_complete = 0, num_passes = 0, pass = 0, chain_len = 0, charset_len = 0;
@@ -336,24 +337,28 @@ void *host_thread(void *ptr) {
   if (is_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
     kernel_path = CRACKALACK_NTLM8_KERNEL_PATH;
     kernel_name = "crackalack_ntlm8";
+    using_fast_path_kernel = 1;
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized NTLM8 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
   } else if (is_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
     kernel_path = CRACKALACK_NTLM9_KERNEL_PATH;
     kernel_name = "crackalack_ntlm9";
+    using_fast_path_kernel = 1;
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized NTLM9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
   } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
     kernel_path = CRACKALACK_MD5_8_KERNEL_PATH;
     kernel_name = "crackalack_md5_8";
+    using_fast_path_kernel = 1;
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized MD5_8 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
   } else if (is_md5_9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
     kernel_path = CRACKALACK_MD5_9_KERNEL_PATH;
     kernel_name = "crackalack_md5_9";
+    using_fast_path_kernel = 1;
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized MD5_9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
@@ -590,9 +595,10 @@ void *host_thread(void *ptr) {
         CLCREATEARG_ARRAY(11, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
         CLCREATEARG_ARRAY(12, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.max_positions * markov.charset_len * markov.charset_len * sizeof(uint8_t));
         CLCREATEARG(13, max_positions_buffer, CL_RO, markov.max_positions, sizeof(gpu_uint));
-      } else {
+      } else if (using_fast_path_kernel) {
         /* Fast-path kernels (NTLM8, NTLM9, etc.) expect 14 args even though they don't use 11-13.
-         * Provide dummy buffers to satisfy OpenCL's requirement that all kernel args be set. */
+         * Provide dummy buffers to satisfy OpenCL's requirement that all kernel args be set.
+         * The generic crackalack kernel only has 11 args, so skip these for it. */
         static uint8_t dummy_byte = 0;
         static gpu_uint dummy_uint = 0;
         CLCREATEARG(11, sorted_pos0_buffer, CL_RO, dummy_byte, sizeof(uint8_t));
