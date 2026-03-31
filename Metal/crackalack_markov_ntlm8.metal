@@ -11,24 +11,25 @@ kernel void crackalack_markov_ntlm8(
     device unsigned int *g_charset_len [[buffer(2)]],
     device unsigned int *unused3 [[buffer(3)]],
     device unsigned int *unused4 [[buffer(4)]],
-    device unsigned int *unused5 [[buffer(5)]],
+    device unsigned int *g_reduction_offset [[buffer(5)]],
     device unsigned int *g_chain_len [[buffer(6)]],
     device ulong *g_indices [[buffer(7)]],
     device unsigned int *g_pos_start [[buffer(8)]],
     device ulong *unused7 [[buffer(9)]],
     device unsigned int *unused8 [[buffer(10)]],
     constant unsigned char *g_sorted_pos0 [[buffer(11)]],
-    device const unsigned char *g_sorted_bigram [[buffer(12)]],
+    constant unsigned char *g_sorted_bigram [[buffer(12)]],
     device unsigned int *unused9 [[buffer(13)]],
     uint gid [[thread_position_in_grid]]) {
   ulong index = g_indices[gid];
   unsigned char plaintext[8];
   unsigned int charset_len = *g_charset_len;
+  unsigned int reduction_offset = *g_reduction_offset;
 
 
   for (unsigned int pos = *g_pos_start; pos < (*g_chain_len - 1); pos++) {
     index_to_plaintext_markov8(index, charset, charset_len, g_sorted_pos0, g_sorted_bigram, plaintext);
-    index = hash_to_index_markov8(hash_ntlm8(plaintext), pos);
+    index = hash_to_index_markov8(hash_ntlm8(plaintext), reduction_offset, pos);
   }
 
   g_indices[gid] = index;
