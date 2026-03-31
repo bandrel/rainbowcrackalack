@@ -59,7 +59,7 @@ struct _rt_parameters {
   unsigned int table_index;
   unsigned int reduction_offset;
   unsigned int chain_len;
-  unsigned int num_chains;
+  uint64_t num_chains;
   unsigned int table_part;
 
   uint64_t markov_keyspace; /* 0 = not Markov; >0 = truncated keyspace */
@@ -83,6 +83,7 @@ unsigned int is_markov_ntlm9(unsigned int hash_type, char *charset, unsigned int
 unsigned int is_md5_8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
 unsigned int is_md5_9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
 unsigned int parse_uint_arg(const char *s, const char *name);
+uint64_t parse_uint64_arg(const char *s, const char *name);
 void parse_rt_params(rt_parameters *rt_params, char *rt_filename);
 void *recalloc(void *ptr, size_t new_size, size_t old_size);
 size_t rt_log(rc_file f, const char *fmt, ...);

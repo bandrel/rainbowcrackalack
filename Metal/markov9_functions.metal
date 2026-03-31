@@ -10,7 +10,7 @@ inline void index_to_plaintext_markov9(
     constant char *charset,
     unsigned int charset_len,
     constant unsigned char *sorted_pos0,
-    device const unsigned char *sorted_bigram,
+    constant unsigned char *sorted_bigram,
     thread unsigned char *plaintext)
 {
     ulong cs2 = (ulong)charset_len * charset_len;
@@ -93,10 +93,10 @@ inline ulong hash_ntlm9(thread unsigned char *plaintext) {
 }
 
 
-inline ulong hash_to_index_markov9(ulong hash, unsigned int pos) {
+inline ulong hash_to_index_markov9(ulong hash, unsigned int reduction_offset, unsigned int pos) {
   unsigned int tmp;
 
-  hash += pos;
+  hash += reduction_offset + pos;
 
   tmp = ((hash >> 58) * 29) >> 6;
 
@@ -109,7 +109,7 @@ inline ulong hash_to_index_markov9(ulong hash, unsigned int pos) {
 }
 
 
-inline ulong hash_char_to_index_markov9(device unsigned char *hash_value, unsigned int pos) {
+inline ulong hash_char_to_index_markov9(device unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   ulong ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -126,5 +126,5 @@ inline ulong hash_char_to_index_markov9(device unsigned char *hash_value, unsign
   ret <<= 8;
   ret |= hash_value[0];
 
-  return hash_to_index_markov9(ret, pos);
+  return hash_to_index_markov9(ret, reduction_offset, pos);
 }

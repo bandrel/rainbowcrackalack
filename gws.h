@@ -3,6 +3,6 @@
 
 #include "gpu_backend.h"
 
-unsigned int get_optimal_gws(gpu_device device);
+unsigned int get_optimal_gws(gpu_device device, const char *kernel_name);
 
 #endif

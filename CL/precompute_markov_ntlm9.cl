@@ -29,11 +29,11 @@ __kernel void precompute_markov_ntlm9(
 
   unsigned char plaintext[9];
   unsigned int charset_len = *g_charset_len;
-  unsigned long index = hash_char_to_index_markov9(g_hash, target_chain_len - 1);
+  unsigned long index = hash_char_to_index_markov9(g_hash, 0, target_chain_len - 1);
 
   for(unsigned int i = target_chain_len; i < 802999; i++) {
     index_to_plaintext_markov9(index, charset, charset_len, g_sorted_pos0, g_sorted_bigram, plaintext);
-    index = hash_to_index_markov9(hash_ntlm9(plaintext), i);
+    index = hash_to_index_markov9(hash_ntlm9(plaintext), 0, i);
   }
 
   g_output[get_global_id(0)] = index;

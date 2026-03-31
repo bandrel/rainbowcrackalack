@@ -20,7 +20,7 @@ kernel void precompute_markov_ntlm8(
     device ulong *unused7 [[buffer(12)]],
     device ulong *unused8 [[buffer(13)]],
     constant unsigned char *g_sorted_pos0 [[buffer(14)]],
-    device const unsigned char *g_sorted_bigram [[buffer(15)]],
+    constant unsigned char *g_sorted_bigram [[buffer(15)]],
     device unsigned int *unused9 [[buffer(16)]],
     uint gid [[thread_position_in_grid]]) {
 
@@ -33,11 +33,11 @@ kernel void precompute_markov_ntlm8(
 
   unsigned char plaintext[8];
   unsigned int charset_len = *g_charset_len;
-  ulong index = hash_char_to_index_markov8(g_hash, target_chain_len - 1);
+  ulong index = hash_char_to_index_markov8(g_hash, 0, target_chain_len - 1);
 
   for(unsigned int i = target_chain_len; i < 421999; i++) {
     index_to_plaintext_markov8(index, charset, charset_len, g_sorted_pos0, g_sorted_bigram, plaintext);
-    index = hash_to_index_markov8(hash_ntlm8(plaintext), i);
+    index = hash_to_index_markov8(hash_ntlm8(plaintext), 0, i);
   }
 
   g_output[gid] = index;
