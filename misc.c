@@ -369,7 +369,7 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
       }
 
       /* Now parse the unsigned integers. */
-      if (sscanf(suffix, "%u-%u_%u_%ux%u_%u", &rt_params->plaintext_len_min, &rt_params->plaintext_len_max, &rt_params->table_index, &rt_params->chain_len, &rt_params->num_chains, &rt_params->table_part) == 6) {
+      if (sscanf(suffix, "%u-%u_%u_%ux%"SCNu64"_%u", &rt_params->plaintext_len_min, &rt_params->plaintext_len_max, &rt_params->table_index, &rt_params->chain_len, &rt_params->num_chains, &rt_params->table_part) == 6) {
 
 
 	/* Calculate the reduction offset from the table index. */
@@ -409,6 +409,20 @@ unsigned int parse_uint_arg(const char *s, const char *name) {
     exit(-1);
   }
   return (unsigned int)val;
+}
+
+
+/* Parses a CLI argument as a non-negative uint64_t.
+ * Exits with an error message if the value is not a valid integer. */
+uint64_t parse_uint64_arg(const char *s, const char *name) {
+  char *end;
+  errno = 0;
+  unsigned long long val = strtoull(s, &end, 10);
+  if (errno != 0 || end == s || *end != '\0') {
+    fprintf(stderr, "Error: %s must be a valid non-negative integer, got '%s'.\n", name, s);
+    exit(-1);
+  }
+  return (uint64_t)val;
 }
 
 

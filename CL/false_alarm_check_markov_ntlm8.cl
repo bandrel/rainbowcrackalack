@@ -35,7 +35,7 @@ __kernel void false_alarm_check_markov_ntlm8(
     index_to_plaintext_markov8(index, charset, charset_len, g_sorted_pos0, g_sorted_bigram, plaintext);
 
     previous_index = index;
-    index = hash_to_index_markov8(hash_ntlm8(plaintext), pos);
+    index = hash_to_index_markov8(hash_ntlm8(plaintext), 0, pos);
 
     if ((index == (hash_base_index + pos)) || (index == (hash_base_index + pos - 6634204312890625UL))) {
       g_plaintext_indices[index_pos] = previous_index;

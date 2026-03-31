@@ -5,9 +5,20 @@
 #include "gws.h"
 
 
-/* Given a GPU device, returns the optimal GWS setting (found through manual experimentation).  Returns 0 if the optimal setting on the device is unknown. */
-unsigned int get_optimal_gws(gpu_device device) {
+/* Returns 1 if kernel_name refers to a Markov kernel (higher register pressure,
+ * more memory traffic than standard NTLM kernels). */
+static int is_markov_kernel(const char *kernel_name) {
+  if (kernel_name == NULL) return 0;
+  return strstr(kernel_name, "markov") != NULL;
+}
+
+/* Given a GPU device and optional kernel name, returns the optimal GWS setting
+ * (found through manual experimentation).  Returns 0 if the optimal setting on
+ * the device is unknown.  Markov kernels use ~25% lower GWS due to higher
+ * register pressure and memory traffic. */
+unsigned int get_optimal_gws(gpu_device device, const char *kernel_name) {
   char vendor[128] = {0}, name[64] = {0};
+  int markov = is_markov_kernel(kernel_name);
 
 
   get_device_str(device, CL_DEVICE_VENDOR, vendor, sizeof(vendor) - 1);
@@ -199,47 +210,54 @@ unsigned int get_optimal_gws(gpu_device device) {
 
 #ifdef USE_METAL
   if (strcmp(vendor, "Apple") == 0) {
+    unsigned int base_gws = 0;
     if (strstr(name, "M4 Max") != NULL)
-      return 512 * 512;
+      base_gws = 512 * 512;
     else if (strstr(name, "M4 Pro") != NULL)
-      return 384 * 512;
+      base_gws = 384 * 512;
     else if (strstr(name, "M4") != NULL)
-      return 256 * 512;
+      base_gws = 256 * 512;
     else if (strstr(name, "M3 Max") != NULL)
-      return 512 * 512;
+      base_gws = 256 * 512;
     else if (strstr(name, "M3 Pro") != NULL)
-      return 384 * 384;
+      base_gws = 384 * 384;
     else if (strstr(name, "M3") != NULL)
-      return 256 * 384;
+      base_gws = 256 * 384;
     else if (strstr(name, "M2 Ultra") != NULL)
-      return 512 * 384;
+      base_gws = 512 * 384;
     else if (strstr(name, "M2 Max") != NULL)
-      return 384 * 384;
+      base_gws = 384 * 384;
     else if (strstr(name, "M2 Pro") != NULL)
-      return 256 * 384;
+      base_gws = 256 * 384;
     else if (strstr(name, "M2") != NULL)
-      return 256 * 256;
+      base_gws = 256 * 256;
     else if (strstr(name, "M1 Ultra") != NULL)
-      return 384 * 384;
+      base_gws = 384 * 384;
     else if (strstr(name, "M1 Max") != NULL)
-      return 256 * 384;
+      base_gws = 256 * 384;
     else if (strstr(name, "M1 Pro") != NULL)
-      return 256 * 256;
+      base_gws = 256 * 256;
     else if (strstr(name, "M1") != NULL)
-      return 256 * 256;
+      base_gws = 256 * 256;
     else {
       /* Unknown Apple Silicon - memory-based heuristic */
       gpu_ulong mem_size = 0;
       get_device_ulong(device, CL_DEVICE_GLOBAL_MEM_SIZE, &mem_size);
       if (mem_size > 64ULL * 1024 * 1024 * 1024)
-        return 512 * 512;
+        base_gws = 512 * 512;
       else if (mem_size > 32ULL * 1024 * 1024 * 1024)
-        return 384 * 384;
+        base_gws = 384 * 384;
       else if (mem_size > 16ULL * 1024 * 1024 * 1024)
-        return 256 * 384;
+        base_gws = 256 * 384;
       else
-        return 256 * 256;
+        base_gws = 256 * 256;
     }
+    /* Markov kernels have higher register pressure and more memory
+     * traffic from bigram lookups; reduce GWS by 25% to avoid
+     * register spills and improve per-thread cache residency. */
+    if (markov)
+      return (base_gws * 3) / 4;
+    return base_gws;
   }
 #endif
 

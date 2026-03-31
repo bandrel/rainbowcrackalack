@@ -10,7 +10,9 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "cpu_rt_functions.h"
 #include "markov.h"
+#include "shared.h"
 #include "test_markov.h"
 
 
@@ -719,6 +721,473 @@ mq04_done:;
 
 
 /* -------------------------------------------------------------------------
+ * Group H: hash_to_index_markov9 approximation boundary tests
+ * Tests H2I9-01 through H2I9-04
+ *
+ * The GPU fast-path for NTLM9 uses a bit-manipulation trick to approximate
+ * hash % 630249409724609375 (95^9) without a full 64-bit division:
+ *   tmp = ((hash >> 58) * 29) >> 6
+ *   hash -= PST * tmp
+ *   if (hash >= PST) hash -= PST
+ *
+ * This group verifies the approximation matches exact modulo for all
+ * boundary values where it's most likely to diverge.
+ * ------------------------------------------------------------------------- */
+
+#define MARKOV9_PST 630249409724609375UL
+
+static uint64_t hash_to_index_markov9_approx(uint64_t hash, unsigned int pos)
+{
+    hash += (uint64_t)pos;  /* wraps on overflow, matching GPU unsigned behavior */
+    unsigned int tmp = ((hash >> 58) * 29) >> 6;
+    hash -= MARKOV9_PST * tmp;
+    if (hash >= MARKOV9_PST)
+        hash -= MARKOV9_PST;
+    return hash;
+}
+
+static uint64_t hash_to_index_markov9_exact(uint64_t hash, unsigned int pos)
+{
+    uint64_t val = hash + (uint64_t)pos;  /* wraps on overflow */
+    return val % MARKOV9_PST;
+}
+
+static int group_h(void)
+{
+    int ok = 1;
+    unsigned int test_num = 0;
+
+    struct { uint64_t hash; unsigned int pos; } vectors[] = {
+        /* H2I9-01: basic values */
+        {0UL, 0},
+        {1UL, 0},
+        {MARKOV9_PST - 1, 0},          /* just below PST */
+        {MARKOV9_PST, 0},              /* exactly PST -> should give 0 */
+        {MARKOV9_PST + 1, 0},          /* one above PST */
+
+        /* H2I9-02: near max quotient boundary (2^64/PST ≈ 29.27, max quotient=29) */
+        {MARKOV9_PST * 29, 0},
+        {MARKOV9_PST * 29 + 1, 0},
+        {MARKOV9_PST * 29 - 1, 0},
+
+        /* H2I9-03: UINT64_MAX and overflow */
+        {UINT64_MAX, 0},
+        {UINT64_MAX, 1},               /* overflow: wraps to 0 */
+        {UINT64_MAX, 1000},            /* overflow: wraps to 999 */
+        {UINT64_MAX - 999, 1000},      /* overflow: wraps to 0 */
+        {UINT64_MAX, UINT32_MAX},      /* extreme overflow */
+
+        /* H2I9-04: exact multiples and neighbors for k=1..15 */
+        {MARKOV9_PST * 1, 0},
+        {MARKOV9_PST * 1 - 1, 0},
+        {MARKOV9_PST * 1 + 1, 0},
+        {MARKOV9_PST * 2, 0},
+        {MARKOV9_PST * 2 - 1, 0},
+        {MARKOV9_PST * 2 + 1, 0},
+        {MARKOV9_PST * 5, 0},
+        {MARKOV9_PST * 5 - 1, 0},
+        {MARKOV9_PST * 5 + 1, 0},
+        {MARKOV9_PST * 10, 0},
+        {MARKOV9_PST * 10 - 1, 0},
+        {MARKOV9_PST * 10 + 1, 0},
+        {MARKOV9_PST * 15, 0},
+        {MARKOV9_PST * 15 - 1, 0},
+        {MARKOV9_PST * 15 + 1, 0},
+        {MARKOV9_PST * 20, 0},
+        {MARKOV9_PST * 20 - 1, 0},
+        {MARKOV9_PST * 20 + 1, 0},
+        {MARKOV9_PST * 25, 0},
+        {MARKOV9_PST * 25 - 1, 0},
+        {MARKOV9_PST * 25 + 1, 0},
+        {MARKOV9_PST * 28, 0},
+        {MARKOV9_PST * 28 - 1, 0},
+        {MARKOV9_PST * 28 + 1, 0},
+        {MARKOV9_PST * 29, 0},
+        {MARKOV9_PST * 29 - 1, 0},
+
+        /* With nonzero pos on interesting hash values */
+        {MARKOV9_PST - 1, 1},          /* hash+pos = PST exactly */
+        {MARKOV9_PST - 1, 2},          /* hash+pos = PST+1 */
+        {MARKOV9_PST * 29, 100},
+        {0UL, 803000},                 /* typical max pos for NTLM9 chains */
+    };
+
+    unsigned int num_vectors = sizeof(vectors) / sizeof(vectors[0]);
+
+    for (unsigned int i = 0; i < num_vectors; i++) {
+        uint64_t approx = hash_to_index_markov9_approx(vectors[i].hash, vectors[i].pos);
+        uint64_t exact  = hash_to_index_markov9_exact(vectors[i].hash, vectors[i].pos);
+        test_num++;
+
+        if (approx != exact) {
+            fprintf(stderr, "H2I9 test %u failed: hash=%"PRIu64" pos=%u -> approx=%"PRIu64" exact=%"PRIu64"\n",
+                    test_num, vectors[i].hash, vectors[i].pos, approx, exact);
+            ok = 0;
+        }
+    }
+
+    return ok;
+}
+
+
+/* -------------------------------------------------------------------------
+ * Group I: Cross-path consistency (generic CPU i2p vs NTLM8/9 fast-path simulation)
+ * Tests XP-01 (NTLM8) and XP-02 (NTLM9)
+ *
+ * Simulates the GPU fast-path unrolled index_to_plaintext in C and verifies
+ * byte-for-byte match against index_to_plaintext_markov_cpu().
+ * ------------------------------------------------------------------------- */
+
+#define ASCII_32_95_LEN 95
+#define MARKOV8_PSPACE  6634204312890625UL   /* 95^8 */
+#define MARKOV9_PSPACE  630249409724609375UL /* 95^9 */
+
+static const char ASCII_32_95[] = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+
+/*
+ * Build a uniform ascii-32-95 Markov model with max_positions positions.
+ * All frequencies are 1 (equivalent to Laplace-only).
+ * Caller must call markov_free() when done (pos0_freq/bigram_freq are heap).
+ */
+static int build_uniform_ascii95_model(markov_model *m, unsigned int max_positions)
+{
+    memset(m, 0, sizeof(*m));
+    m->charset_len = ASCII_32_95_LEN;
+    m->max_positions = max_positions;
+    memcpy(m->charset, ASCII_32_95, ASCII_32_95_LEN);
+
+    size_t n = ASCII_32_95_LEN;
+    m->pos0_freq = calloc(n, sizeof(uint64_t));
+    m->bigram_freq = calloc(max_positions * n * n, sizeof(uint64_t));
+    m->sorted_pos0 = malloc(n * sizeof(uint8_t));
+    m->sorted_bigram = malloc(max_positions * n * n * sizeof(uint8_t));
+
+    if (!m->pos0_freq || !m->bigram_freq || !m->sorted_pos0 || !m->sorted_bigram) {
+        fprintf(stderr, "build_uniform_ascii95_model: OOM\n");
+        markov_free(m);
+        return -1;
+    }
+
+    /* Uniform: all frequencies = 1 */
+    for (size_t i = 0; i < n; i++)
+        m->pos0_freq[i] = 1;
+    for (size_t i = 0; i < max_positions * n * n; i++)
+        m->bigram_freq[i] = 1;
+
+    markov_build_sorted(m);
+    return 0;
+}
+
+/*
+ * Simulate the NTLM8 GPU fast-path index_to_plaintext_markov8.
+ * Mirrors CL/markov8_functions.cl exactly: index splitting, ci+32 shortcut.
+ */
+static void index_to_plaintext_markov8_sim(uint64_t index,
+                                            const markov_model *model,
+                                            unsigned char *plaintext)
+{
+    unsigned int indexHi = (unsigned int)(index / 81450625UL);  /* 95^4 */
+    unsigned int indexLo = (unsigned int)(index - 81450625UL * indexHi);
+
+    unsigned short group_23 = (unsigned short)(indexLo / 9025);
+    unsigned short group_01 = (unsigned short)(indexLo - (unsigned int)9025 * group_23);
+    unsigned short group_67 = (unsigned short)(indexHi / 9025);
+    unsigned short group_45 = (unsigned short)(indexHi - (unsigned int)9025 * group_67);
+
+    unsigned char rank1 = (unsigned char)(group_01 / 95);
+    unsigned char rank0 = (unsigned char)(group_01 - (unsigned short)95 * rank1);
+    unsigned char rank3 = (unsigned char)(group_23 / 95);
+    unsigned char rank2 = (unsigned char)(group_23 - (unsigned short)95 * rank3);
+    unsigned char rank5 = (unsigned char)(group_45 / 95);
+    unsigned char rank4 = (unsigned char)(group_45 - (unsigned short)95 * rank5);
+    unsigned char rank7 = (unsigned char)(group_67 / 95);
+    unsigned char rank6 = (unsigned char)(group_67 - (unsigned short)95 * rank7);
+
+    unsigned int ci = model->sorted_pos0[rank0];
+    plaintext[0] = ci + 32;
+
+    ci = model->sorted_bigram[ci * 95 + rank1];
+    plaintext[1] = ci + 32;
+
+    ci = model->sorted_bigram[9025 + ci * 95 + rank2];
+    plaintext[2] = ci + 32;
+
+    ci = model->sorted_bigram[18050 + ci * 95 + rank3];
+    plaintext[3] = ci + 32;
+
+    ci = model->sorted_bigram[27075 + ci * 95 + rank4];
+    plaintext[4] = ci + 32;
+
+    ci = model->sorted_bigram[36100 + ci * 95 + rank5];
+    plaintext[5] = ci + 32;
+
+    ci = model->sorted_bigram[45125 + ci * 95 + rank6];
+    plaintext[6] = ci + 32;
+
+    ci = model->sorted_bigram[54150 + ci * 95 + rank7];
+    plaintext[7] = ci + 32;
+}
+
+/*
+ * Simulate the NTLM9 GPU fast-path index_to_plaintext_markov9.
+ * Mirrors CL/markov9_functions.cl exactly: unrolled positions, charset[] lookup.
+ */
+static void index_to_plaintext_markov9_sim(uint64_t index,
+                                            const markov_model *model,
+                                            unsigned char *plaintext)
+{
+    unsigned int charset_len = model->charset_len;
+    uint64_t cs2 = (uint64_t)charset_len * charset_len;
+
+    unsigned int charset_idx = model->sorted_pos0[index % charset_len];
+    plaintext[0] = model->charset[charset_idx];
+    index /= charset_len;
+    unsigned int prev_charset_idx = charset_idx;
+
+    /* Position 1 (bigram table at position 0) */
+    uint64_t offset = (uint64_t)prev_charset_idx * charset_len;
+    charset_idx = model->sorted_bigram[offset + (index % charset_len)];
+    plaintext[1] = model->charset[charset_idx];
+    index /= charset_len;
+    prev_charset_idx = charset_idx;
+
+    /* Position 2 (bigram table at position 1) */
+    offset = cs2 + (uint64_t)prev_charset_idx * charset_len;
+    charset_idx = model->sorted_bigram[offset + (index % charset_len)];
+    plaintext[2] = model->charset[charset_idx];
+    index /= charset_len;
+    prev_charset_idx = charset_idx;
+
+    /* Position 3 (bigram table at position 2) */
+    offset = 2UL * cs2 + (uint64_t)prev_charset_idx * charset_len;
+    charset_idx = model->sorted_bigram[offset + (index % charset_len)];
+    plaintext[3] = model->charset[charset_idx];
+    index /= charset_len;
+    prev_charset_idx = charset_idx;
+
+    /* Position 4 (bigram table at position 3) */
+    offset = 3UL * cs2 + (uint64_t)prev_charset_idx * charset_len;
+    charset_idx = model->sorted_bigram[offset + (index % charset_len)];
+    plaintext[4] = model->charset[charset_idx];
+    index /= charset_len;
+    prev_charset_idx = charset_idx;
+
+    /* Position 5 (bigram table at position 4) */
+    offset = 4UL * cs2 + (uint64_t)prev_charset_idx * charset_len;
+    charset_idx = model->sorted_bigram[offset + (index % charset_len)];
+    plaintext[5] = model->charset[charset_idx];
+    index /= charset_len;
+    prev_charset_idx = charset_idx;
+
+    /* Position 6 (bigram table at position 5) */
+    offset = 5UL * cs2 + (uint64_t)prev_charset_idx * charset_len;
+    charset_idx = model->sorted_bigram[offset + (index % charset_len)];
+    plaintext[6] = model->charset[charset_idx];
+    index /= charset_len;
+    prev_charset_idx = charset_idx;
+
+    /* Position 7 (bigram table at position 6) */
+    offset = 6UL * cs2 + (uint64_t)prev_charset_idx * charset_len;
+    charset_idx = model->sorted_bigram[offset + (index % charset_len)];
+    plaintext[7] = model->charset[charset_idx];
+    index /= charset_len;
+    prev_charset_idx = charset_idx;
+
+    /* Position 8 (bigram table at position 7) */
+    offset = 7UL * cs2 + (uint64_t)prev_charset_idx * charset_len;
+    charset_idx = model->sorted_bigram[offset + (index % charset_len)];
+    plaintext[8] = model->charset[charset_idx];
+}
+
+static int group_i(void)
+{
+    int ok = 1;
+
+    markov_model m;
+    if (build_uniform_ascii95_model(&m, 8) != 0)
+        return 0;
+
+    /* Test indices: boundaries + pseudo-random spread */
+    uint64_t test_indices_8[] = {
+        0, 1, 94, 95, 96, 9024, 9025, 9026,
+        81450624, 81450625, 81450626,
+        MARKOV8_PSPACE / 2,
+        MARKOV8_PSPACE - 1,
+        /* Pseudo-random spread via LCG */
+        12345, 999999, 1234567890,
+        42424242UL, 8888888888UL,
+        1111111111111UL, 5555555555555555UL,
+        MARKOV8_PSPACE / 3, MARKOV8_PSPACE / 7,
+        MARKOV8_PSPACE / 13, MARKOV8_PSPACE / 97,
+    };
+    unsigned int num_8 = sizeof(test_indices_8) / sizeof(test_indices_8[0]);
+
+    /* XP-01: NTLM8 fast-path vs generic CPU */
+    for (unsigned int i = 0; i < num_8; i++) {
+        unsigned char pt_cpu[8], pt_sim[8];
+        memset(pt_cpu, 0, sizeof(pt_cpu));
+        memset(pt_sim, 0, sizeof(pt_sim));
+
+        index_to_plaintext_markov_cpu(test_indices_8[i], &m, 8, pt_cpu);
+        index_to_plaintext_markov8_sim(test_indices_8[i], &m, pt_sim);
+
+        if (memcmp(pt_cpu, pt_sim, 8) != 0) {
+            fprintf(stderr, "XP-01 failed at index %"PRIu64": cpu=\"%.8s\" sim=\"%.8s\"\n",
+                    test_indices_8[i], pt_cpu, pt_sim);
+            ok = 0;
+        }
+    }
+
+    /* XP-02: NTLM9 fast-path vs generic CPU */
+    uint64_t test_indices_9[] = {
+        0, 1, 94, 95, 96, 9024, 9025, 9026,
+        81450624, 81450625, 81450626,
+        MARKOV9_PSPACE / 2,
+        MARKOV9_PSPACE - 1,
+        12345, 999999, 1234567890,
+        42424242UL, 8888888888UL,
+        1111111111111UL, 5555555555555555UL,
+        MARKOV9_PSPACE / 3, MARKOV9_PSPACE / 7,
+        MARKOV9_PSPACE / 13, MARKOV9_PSPACE / 97,
+    };
+    unsigned int num_9 = sizeof(test_indices_9) / sizeof(test_indices_9[0]);
+
+    for (unsigned int i = 0; i < num_9; i++) {
+        unsigned char pt_cpu[9], pt_sim[9];
+        memset(pt_cpu, 0, sizeof(pt_cpu));
+        memset(pt_sim, 0, sizeof(pt_sim));
+
+        index_to_plaintext_markov_cpu(test_indices_9[i], &m, 9, pt_cpu);
+        index_to_plaintext_markov9_sim(test_indices_9[i], &m, pt_sim);
+
+        if (memcmp(pt_cpu, pt_sim, 9) != 0) {
+            fprintf(stderr, "XP-02 failed at index %"PRIu64": cpu=\"%.9s\" sim=\"%.9s\"\n",
+                    test_indices_9[i], pt_cpu, pt_sim);
+            ok = 0;
+        }
+    }
+
+    markov_free(&m);
+    return ok;
+}
+
+
+/* -------------------------------------------------------------------------
+ * Group J: Keyspace truncation tests
+ * Tests KT-01 through KT-03
+ *
+ * When --markov-keyspace is used with a value less than charset_len^N,
+ * the reduction function produces indices in [0, keyspace) rather than
+ * [0, charset_len^N).  Verify the chain walk stays in bounds and that
+ * all produced plaintexts are valid.
+ * ------------------------------------------------------------------------- */
+
+static int group_j(void)
+{
+    int ok = 1;
+
+    /* Build small model: charset "abc", max_positions=1, full keyspace = 3^2 = 9 */
+    uint64_t pos0_freq[3]   = {10, 30, 20};
+    uint64_t bigram_freq[9] = {5, 15, 10,
+                                1,  1, 50,
+                                8,  2,  4};
+    markov_model m;
+    memset(&m, 0, sizeof(m));
+    m.charset_len   = 3;
+    m.max_positions = 1;
+    memcpy(m.charset, "abc", 3);
+    m.pos0_freq     = pos0_freq;
+    m.bigram_freq   = bigram_freq;
+    m.sorted_pos0   = malloc(3 * sizeof(uint8_t));
+    m.sorted_bigram = malloc(9 * sizeof(uint8_t));
+
+    if (!m.sorted_pos0 || !m.sorted_bigram) {
+        fprintf(stderr, "group_j: OOM\n");
+        free(m.sorted_pos0);
+        free(m.sorted_bigram);
+        return 0;
+    }
+    markov_build_sorted(&m);
+
+    /* KT-01: Truncated keyspace=5. Walk a 50-step chain,
+     * verify all indices stay in [0,5). */
+    {
+        uint64_t truncated_keyspace = 5;
+        uint64_t index = 0;
+        int in_bounds = 1;
+
+        for (unsigned int pos = 0; pos < 50; pos++) {
+            if (index >= truncated_keyspace) {
+                fprintf(stderr, "KT-01 failed: index=%"PRIu64" >= keyspace=%"PRIu64" at pos %u\n",
+                        index, truncated_keyspace, pos);
+                in_bounds = 0;
+                break;
+            }
+
+            unsigned char plaintext[MAX_PLAINTEXT_LEN];
+            unsigned char hash[16];
+            memset(plaintext, 0, sizeof(plaintext));
+            index_to_plaintext_markov_cpu(index, &m, 2, plaintext);
+            ntlm_hash((char *)plaintext, 2, hash);
+            index = hash_to_index(hash, 16, 0, truncated_keyspace, pos);
+        }
+        if (!in_bounds) ok = 0;
+    }
+
+    /* KT-02: All indices [0, truncated_keyspace) produce valid characters. */
+    {
+        uint64_t truncated_keyspace = 5;
+        for (uint64_t idx = 0; idx < truncated_keyspace; idx++) {
+            unsigned char pt[3];
+            memset(pt, 0, sizeof(pt));
+            index_to_plaintext_markov_cpu(idx, &m, 2, pt);
+
+            int c0_valid = 0, c1_valid = 0;
+            for (unsigned int j = 0; j < 3; j++) {
+                if (pt[0] == (unsigned char)m.charset[j]) c0_valid = 1;
+                if (pt[1] == (unsigned char)m.charset[j]) c1_valid = 1;
+            }
+            if (!c0_valid || !c1_valid) {
+                fprintf(stderr, "KT-02 failed: index %"PRIu64" -> invalid char '%c%c'\n",
+                        idx, (char)pt[0], (char)pt[1]);
+                ok = 0;
+                break;
+            }
+        }
+    }
+
+    /* KT-03: Multiple start points with truncated keyspace all stay in bounds. */
+    {
+        uint64_t truncated_keyspace = 4;
+        uint64_t starts[] = {0, 1, 2, 3};
+        for (unsigned int s = 0; s < 4; s++) {
+            uint64_t index = starts[s];
+            for (unsigned int pos = 0; pos < 30; pos++) {
+                if (index >= truncated_keyspace) {
+                    fprintf(stderr, "KT-03 failed: start=%"PRIu64" index=%"PRIu64" >= %"PRIu64" at pos %u\n",
+                            starts[s], index, truncated_keyspace, pos);
+                    ok = 0;
+                    goto kt03_done;
+                }
+                unsigned char plaintext[MAX_PLAINTEXT_LEN];
+                unsigned char hash[16];
+                memset(plaintext, 0, sizeof(plaintext));
+                index_to_plaintext_markov_cpu(index, &m, 2, plaintext);
+                ntlm_hash((char *)plaintext, 2, hash);
+                index = hash_to_index(hash, 16, 0, truncated_keyspace, pos);
+            }
+        }
+    }
+kt03_done:;
+
+    m.pos0_freq   = NULL;
+    m.bigram_freq = NULL;
+    markov_free(&m);
+    return ok;
+}
+
+
+/* -------------------------------------------------------------------------
  * test_markov - entry point
  * ------------------------------------------------------------------------- */
 
@@ -733,6 +1202,9 @@ int test_markov(void)
     ok &= group_e();
     ok &= group_f();
     ok &= group_g();
+    ok &= group_h();
+    ok &= group_i();
+    ok &= group_j();
 
     return ok;
 }

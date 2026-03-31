@@ -6,7 +6,7 @@ inline void index_to_plaintext_markov8(
     constant char *charset,
     unsigned int charset_len,
     constant unsigned char *sorted_pos0,
-    device const unsigned char *sorted_bigram,
+    constant unsigned char *sorted_bigram,
     thread unsigned char *plaintext)
 {
     unsigned int indexHi = (unsigned int)(index / 81450625UL);
@@ -186,12 +186,12 @@ inline ulong hash_ntlm8(thread unsigned char *plaintext) {
 }
 
 
-inline ulong hash_to_index_markov8(ulong hash, unsigned int pos) {
-  return (hash + pos) % 6634204312890625UL;
+inline ulong hash_to_index_markov8(ulong hash, unsigned int reduction_offset, unsigned int pos) {
+  return (hash + reduction_offset + pos) % 6634204312890625UL;
 }
 
 
-inline ulong hash_char_to_index_markov8(device unsigned char *hash_value, unsigned int pos) {
+inline ulong hash_char_to_index_markov8(device unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   ulong ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -208,5 +208,5 @@ inline ulong hash_char_to_index_markov8(device unsigned char *hash_value, unsign
   ret <<= 8;
   ret |= hash_value[0];
 
-  return (ret + pos) % 6634204312890625UL;
+  return hash_to_index_markov8(ret, reduction_offset, pos);
 }

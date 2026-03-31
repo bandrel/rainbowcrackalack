@@ -21,7 +21,7 @@ kernel void false_alarm_check_markov_ntlm9(
     device unsigned int *g_exec_block_scaler [[buffer(13)]],
     device ulong *g_plaintext_indices [[buffer(14)]],
     constant unsigned char *g_sorted_pos0 [[buffer(15)]],
-    device const unsigned char *g_sorted_bigram [[buffer(16)]],
+    constant unsigned char *g_sorted_bigram [[buffer(16)]],
     device unsigned int *unused7 [[buffer(17)]],
     uint gid [[thread_position_in_grid]]) {
 
@@ -39,7 +39,7 @@ kernel void false_alarm_check_markov_ntlm9(
     index_to_plaintext_markov9(index, charset, charset_len, g_sorted_pos0, g_sorted_bigram, plaintext);
 
     previous_index = index;
-    index = hash_to_index_markov9(hash_ntlm9(plaintext), pos);
+    index = hash_to_index_markov9(hash_ntlm9(plaintext), 0, pos);
 
     if ((index == (hash_base_index + pos)) || (index == (hash_base_index + pos - PLAINTEXT_SPACE_TOTAL))) {
       g_plaintext_indices[index_pos] = previous_index;

@@ -8,8 +8,8 @@
 #include "sort_utils.h"
 
 
-int is_sorted_rt(const uint64_t *data, unsigned int num_chains) {
-  unsigned int i;
+int is_sorted_rt(const uint64_t *data, uint64_t num_chains) {
+  uint64_t i;
   for (i = 0; i + 1 < num_chains; i++) {
     if (data[i * 2 + 1] > data[(i + 1) * 2 + 1])
       return 0;

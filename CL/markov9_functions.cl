@@ -93,10 +93,10 @@ inline unsigned long hash_ntlm9(unsigned char *plaintext) {
 }
 
 
-inline unsigned long hash_to_index_markov9(unsigned long hash, unsigned int pos) {
+inline unsigned long hash_to_index_markov9(unsigned long hash, unsigned int reduction_offset, unsigned int pos) {
   unsigned int tmp;
 
-  hash += pos;
+  hash += reduction_offset + pos;
 
   tmp = ((hash >> 58) * 29) >> 6;
 
@@ -109,7 +109,7 @@ inline unsigned long hash_to_index_markov9(unsigned long hash, unsigned int pos)
 }
 
 
-inline unsigned long hash_char_to_index_markov9(__global unsigned char *hash_value, unsigned int pos) {
+inline unsigned long hash_char_to_index_markov9(__global unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   unsigned long ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -126,5 +126,5 @@ inline unsigned long hash_char_to_index_markov9(__global unsigned char *hash_val
   ret <<= 8;
   ret |= hash_value[0];
 
-  return hash_to_index_markov9(ret, pos);
+  return hash_to_index_markov9(ret, reduction_offset, pos);
 }
