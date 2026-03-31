@@ -173,7 +173,7 @@ typedef struct {
 /* Struct to pass to binary search threads. */
 typedef struct {
   gpu_ulong *rainbow_table;
-  unsigned int num_chains;
+  uint64_t num_chains;
   precomputed_and_potential_indices *ppi_head;
   unsigned int thread_number;
   unsigned int total_threads;
@@ -183,11 +183,26 @@ typedef struct {
 } search_thread_args;
 
 
+/* State for a pipelined false alarm check (launch/harvest pattern). */
+typedef struct {
+  pthread_t threads[MAX_NUM_DEVICES];
+  unsigned int total_devices;
+  thread_args *args;
+  gpu_ulong *potential_start_indices;
+  unsigned int *potential_start_index_positions;
+  gpu_ulong *hash_base_indices;
+  precomputed_and_potential_indices **ppi_refs;
+  unsigned int num_potential_start_indices;
+  struct timespec start_time;
+  int active;  /* 1 if GPU threads are in-flight */
+} false_alarm_state;
+
+
 /* Struct to hold node in linked list of preloaded tables. */
 struct _preloaded_table {
   char *filepath;
   gpu_ulong *rainbow_table;
-  unsigned int num_chains;
+  uint64_t num_chains;
   struct _preloaded_table *next;
 };
 typedef struct _preloaded_table preloaded_table;
@@ -218,6 +233,8 @@ void *preloading_thread(void *ptr);
 void print_eta_precompute();
 gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
+void launch_false_alarm_check(precomputed_and_potential_indices *ppi, thread_args *args, false_alarm_state *state);
+void harvest_false_alarm_results(false_alarm_state *state);
 void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash_type);
 void load_precalc_cache(void);
 void free_precalc_cache(void);
@@ -369,31 +386,34 @@ void add_potential_start_index_and_position(precomputed_and_potential_indices *p
 }
 
 
-void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *args) {
-  pthread_t threads[MAX_NUM_DEVICES] = {0};
-  char time_str[128] = {0};
-  struct timespec start_time = {0};
+/* Launch GPU false alarm check asynchronously.  Snapshots the potential start
+ * indices from ppi into flat arrays and starts GPU threads.  The caller may
+ * safely clear ppi->potential_start_indices after this returns.  Call
+ * harvest_false_alarm_results() later to join threads and process results. */
+void launch_false_alarm_check(precomputed_and_potential_indices *ppi, thread_args *args, false_alarm_state *state) {
   gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
 
-  unsigned int num_potential_start_indices = 0, i = 0, j = 0; // init to -1 since 0 is possible index
+  unsigned int num_potential_start_indices = 0, i = 0, j = 0;
   unsigned int total_devices = args[0].total_devices;
   gpu_ulong plaintext_space_total = 0;
-  double time_delta = 0.0;
 
   precomputed_and_potential_indices *ppi_cur = ppi;
   gpu_ulong *potential_start_indices = NULL, *hash_base_indices = NULL;
   unsigned int *potential_start_index_positions = NULL;
   precomputed_and_potential_indices **ppi_refs = NULL;
 
+  state->active = 0;
+  state->total_devices = total_devices;
+  state->args = args;
 
   /* First count all the potential start indices. */
   while(ppi_cur) {
     num_potential_start_indices += ppi_cur->num_potential_start_indices;
     ppi_cur = ppi_cur->next;
   }
-  // nic come back
+
   /* If no potential matches were found, there's nothing else to do. */
-  if (num_potential_start_indices == 0) { // was 0
+  if (num_potential_start_indices == 0) {
     printf("No matches found in table.\n");
     return;
   }
@@ -446,40 +466,73 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
     ppi_cur = ppi_cur->next;
   }
 
-  /*for (i = 0; i < num_potential_start_indices; i++)
-    printf("Start point: %lu; Chain position: %u; hash base index: %lu\n", potential_start_indices[i], potential_start_index_positions[i], hash_base_indices[i]);*/
+  /* Save snapshot into state so harvest can use it. */
+  state->potential_start_indices = potential_start_indices;
+  state->potential_start_index_positions = potential_start_index_positions;
+  state->hash_base_indices = hash_base_indices;
+  state->ppi_refs = ppi_refs;
+  state->num_potential_start_indices = num_potential_start_indices;
 
-  /* Start the timer false alarm checking. */
-  start_timer(&start_time);
+  /* Start the timer for false alarm checking. */
+  start_timer(&state->start_time);
 
   /* Start one thread to control each GPU. */
   for (i = 0; i < total_devices; i++) {
-
-    /* Each thread gets the same reference to the list of potential start indices. */
     args[i].potential_start_indices = potential_start_indices;
     args[i].num_potential_start_indices = num_potential_start_indices;
     args[i].potential_start_index_positions = potential_start_index_positions;
     args[i].hash_base_indices = hash_base_indices;
 
-    if (pthread_create(&(threads[i]), NULL, &host_thread_false_alarm, &(args[i]))) {
+    if (pthread_create(&(state->threads[i]), NULL, &host_thread_false_alarm, &(args[i]))) {
       perror("Failed to create thread");
       exit(-1);
     }
-    //printf("********************************** host_thread_false_alarm created\n");
   }
 
-  /* Wait for all threads to finish. */
-  for (i = 0; i < total_devices; i++) {
-    if (pthread_join(threads[i], NULL) != 0) {
+  state->active = 1;
+  num_falsealarms += num_potential_start_indices;
+}
+
+
+/* Join GPU false alarm threads launched by launch_false_alarm_check(), process
+ * results, and free snapshot buffers.  No-op if state->active is 0. */
+void harvest_false_alarm_results(false_alarm_state *state) {
+  char time_str[128] = {0};
+  unsigned int i = 0, j = 0;
+  double time_delta = 0.0;
+  thread_args *args;
+  gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
+  int charset_len = 0;
+
+  if (!state->active)
+    return;
+
+  args = state->args;
+
+  /* Wait for all GPU threads to finish. */
+  for (i = 0; i < state->total_devices; i++) {
+    if (pthread_join(state->threads[i], NULL) != 0) {
       perror("Failed to join with thread");
       exit(-1);
     }
   }
-  //printf("********************************** host_thread_false_alarm joined\n");
+
+  /* Compute charset_len for index_to_plaintext (same logic as original). */
+  if (args->markov_keyspace > 0) {
+    charset_len = strlen(args->charset);
+    if (charset_len == 0) charset_len = 1;
+    fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, plaintext_space_up_to_index);
+  } else {
+    if (strcmp(args->charset_name, "byte") == 0)
+      charset_len = 256;
+    else
+      charset_len = strlen(args->charset);
+    fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
+  }
 
   /* Search for valid results, and update the ppi with the plaintext. */
   j = 0;
-  for (i = 0; i < total_devices; i++) {
+  for (i = 0; i < state->total_devices; i++) {
     unsigned int r;
     for (r = 0; r < args[i].num_results; r++, j++) {
       if (args[i].results[r] != UINT64_MAX) {
@@ -502,8 +555,7 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
 
       	  ntlm_hash(plaintext, plaintext_len, hash);
       	  if (!bytes_to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex)) || \
-      	      (strcmp(hash_hex, ppi_refs[j]->hash) != 0)) {
-      	    /*printf("Found super false positive!: NTLM('%s') != %s\n", plaintext, ppi_refs[j]->hash);*/
+      	      (strcmp(hash_hex, state->ppi_refs[j]->hash) != 0)) {
       	    continue;
       	  }
       	} else if (args[i].hash_type == HASH_MD5) {
@@ -512,7 +564,7 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
 
       	  md5_hash(plaintext, plaintext_len, hash);
       	  if (!bytes_to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex)) || \
-      	      (strcmp(hash_hex, ppi_refs[j]->hash) != 0)) {
+      	      (strcmp(hash_hex, state->ppi_refs[j]->hash) != 0)) {
       	    continue;
       	  }
       	} else if (args[i].hash_type == HASH_NETNTLMV1) {
@@ -526,9 +578,9 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
           netntlmv1_hash(real_key, 8, hash);
 
           if (!bytes_to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex)) || \
-              (strncmp(hash_hex, ppi_refs[j]->hash, 16) != 0)) {
+              (strncmp(hash_hex, state->ppi_refs[j]->hash, 16) != 0)) {
                 bytes_to_hex(real_key, sizeof(real_key), rkey_hex, sizeof(rkey_hex));
-                printf("Found super false positive!: (Net-NTLMv1('%s') == %s) != %s\n", rkey_hex, hash_hex, ppi_refs[j]->hash);
+                printf("Found super false positive!: (Net-NTLMv1('%s') == %s) != %s\n", rkey_hex, hash_hex, state->ppi_refs[j]->hash);
             continue;
           }
         } else {
@@ -538,7 +590,7 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
       	/* Its official: we cracked a hash! */
 
         /* Skip if this ppi was already cracked by a previous match in this loop. */
-        if (ppi_refs[j]->plaintext != NULL)
+        if (state->ppi_refs[j]->plaintext != NULL)
           continue;
 
       	/* Save the plaintext, clear the precomputed end indices list (since its
@@ -547,37 +599,38 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
       	if (args[i].hash_type == HASH_NETNTLMV1) {
           char ptxt_hex[(7 * 2) + 1] = {0};
           bytes_to_hex((unsigned char*)plaintext, 7, ptxt_hex, sizeof(ptxt_hex));
-          ppi_refs[j]->plaintext = strdup(ptxt_hex);
+          state->ppi_refs[j]->plaintext = strdup(ptxt_hex);
         } else {
-          ppi_refs[j]->plaintext = strdup(plaintext);
+          state->ppi_refs[j]->plaintext = strdup(plaintext);
         }
-      	ppi_refs[j]->num_precomputed_end_indices = 0;
-      	FREE(ppi_refs[j]->precomputed_end_indices);
+      	state->ppi_refs[j]->num_precomputed_end_indices = 0;
+      	FREE(state->ppi_refs[j]->precomputed_end_indices);
 
-      	save_cracked_hash(ppi_refs[j], args[i].hash_type);
+      	save_cracked_hash(state->ppi_refs[j], args[i].hash_type);
         if (args[i].hash_type == HASH_NETNTLMV1) {
-          printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, ppi_refs[j]->hash, ppi_refs[j]->plaintext, CLR);
+          printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, state->ppi_refs[j]->hash, state->ppi_refs[j]->plaintext, CLR);
           fflush(stdout);
         } else {
-          printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, (ppi_refs[j]->username != NULL) ? ppi_refs[j]->username : ppi_refs[j]->hash, plaintext, CLR);  fflush(stdout);
+          printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, (state->ppi_refs[j]->username != NULL) ? state->ppi_refs[j]->username : state->ppi_refs[j]->hash, plaintext, CLR);  fflush(stdout);
         }
       }
     }
   }
-  time_delta = get_elapsed(&start_time);
+  time_delta = get_elapsed(&state->start_time);
 
   time_falsealarms += time_delta;
   seconds_to_human_time(time_str, sizeof(time_str), (unsigned int)time_delta);
   printf("  Completed false alarm checks in %s.\n", time_str);  fflush(stdout);
 
-  FREE(potential_start_indices);
-  FREE(potential_start_index_positions);
-  FREE(hash_base_indices);
-  FREE(ppi_refs);
-  for (i = 0; i < total_devices; i++) {
+  FREE(state->potential_start_indices);
+  FREE(state->potential_start_index_positions);
+  FREE(state->hash_base_indices);
+  FREE(state->ppi_refs);
+  for (i = 0; i < state->total_devices; i++) {
     FREE(args[i].results);
     args[i].num_results = 0;
   }
+  state->active = 0;
 }
 
 
@@ -1707,7 +1760,8 @@ void _preloading_thread(char *rt_dir, const rt_parameters *filter) {
     /* If this is a compressed or uncompressed rainbow table, load it! */
     } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")) {
       gpu_ulong *rainbow_table = NULL;
-      unsigned int num_chains = 0, is_uncompressed_table = 0;
+      uint64_t num_chains = 0;
+      unsigned int is_uncompressed_table = 0;
       struct timespec start_time_io = {0};
 
 
@@ -1904,18 +1958,18 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
 }
 
 
-unsigned int _rt_binary_search(gpu_ulong *rainbow_table, unsigned int low, unsigned int high, gpu_ulong search_index, gpu_ulong *start) {
-  unsigned int chain = 0;
+unsigned int _rt_binary_search(gpu_ulong *rainbow_table, uint64_t low, uint64_t high, gpu_ulong search_index, gpu_ulong *start) {
+  uint64_t chain = 0;
 
   while (high - low > 16) {
-    unsigned int mid = ((high - low) / 2) + low;
+    uint64_t mid = ((high - low) / 2) + low;
     if (search_index >= rainbow_table[(mid * 2) + 1])
       low = mid;
     else
       high = mid;
   }
 
-  unsigned int remaining = high - low;
+  uint64_t remaining = high - low;
   chain = low;
 
   while (remaining >= 4) {
@@ -2004,7 +2058,7 @@ void *rt_binary_search_thread(void *ptr) {
  * precomputed end indices.  If/when matches are found, the corresponding start indices
  * are added to the precomputed_and_potential_indices's potential_start_indices
  * array. */
-void rt_binary_search(gpu_ulong *rainbow_table, unsigned int num_chains, precomputed_and_potential_indices *ppi_head) {
+void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, precomputed_and_potential_indices *ppi_head) {
   struct timespec start_time_searching = {0};
   char time_searching_str[64] = {0};
   unsigned int num_threads = get_num_cpu_cores();
@@ -2314,11 +2368,15 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   struct timespec start_time_table = {0};
   precomputed_and_potential_indices *ppi_cur = NULL;
   preloaded_table *pt = NULL;
+  false_alarm_state fa_state = {0};
 
 
   while (1) {
 
-    /* Count the number of uncracked hashes we have left. */
+    /* Count the number of uncracked hashes we have left.  Note: if a false
+     * alarm check is still in-flight from the previous iteration, a newly
+     * cracked hash may not be reflected here yet.  That is harmless -- we
+     * simply do one extra table search for an already-cracked hash. */
     ppi_cur = ppi;
     num_uncracked = 0;
     while (ppi_cur != NULL) {
@@ -2331,40 +2389,57 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     /* If all the hashes were cracked, there's no need to continue processing
      * tables. */
     if (num_uncracked == 0) {
+      harvest_false_alarm_results(&fa_state);
       printf("All hashes cracked.  Skipping rest of tables.\n");
       break;
     }
 
     /* Get the next preloaded table.  If NULL, we reached the end. */
     pt = get_preloaded_table();
-    if (pt == NULL)
+    if (pt == NULL) {
+      harvest_false_alarm_results(&fa_state);
       break;
+    }
 
     current_table++;
     printf("[%u of %u] Processing table: %s...\n", current_table, total_tables, pt->filepath);  fflush(stdout);
 
     start_timer(&start_time_table);
+
+    /* CPU binary search for THIS table.  This runs concurrently with the
+     * GPU false alarm check from the PREVIOUS table (if any).  Safe because:
+     *   - binary search reads ppi->precomputed_end_indices (not touched by GPU)
+     *   - binary search writes ppi->potential_start_indices (cleared below,
+     *     and GPU false alarm uses its own snapshot copy)
+     *   - harvest (which modifies ppi->plaintext and frees precomputed_end_indices
+     *     for cracked hashes) runs AFTER binary search completes */
     rt_binary_search(pt->rainbow_table, pt->num_chains, ppi);
 
     num_chains_processed += pt->num_chains;
     num_tables_processed++;
 
-    /* Free the preloaded table. */
+    /* Free the preloaded table -- binary search is done with it. */
     FREE(pt->filepath);
     FREE(pt->rainbow_table);
     pt->num_chains = 0;
     FREE(pt);
 
-    /* Check endpoint matches. */
-    check_false_alarms(ppi, args);
+    /* Harvest results from the PREVIOUS table's false alarm check.  This
+     * joins the GPU threads and processes cracked hashes.  Must happen after
+     * binary search completes (since harvest may free precomputed_end_indices
+     * for cracked hashes). */
+    harvest_false_alarm_results(&fa_state);
 
-    printf("  Table fully processed in %.1f seconds.\n", get_elapsed(&start_time_table)); fflush(stdout);
+    /* Launch false alarm check for THIS table.  Snapshots ppi potential
+     * start indices into flat arrays and starts GPU threads. */
+    launch_false_alarm_check(ppi, args, &fa_state);
+
+    /* Safe to clear now -- GPU has its own copy. */
+    clear_potential_start_indices(ppi);
+
+    printf("  Table processed in %.1f seconds.\n", get_elapsed(&start_time_table)); fflush(stdout);
     print_eta_search(num_tables_processed, total_tables);
     printf("  Cracked %u of %u hashes.\n\n", num_cracked, num_hashes);
-
-    /* We checked the potential matches above, so there's nothing else to do with
-     * them. */
-    clear_potential_start_indices(ppi);
 
   }
 

@@ -25,8 +25,8 @@ static int compare_by_end_index(const void *a, const void *b) {
 
 typedef struct {
   uint64_t    *data;
-  unsigned int start;
-  unsigned int count;
+  uint64_t     start;
+  uint64_t     count;
 } chunk_sort_arg_t;
 
 
@@ -40,17 +40,17 @@ static void *chunk_sort_worker(void *arg) {
 
 typedef struct {
   const uint64_t *src_a;
-  unsigned int    count_a;
+  uint64_t        count_a;
   const uint64_t *src_b;
-  unsigned int    count_b;
+  uint64_t        count_b;
   uint64_t       *dst;
 } merge_pair_arg_t;
 
 
-static void merge_two(const uint64_t *a, unsigned int na,
-                       const uint64_t *b, unsigned int nb,
+static void merge_two(const uint64_t *a, uint64_t na,
+                       const uint64_t *b, uint64_t nb,
                        uint64_t *dst) {
-  unsigned int ia = 0, ib = 0, out = 0;
+  uint64_t ia = 0, ib = 0, out = 0;
   while (ia < na && ib < nb) {
     if (a[ia * CHAIN_SIZE_U64 + 1] <= b[ib * CHAIN_SIZE_U64 + 1]) {
       dst[out * CHAIN_SIZE_U64]     = a[ia * CHAIN_SIZE_U64];
@@ -81,14 +81,14 @@ static void *merge_pair_worker(void *arg) {
 }
 
 
-int parallel_sort_rt(uint64_t *data, unsigned int num_chains, int num_threads) {
+int parallel_sort_rt(uint64_t *data, uint64_t num_chains, int num_threads) {
   chunk_sort_arg_t *sort_args = NULL;
   pthread_t *threads = NULL;
   uint64_t *buf = NULL;
-  unsigned int *seg_starts = NULL;
-  unsigned int *seg_counts = NULL;
+  uint64_t *seg_starts = NULL;
+  uint64_t *seg_counts = NULL;
   merge_pair_arg_t *merge_args = NULL;
-  unsigned int base_chunk, remainder, offset;
+  uint64_t base_chunk, remainder, offset;
   int i, started, num_segs;
 
   if (num_chains < 1024 || num_threads <= 1) {
@@ -96,14 +96,14 @@ int parallel_sort_rt(uint64_t *data, unsigned int num_chains, int num_threads) {
     return 0;
   }
 
-  if ((unsigned int)num_threads > num_chains)
+  if ((uint64_t)num_threads > num_chains)
     num_threads = (int)num_chains;
 
   sort_args  = malloc((size_t)num_threads * sizeof(chunk_sort_arg_t));
   threads    = malloc((size_t)num_threads * sizeof(pthread_t));
   buf        = malloc((size_t)num_chains * CHAIN_BYTES);
-  seg_starts = malloc((size_t)num_threads * sizeof(unsigned int));
-  seg_counts = malloc((size_t)num_threads * sizeof(unsigned int));
+  seg_starts = malloc((size_t)num_threads * sizeof(uint64_t));
+  seg_counts = malloc((size_t)num_threads * sizeof(uint64_t));
   merge_args = malloc((size_t)num_threads * sizeof(merge_pair_arg_t));
 
   if (!sort_args || !threads || !buf || !seg_starts || !seg_counts || !merge_args) {
@@ -113,12 +113,12 @@ int parallel_sort_rt(uint64_t *data, unsigned int num_chains, int num_threads) {
   }
 
   /* Divide into num_threads chunks. */
-  base_chunk = num_chains / (unsigned int)num_threads;
-  remainder  = num_chains % (unsigned int)num_threads;
+  base_chunk = num_chains / (uint64_t)num_threads;
+  remainder  = num_chains % (uint64_t)num_threads;
   offset = 0;
   for (i = 0; i < num_threads; i++) {
     seg_starts[i] = offset;
-    seg_counts[i] = base_chunk + ((unsigned int)i < remainder ? 1 : 0);
+    seg_counts[i] = base_chunk + ((uint64_t)i < remainder ? 1 : 0);
     offset += seg_counts[i];
   }
 
