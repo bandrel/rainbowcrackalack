@@ -13,6 +13,6 @@
  * Returns 0 on success, -1 on allocation failure (caller should fall back
  * to single-threaded qsort). Falls back internally to single-threaded
  * qsort when num_chains < 1024 or num_threads <= 1. */
-int parallel_sort_rt(uint64_t *data, unsigned int num_chains, int num_threads);
+int parallel_sort_rt(uint64_t *data, uint64_t num_chains, int num_threads);
 
 #endif /* PARALLEL_SORT_H */

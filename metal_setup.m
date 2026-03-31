@@ -32,13 +32,21 @@ typedef struct {
   id<MTLLibrary> library;
   id<MTLBuffer> args[32];
   unsigned int num_args;
+  /* Threadgroup memory allocations: size > 0 means allocate at that index. */
+  size_t threadgroup_mem_sizes[8];
+  unsigned int num_threadgroup_mem;
 } metal_kernel;
 
 
-/* Internal struct wrapping a Metal command queue and its owning device. */
+/* Internal struct wrapping a Metal command queue and its owning device.
+ * The semaphore is used for async dispatch: gpu_enqueue_kernel signals it
+ * via a completion handler, and gpu_finish waits on it. */
 typedef struct {
   id<MTLCommandQueue> queue;
   id<MTLDevice> device;
+  dispatch_semaphore_t completion;
+  volatile int pending;          /* 1 if a dispatch is in flight */
+  id<MTLCommandBuffer> last_cmd; /* retained for error checking in gpu_finish */
 } metal_queue;
 
 
@@ -318,6 +326,14 @@ void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *de
 
     /* Build options: define HASH_TYPE as a preprocessor macro. */
     MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
+    if (@available(macOS 15.0, *)) {
+      opts.mathMode = MTLMathModeFast;
+    } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      opts.fastMathEnabled = YES;
+#pragma clang diagnostic pop
+    }
     NSMutableDictionary *defines = [NSMutableDictionary dictionary];
     defines[@"HASH_TYPE"] = [NSString stringWithFormat:@"%u", hash_type];
     opts.preprocessorMacros = defines;
@@ -429,6 +445,9 @@ gpu_queue gpu_create_queue(gpu_context context, gpu_device device) {
     }
     mq->queue = q;
     mq->device = dev;
+    mq->completion = dispatch_semaphore_create(0);
+    mq->pending = 0;
+    mq->last_cmd = nil;
 
     CFBridgingRetain(q);
 
@@ -453,8 +472,56 @@ gpu_buffer gpu_create_buffer(gpu_context context, int flags, size_t size) {
 }
 
 
+gpu_buffer gpu_create_and_fill_buffer(gpu_context context, int flags, size_t size, const void *data) {
+  @autoreleasepool {
+    id<MTLDevice> dev = (__bridge id<MTLDevice>)context;
+
+    if (flags == GPU_RO) {
+      /* Private storage: GPU-only, optimal for read-only data that's written once.
+       * Use a staging Shared buffer + blit command to copy data. */
+      id<MTLBuffer> staging = [dev newBufferWithLength:size options:MTLResourceStorageModeShared];
+      if (staging == nil) {
+        fprintf(stderr, "Failed to create staging buffer of size %zu.\n", size);
+        return NULL;
+      }
+      memcpy([staging contents], data, size);
+
+      id<MTLBuffer> priv = [dev newBufferWithLength:size options:MTLResourceStorageModePrivate];
+      if (priv == nil) {
+        fprintf(stderr, "Failed to create private buffer of size %zu.\n", size);
+        return NULL;
+      }
+
+      id<MTLCommandQueue> q = [dev newCommandQueue];
+      id<MTLCommandBuffer> cmd = [q commandBuffer];
+      id<MTLBlitCommandEncoder> blit = [cmd blitCommandEncoder];
+      [blit copyFromBuffer:staging sourceOffset:0 toBuffer:priv destinationOffset:0 size:size];
+      [blit endEncoding];
+      [cmd commit];
+      [cmd waitUntilCompleted];
+
+      return (gpu_buffer)CFBridgingRetain(priv);
+    }
+
+    /* Shared storage for RW/WO buffers. */
+    id<MTLBuffer> buf = [dev newBufferWithLength:size options:MTLResourceStorageModeShared];
+    if (buf == nil) {
+      fprintf(stderr, "Failed to create shared buffer of size %zu.\n", size);
+      return NULL;
+    }
+    memcpy([buf contents], data, size);
+    return (gpu_buffer)CFBridgingRetain(buf);
+  }
+}
+
+
 int gpu_write_buffer(gpu_queue queue, gpu_buffer buffer, size_t size, const void *ptr) {
   @autoreleasepool {
+    /* Ensure any in-flight dispatch is complete before modifying buffer. */
+    metal_queue *mq = (metal_queue *)queue;
+    if (mq->pending)
+      gpu_finish(queue);
+
     id<MTLBuffer> buf = (__bridge id<MTLBuffer>)buffer;
     memcpy([buf contents], ptr, size);
     return 0;
@@ -464,6 +531,11 @@ int gpu_write_buffer(gpu_queue queue, gpu_buffer buffer, size_t size, const void
 
 int gpu_read_buffer(gpu_queue queue, gpu_buffer buffer, size_t size, void *ptr) {
   @autoreleasepool {
+    /* Ensure any in-flight dispatch is complete before reading buffer. */
+    metal_queue *mq = (metal_queue *)queue;
+    if (mq->pending)
+      gpu_finish(queue);
+
     id<MTLBuffer> buf = (__bridge id<MTLBuffer>)buffer;
     memcpy(ptr, [buf contents], size);
     return 0;
@@ -485,6 +557,19 @@ int gpu_set_kernel_arg(gpu_kernel kernel, unsigned int index, size_t size, const
   if (index >= mk->num_args)
     mk->num_args = index + 1;
 
+  return 0;
+}
+
+
+int gpu_set_kernel_threadgroup_mem(gpu_kernel kernel, unsigned int index, size_t size) {
+  metal_kernel *mk = (metal_kernel *)kernel;
+  if (index >= 8) {
+    fprintf(stderr, "Threadgroup memory index %u exceeds maximum (8).\n", index);
+    return -1;
+  }
+  mk->threadgroup_mem_sizes[index] = size;
+  if (index >= mk->num_threadgroup_mem)
+    mk->num_threadgroup_mem = index + 1;
   return 0;
 }
 
@@ -515,12 +600,20 @@ int gpu_enqueue_kernel(gpu_queue queue, gpu_kernel kernel, unsigned int work_dim
       }
     }
 
+    /* Bind threadgroup memory allocations. */
+    for (unsigned int i = 0; i < mk->num_threadgroup_mem; i++) {
+      if (mk->threadgroup_mem_sizes[i] > 0) {
+        [encoder setThreadgroupMemoryLength:mk->threadgroup_mem_sizes[i] atIndex:i];
+      }
+    }
+
     NSUInteger gws = global_work_size[0];
     NSUInteger maxThreads = [mk->pipeline maxTotalThreadsPerThreadgroup];
     NSUInteger threadWidth = [mk->pipeline threadExecutionWidth];
 
-    /* Use threadExecutionWidth as the threadgroup size, capped at maxThreads. */
-    NSUInteger threadgroupSize = threadWidth;
+    /* Use 8 SIMD groups per threadgroup (256 threads on M-series) for better
+     * occupancy and latency hiding.  Capped at the pipeline's max. */
+    NSUInteger threadgroupSize = threadWidth * 8;
     if (threadgroupSize > maxThreads)
       threadgroupSize = maxThreads;
     if (threadgroupSize > gws)
@@ -532,14 +625,18 @@ int gpu_enqueue_kernel(gpu_queue queue, gpu_kernel kernel, unsigned int work_dim
     [encoder dispatchThreads:gridSize threadsPerThreadgroup:groupSize];
     [encoder endEncoding];
 
-    [commandBuffer commit];
-    [commandBuffer waitUntilCompleted];
+    /* Async dispatch: signal the semaphore on completion so gpu_finish
+     * can wait without blocking during the encode/commit phase. */
+    mq->pending = 1;
+    mq->last_cmd = commandBuffer;
+    CFBridgingRetain(commandBuffer);
 
-    if ([commandBuffer error] != nil) {
-      fprintf(stderr, "Metal command buffer error: %s\n",
-              [[[commandBuffer error] localizedDescription] UTF8String]);
-      return -1;
-    }
+    dispatch_semaphore_t sem = mq->completion;
+    [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull buf) {
+      (void)buf;
+      dispatch_semaphore_signal(sem);
+    }];
+    [commandBuffer commit];
 
     return 0;
   }
@@ -554,9 +651,24 @@ int gpu_flush(gpu_queue queue) {
 
 
 int gpu_finish(gpu_queue queue) {
-  /* Metal dispatches are synchronous via commit+wait, so finish is a no-op. */
-  (void)queue;
-  return 0;
+  metal_queue *mq = (metal_queue *)queue;
+  if (!mq->pending)
+    return 0;
+
+  dispatch_semaphore_wait(mq->completion, DISPATCH_TIME_FOREVER);
+  mq->pending = 0;
+
+  int ret = 0;
+  if (mq->last_cmd != nil) {
+    if ([mq->last_cmd error] != nil) {
+      fprintf(stderr, "Metal command buffer error: %s\n",
+              [[[mq->last_cmd error] localizedDescription] UTF8String]);
+      ret = -1;
+    }
+    CFRelease((__bridge CFTypeRef)mq->last_cmd);
+    mq->last_cmd = nil;
+  }
+  return ret;
 }
 
 
@@ -589,8 +701,13 @@ void gpu_release_buffer(gpu_buffer buffer) {
 void gpu_release_queue(gpu_queue queue) {
   if (queue != NULL) {
     metal_queue *mq = (metal_queue *)queue;
+    if (mq->pending)
+      gpu_finish(queue);
+    if (mq->last_cmd != nil)
+      CFRelease((__bridge CFTypeRef)mq->last_cmd);
     if (mq->queue != nil)
       CFRelease((__bridge CFTypeRef)mq->queue);
+    /* dispatch_semaphore_t is ARC-managed on modern macOS; no manual release needed. */
     free(mq);
   }
 }

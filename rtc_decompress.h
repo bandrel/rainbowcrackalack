@@ -3,6 +3,6 @@
 
 #include <stdint.h>
 
-int rtc_decompress(char *filename, uint64_t **uncompressed_table, unsigned int *num_chains);
+int rtc_decompress(char *filename, uint64_t **uncompressed_table, uint64_t *num_chains);
 
 #endif

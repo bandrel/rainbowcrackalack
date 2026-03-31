@@ -37,8 +37,8 @@ void _print_chain_error(uint64_t random_chain, uint64_t start, uint64_t actual_e
 }
 
 /* Verifies a rainbow table already loaded from disk. */
-int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, unsigned int *error_chain_num) {
-  unsigned int i = 0, dummy_error_chain = 0;
+int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, uint64_t *error_chain_num) {
+  uint64_t i = 0, dummy_error_chain = 0;
   uint64_t start = 0, end = 0;
 
   if (error_chain_num == NULL)
@@ -51,13 +51,13 @@ int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigne
       end = rainbowtable[(i * 2) + 1];
 
       if (start != expected_start) {
-	fprintf(stderr, "Start index at chain #%u is not the expected value!  Expected %"PRIu64", but found %"PRIu64".\n", i, expected_start, start);
+	fprintf(stderr, "Start index at chain #%"PRIu64" is not the expected value!  Expected %"PRIu64", but found %"PRIu64".\n", i, expected_start, start);
 	*error_chain_num = i;
 	return VERIFY_ERR_DISCONTINUITY;
       }
 
       if (end == 0) {
-	fprintf(stderr, "Chain #%u has an end value of zero!\n", i);
+	fprintf(stderr, "Chain #%"PRIu64" has an end value of zero!\n", i);
 	*error_chain_num = i;
 	return VERIFY_ERR_CORRUPTED;
       }
@@ -79,7 +79,7 @@ int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigne
       end = rainbowtable[(i * 2) + 1];
 
       if (end == 0) {
-	fprintf(stderr, "Chain #%u has an end value of zero!\n", i);
+	fprintf(stderr, "Chain #%"PRIu64" has an end value of zero!\n", i);
 	*error_chain_num = i;
 	return VERIFY_ERR_CORRUPTED;
       }
@@ -107,7 +107,7 @@ int verify_rainbowtable(uint64_t *rainbowtable, unsigned int num_chains, unsigne
       }
 */
       if (end < last_end) {
-	fprintf(stderr, "Error: table end indices are not sorted.  Current end index (at chain #%u) is not greater or equal to last end index.\n\n\tCurrent end index: %"PRIu64"\n\tLast end index:    %"PRIu64"\n\n", i, end, last_end);
+	fprintf(stderr, "Error: table end indices are not sorted.  Current end index (at chain #%"PRIu64") is not greater or equal to last end index.\n\n\tCurrent end index: %"PRIu64"\n\tLast end index:    %"PRIu64"\n\n", i, end, last_end);
 	*error_chain_num = i;
 	return VERIFY_ERR_CORRUPTED;
       }
@@ -160,7 +160,8 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
   char *charset = NULL;
 
   uint64_t file_size = 0;
-  unsigned int actual_num_chains = 0, error_chain_num = 0, is_compressed = 0;
+  uint64_t actual_num_chains = 0, error_chain_num = 0;
+  unsigned int is_compressed = 0;
   uint64_t expected_start = 0, plaintext_space_total = 0;
 
   is_compressed = str_ends_with(filename, ".rtc");
@@ -182,7 +183,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
   charset_len = (strcmp(rt_params.charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(charset);
   plaintext_space_total = fill_plaintext_space_table(charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, plaintext_space_up_to_index);
 
-  expected_start = (uint64_t)rt_params.num_chains * (uint64_t)rt_params.table_part;
+  expected_start = rt_params.num_chains * (uint64_t)rt_params.table_part;
 
   /* Open the file and obtain a lock on it. */
   f = rc_fopen(filename, 0);
@@ -208,9 +209,9 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     fprintf(stderr, "Error: file is empty!\n");
     return VERIFY_ERR_TRUNCATED;
   /* If the table should be complete, then ensure its file size is what we'd expect.  Skip compressed files. */
-  } else if ((table_should_be_complete == VERIFY_TABLE_IS_COMPLETE) && (file_size != ((uint64_t)rt_params.num_chains * CHAIN_SIZE)) && !is_compressed) {
+  } else if ((table_should_be_complete == VERIFY_TABLE_IS_COMPLETE) && (file_size != (rt_params.num_chains * CHAIN_SIZE)) && !is_compressed) {
     rc_fclose(f);
-    fprintf(stderr, "Error: table is expected to be complete, but file size does not match expected value.  Expected: %"PRIu64"; actual: %"PRIu64"\n", (uint64_t)rt_params.num_chains * CHAIN_SIZE, file_size);
+    fprintf(stderr, "Error: table is expected to be complete, but file size does not match expected value.  Expected: %"PRIu64"; actual: %"PRIu64"\n", rt_params.num_chains * CHAIN_SIZE, file_size);
     return VERIFY_ERR_TRUNCATED;
   /* If the table is incomplete, ensure that the file size is a multiple of CHAIN_SIZE. */
   } else if (((file_size % CHAIN_SIZE) != 0) && !is_compressed) {
@@ -235,7 +236,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
 
     /* The actual number of chains in the file. */
-    actual_num_chains = (unsigned int)(file_size / CHAIN_SIZE);
+    actual_num_chains = file_size / CHAIN_SIZE;
 
     /* Only verify 5 chains. */
     for (i = 0; i < 5; i++) {
@@ -280,8 +281,8 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
       printf("\n!! WARNING: table is compressed, yet is supposedly unsorted!  Only sorted tables should be compressed...\n\n");
 
   } else { /* Simply load uncompressed RT files. */
-    actual_num_chains = (unsigned int)(file_size / CHAIN_SIZE);
-    rainbow_table = calloc(actual_num_chains * 2, sizeof(uint64_t));
+    actual_num_chains = file_size / CHAIN_SIZE;
+    rainbow_table = calloc((size_t)(actual_num_chains * 2), sizeof(uint64_t));
     if (rainbow_table == NULL) {
       fprintf(stderr, "Error while creating buffer to read file.\n");
       return 0;

@@ -26,10 +26,11 @@
 
 /* Uncompresses an RTC file and returns a pointer to the rainbow table, along with the
  * number of chains in it.  Returns 0 on success, or an error code. */
-int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, unsigned int *ret_num_chains) {
+int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *ret_num_chains) {
   char *fn_ptr = NULL;
   FILE *f = NULL;
-  unsigned int i = 0, chain_size = 0, unused = 0, table_ptr = 0, num_chains = 0;
+  uint64_t i = 0, num_chains = 0;
+  unsigned int chain_size = 0, unused = 0, table_ptr = 0;
   int ret = 0;
   uint64_t *uncompressed_table = NULL;
 
@@ -53,16 +54,16 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, unsigned i
     }
   }
 
-  if (sscanf(fn_ptr, "%u_%u.rtc", &num_chains, &unused) != 2) {
+  if (sscanf(fn_ptr, "%"SCNu64"_%u.rtc", &num_chains, &unused) != 2) {
     fprintf(stderr, "Error: failed to parse number of chains from filename: %s\n", fn_ptr);
     ret = -1;
     goto done;
   }
 
   /*printf("Total chains in table: %u\n", total_chains_in_table);*/
-  uncompressed_table = calloc(num_chains, sizeof(uint64_t) * 2);
+  uncompressed_table = calloc((size_t)num_chains, sizeof(uint64_t) * 2);
   if (uncompressed_table == NULL) {
-    fprintf(stderr, "Error: could not allocate %"PRIu64" bytes in memory for uncompressed table.\n", (uint64_t)(num_chains * sizeof(uint64_t) * 2));
+    fprintf(stderr, "Error: could not allocate %"PRIu64" bytes in memory for uncompressed table.\n", num_chains * sizeof(uint64_t) * 2);
     ret = -2;
     goto done;
   }
