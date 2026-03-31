@@ -164,6 +164,8 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_index_to_plaintext_markov.o \
 	$(OBJDIR)/markov.o \
 	$(OBJDIR)/test_chain_markov.o \
+	$(OBJDIR)/test_chain_markov_ntlm8.o \
+	$(OBJDIR)/test_chain_markov_ntlm9.o \
 	$(OBJDIR)/test_markov.o \
 	$(OBJDIR)/test_misc.o \
 	$(OBJDIR)/test_sort.o \

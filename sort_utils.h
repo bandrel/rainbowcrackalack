@@ -6,7 +6,7 @@
 /* Returns 1 if the endpoint column of data[0..num_chains-1] is in
  * non-descending order, 0 otherwise. An empty or single-chain array
  * is considered sorted. */
-int is_sorted_rt(const uint64_t *data, unsigned int num_chains);
+int is_sorted_rt(const uint64_t *data, uint64_t num_chains);
 
 /* Compute parallel worker count from pre-measured resource values.
  * free_ram:      available bytes of RAM

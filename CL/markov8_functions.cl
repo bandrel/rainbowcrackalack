@@ -186,12 +186,12 @@ inline unsigned long hash_ntlm8(unsigned char *plaintext) {
 }
 
 
-inline unsigned long hash_to_index_markov8(unsigned long hash, unsigned int pos) {
-  return (hash + pos) % 6634204312890625UL;
+inline unsigned long hash_to_index_markov8(unsigned long hash, unsigned int reduction_offset, unsigned int pos) {
+  return (hash + reduction_offset + pos) % 6634204312890625UL;
 }
 
 
-inline unsigned long hash_char_to_index_markov8(__global unsigned char *hash_value, unsigned int pos) {
+inline unsigned long hash_char_to_index_markov8(__global unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   unsigned long ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -208,5 +208,5 @@ inline unsigned long hash_char_to_index_markov8(__global unsigned char *hash_val
   ret <<= 8;
   ret |= hash_value[0];
 
-  return (ret + pos) % 6634204312890625UL;
+  return hash_to_index_markov8(ret, reduction_offset, pos);
 }

@@ -144,7 +144,7 @@ typedef struct {
   unsigned int chain_len;
   char *filename;
 
-  unsigned int initial_chains_per_execution;
+  uint64_t initial_chains_per_execution;
 
   int     use_markov;
   char    markov_path[1024];
@@ -171,7 +171,7 @@ uint64_t start_index = 0;
 /* The number of chains to generate.  This doesn't necessarily equal the number of
  * chains entered on the command line, since we may be resuming a
  * partially-constructed table. */
-unsigned int num_chains_to_generate = 0;
+uint64_t num_chains_to_generate = 0;
 
 /* The first chain that we will generate (this will not be zero if we resume an
  * unfinished file or part index > 0).  We use this to track how many chains we
@@ -447,8 +447,8 @@ void *host_thread(void *ptr) {
   if (user_provided_gws > 0) {
     gws = user_provided_gws;
     printf("GPU #%u is using user-provided GWS value of %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
-  } else if (get_optimal_gws(gpu->device) > 0) {
-    gws = get_optimal_gws(gpu->device);
+  } else if (get_optimal_gws(gpu->device, kernel_name) > 0) {
+    gws = get_optimal_gws(gpu->device, kernel_name);
     printf("GPU #%u is using optimized GWS: %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
   } else {
     gws = kernel_work_group_size * kernel_preferred_work_group_size_multiple;
@@ -460,7 +460,7 @@ void *host_thread(void *ptr) {
    * GWS.  The open-source ROCm driver under Linux works fine, though. */
 #if _WIN32
   if ((is_amd_gpu) && (gws >= num_chains_to_generate)) {
-    printf("\n\n  !! WARNING !!\n\nThe GWS (global work size) is greater or equal to the number of chains to generate (%"PRId64" >= %u).  The closed-source AMD Windows driver has been observed to hang indefinitely in this case.  If this happens, either raise the number of chains to generate, or lower the GWS setting using the '-gws' parameter.\n\n", gws, num_chains_to_generate);  fflush(stdout);
+    printf("\n\n  !! WARNING !!\n\nThe GWS (global work size) is greater or equal to the number of chains to generate (%"PRId64" >= %"PRIu64").  The closed-source AMD Windows driver has been observed to hang indefinitely in this case.  If this happens, either raise the number of chains to generate, or lower the GWS setting using the '-gws' parameter.\n\n", gws, num_chains_to_generate);  fflush(stdout);
   }
 #endif
 
@@ -785,7 +785,8 @@ int main(int ac, char **av) {
   uint64_t file_size = 0;
   thread_args *args = NULL;
   char *hash_name = NULL, *charset_name = NULL, *charset = NULL;
-  unsigned int plaintext_len_min = 0, plaintext_len_max = 0, total_chains_in_table = 0, table_index = 0, benchmark_mode = 0;
+  unsigned int plaintext_len_min = 0, plaintext_len_max = 0, table_index = 0, benchmark_mode = 0;
+  uint64_t total_chains_in_table = 0;
   unsigned int resuming_table = 0;  /* Set when a table gen is being resumed. */
   gpu_uint hash_type = 0, chain_len = 0, num_platforms = 0, num_devices = 0;
   uint64_t part_index = 0;
@@ -816,7 +817,7 @@ int main(int ac, char **av) {
     exit(-1);
   }
   chain_len = parse_uint_arg(av[6], "chain_len");
-  total_chains_in_table = parse_uint_arg(av[7], "total_chains_in_table");
+  total_chains_in_table = parse_uint64_arg(av[7], "total_chains_in_table");
 
   /* See if the user wants to run the benchmarks. */
   if (strcmp(av[8], "-bench") == 0) {
@@ -882,7 +883,7 @@ int main(int ac, char **av) {
   }
 
   /* Format the filename based on the user options. */
-  snprintf(filename, sizeof(filename) - 1, "%s_%s#%u-%u_%u_%ux%u_%"PRIu64".rt", hash_name, charset_name_safe, plaintext_len_min, plaintext_len_max, table_index, chain_len, total_chains_in_table, part_index);
+  snprintf(filename, sizeof(filename) - 1, "%s_%s#%u-%u_%u_%ux%"PRIu64"_%"PRIu64".rt", hash_name, charset_name_safe, plaintext_len_min, plaintext_len_max, table_index, chain_len, total_chains_in_table, part_index);
 
 
   /* If the user provided an invalid hash name, dump the valid options and
@@ -1059,7 +1060,7 @@ int main(int ac, char **av) {
 	if ((plaintext_space_total % num_chains_to_generate) != 0)
 	  highest_part_index--;
 
-	fprintf(stderr, "\n  !! Error: start index (%"PRIu64") + number of chains to generate (%u) > plaintext space total (%"PRIu64")!  The highest part index that can be generated without causing this overflow is %"PRIu64" (hint: you set the part index too high (%"PRIu64").\n\n", start_index, num_chains_to_generate, plaintext_space_total, highest_part_index, part_index); fflush(stderr);
+	fprintf(stderr, "\n  !! Error: start index (%"PRIu64") + number of chains to generate (%"PRIu64") > plaintext space total (%"PRIu64")!  The highest part index that can be generated without causing this overflow is %"PRIu64" (hint: you set the part index too high (%"PRIu64").\n\n", start_index, num_chains_to_generate, plaintext_space_total, highest_part_index, part_index); fflush(stderr);
 	//exit(-1);
       }
     }
@@ -1104,7 +1105,7 @@ int main(int ac, char **av) {
   }
 
   /* Print info about how we're generating the table. */
-  printf("Output file:\t\t%s\nHash algorithm:\t\t%s\nCharset name:\t\t%s\nCharset:\t\t%s\nCharset length:\t\t%u\nPlaintext length range: %u - %u\nReduction offset:\t0x%x\nChain length:\t\t%u\nNumber of chains:\t%u\nPart index:\t\t%"PRIu64"\n\n", filename, hash_name, charset_name, charset, charset_len, plaintext_len_min, plaintext_len_max, TABLE_INDEX_TO_REDUCTION_OFFSET(table_index), chain_len, total_chains_in_table, part_index);
+  printf("Output file:\t\t%s\nHash algorithm:\t\t%s\nCharset name:\t\t%s\nCharset:\t\t%s\nCharset length:\t\t%u\nPlaintext length range: %u - %u\nReduction offset:\t0x%x\nChain length:\t\t%u\nNumber of chains:\t%"PRIu64"\nPart index:\t\t%"PRIu64"\n\n", filename, hash_name, charset_name, charset, charset_len, plaintext_len_min, plaintext_len_max, TABLE_INDEX_TO_REDUCTION_OFFSET(table_index), chain_len, total_chains_in_table, part_index);
 
   /* If we found a file to append to, tell the user what's happening. */
   if (resuming_table)
@@ -1170,14 +1171,14 @@ int main(int ac, char **av) {
     printf("\nGeneration complete!\n");
 
     if (stat(filename, &st) == 0) {
-      unsigned int actual_num_chains = st.st_size / CHAIN_SIZE;
+      uint64_t actual_num_chains = st.st_size / CHAIN_SIZE;
 
       /* If we generated more chains than the user requested, rename the file to
        * reflect this. */
       if (actual_num_chains > total_chains_in_table) {
 	if (VERBOSE)
-	  printf("\nNote %u extra chains created.  Truncating...\n", actual_num_chains - total_chains_in_table);
-	if (truncate(filename, total_chains_in_table * CHAIN_SIZE) != 0) {
+	  printf("\nNote %"PRIu64" extra chains created.  Truncating...\n", actual_num_chains - total_chains_in_table);
+	if (truncate(filename, (off_t)(total_chains_in_table * CHAIN_SIZE)) != 0) {
 	  fprintf(stderr, "Error while truncating file %s: %s (%d)\n", filename, strerror(errno), errno);
 	}
 
@@ -1185,7 +1186,7 @@ int main(int ac, char **av) {
 	char new_filename[sizeof(filename)];
 	memset(new_filename, 0, sizeof(new_filename));
 
-	snprintf(new_filename, sizeof(new_filename) - 1, "%s_%s#%u-%u_%u_%ux%u_%u.rt", hash_name, charset_name, plaintext_len_min, plaintext_len_max, table_index, chain_len, actual_num_chains, part_index);
+	snprintf(new_filename, sizeof(new_filename) - 1, "%s_%s#%u-%u_%u_%ux%"PRIu64"_%"PRIu64".rt", hash_name, charset_name, plaintext_len_min, plaintext_len_max, table_index, chain_len, actual_num_chains, part_index);
 	if (!rename(filename, new_filename)) {
 	  printf("\nNote: because extra chains were generated, the file name was renamed to reflect this (from \"%s\" to \"%s\").\n\n", filename, new_filename);
 	  strncpy(filename, new_filename, sizeof(filename) - 1);

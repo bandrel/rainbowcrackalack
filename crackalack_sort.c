@@ -126,7 +126,7 @@ static int compare_by_end_index(const void *a, const void *b) {
 
 
 /* GPU bitonic sort. Returns 0 on success, -1 to fall back to CPU qsort. */
-static int gpu_sort(uint64_t *data, unsigned int num_chains) {
+static int gpu_sort(uint64_t *data, uint64_t num_chains) {
   gpu_platform platforms[MAX_NUM_PLATFORMS];
   gpu_device devices[MAX_NUM_DEVICES];
   gpu_uint num_platforms = 0, num_devices = 0;
@@ -216,7 +216,7 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex) {
   FILE *f = NULL;
   uint64_t *data = NULL;
   rt_off_t file_size = 0;
-  unsigned int num_chains = 0;
+  uint64_t num_chains = 0;
   int ret = -1;
 
   f = fopen(filename, "rb");
@@ -247,7 +247,7 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex) {
     goto done;
   }
 
-  num_chains = (unsigned int)(file_size / CHAIN_SIZE);
+  num_chains = (uint64_t)(file_size / CHAIN_SIZE);
 
   data = malloc((size_t)file_size);
   if (data == NULL) {
@@ -274,7 +274,7 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex) {
     goto done;
   }
 
-  printf("Sorting %s (%u chains)... ", filename, num_chains);
+  printf("Sorting %s (%"PRIu64" chains)... ", filename, num_chains);
   fflush(stdout);
 
   pthread_mutex_lock(gpu_mutex);

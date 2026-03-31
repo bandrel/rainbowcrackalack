@@ -89,6 +89,15 @@ void print_device_info(gpu_device *devices, gpu_uint num_devices);
 
 void gpu_release_device(gpu_device device);
 
+#ifdef USE_METAL
+/* Create a buffer and fill it with data.  For GPU_RO buffers, uses Private
+ * storage mode with a blit copy for GPU-optimized memory layout. */
+gpu_buffer gpu_create_and_fill_buffer(gpu_context context, int flags, size_t size, const void *data);
+
+/* Configure threadgroup memory at the given index for the next dispatch. */
+int gpu_set_kernel_threadgroup_mem(gpu_kernel kernel, unsigned int index, size_t size);
+#endif
+
 
 /* --- Device info parameter constants --- */
 #ifdef USE_METAL
@@ -200,9 +209,8 @@ extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 #ifdef USE_METAL
 
 #define _CLCREATEARG(_arg_index, _buffer, _flags, _arg_ptr, _arg_size) \
-  { _buffer = gpu_create_buffer(context, _flags, _arg_size); \
+  { _buffer = gpu_create_and_fill_buffer(context, _flags, _arg_size, _arg_ptr); \
   if (_buffer == NULL) { fprintf(stderr, "Error while creating buffer for \"%s\".\n", #_arg_ptr); exit(-1); } \
-  if (gpu_write_buffer(queue, _buffer, _arg_size, _arg_ptr) != 0) { fprintf(stderr, "Error while writing to buffer for \"%s\".\n", #_arg_ptr); exit(-1); } \
   if (gpu_set_kernel_arg(kernel, _arg_index, sizeof(gpu_buffer), &_buffer) != 0) { fprintf(stderr, "Error setting kernel argument for %s at index %u.\n", #_arg_ptr, _arg_index); exit(-1); } }
 
 #define CLCREATEARG_ARRAY(_arg_index, _buffer, _flags, _arg, _len) \

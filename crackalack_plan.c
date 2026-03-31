@@ -61,12 +61,40 @@ static int charset_keyspace(const char *name, unsigned int min_len,
     return 0;
 }
 
+/* Accurate coverage accounting for chain merges.
+ *
+ * Uses the iterative model where effective distinct chains after each
+ * column are: m_{i+1} = N * (1 - exp(-m_i / N)).  This converges to
+ * the fixed point m* = N * W(1) where W is the Lambert-W function
+ * (≈ 0.5671 * N).  Once converged, remaining columns are computed in
+ * O(1) via the constant contribution, making this fast even for very
+ * long chains. */
 static double coverage(uint64_t keyspace, uint64_t chain_len,
                        uint64_t num_chains) {
-    if (keyspace == 0)
+    if (keyspace == 0 || chain_len == 0 || num_chains == 0)
         return 0.0;
-    uint64_t cl = chain_len < keyspace ? chain_len : keyspace;
-    return 1.0 - pow(1.0 - (double)cl / (double)keyspace, (double)num_chains);
+
+    double N = (double)keyspace;
+    double m = (double)num_chains;
+    double log_miss = 0.0;
+
+    for (uint64_t i = 0; i < chain_len; i++) {
+        double u = m / N;
+        if (u >= 1.0)
+            return 1.0;
+        log_miss += log1p(-u);
+        double m_new = N * -expm1(-m / N);
+        if (fabs(m_new - m) < 1.0) {
+            /* m has converged to its fixed point; remaining columns
+             * each contribute the same miss probability. */
+            uint64_t remaining = chain_len - i - 1;
+            log_miss += (double)remaining * log1p(-m_new / N);
+            break;
+        }
+        m = m_new;
+    }
+
+    return -expm1(log_miss);
 }
 
 static double file_size_mb(uint64_t num_chains) {
@@ -148,16 +176,50 @@ static int cmd_estimate(int argc, char **argv) {
     printf("Chains:       %llu\n", (unsigned long long)num_chains);
     printf("Chain length: %llu\n", (unsigned long long)chain_len);
     printf("File size:    %.2f MB\n", file_size_mb(num_chains));
-    printf("Coverage:     ~%.1f%%  (approximate single-table estimate)\n",
+    printf("Coverage:     ~%.1f%%  (single-table, merge-aware estimate)\n",
            cov * 100.0);
     return 0;
+}
+
+/* Binary search for num_chains that achieves target coverage using
+ * the merge-aware model. */
+static uint64_t solve_num_chains(uint64_t keyspace, uint64_t chain_len,
+                                 double target) {
+    /* Get a naive upper bound ignoring merges. */
+    double p = (double)chain_len / (double)keyspace;
+    if (p >= 1.0)
+        return 1;
+    uint64_t hi = (uint64_t)ceil(log(1.0 - target) / log(1.0 - p));
+    /* Merges require more chains — start with 4x naive. */
+    if (hi <= UINT64_MAX / 4)
+        hi *= 4;
+    else
+        hi = keyspace;
+    if (hi > keyspace)
+        hi = keyspace;
+    /* Ensure hi actually reaches the target. */
+    while (coverage(keyspace, chain_len, hi) < target) {
+        if (hi > keyspace / 2) { hi = keyspace; break; }
+        hi *= 2;
+    }
+
+    uint64_t lo = 1;
+    while (lo < hi) {
+        uint64_t mid = lo + (hi - lo) / 2;
+        if (coverage(keyspace, chain_len, mid) < target)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
 }
 
 static int cmd_recommend(int argc, char **argv) {
     if (argc < 5) {
         fprintf(stderr,
                 "Usage: crackalack_plan recommend <hash> <charset_or_mask> "
-                "<min_len> <max_len> <target_pct>\n");
+                "<min_len> <max_len> <target_pct> [--tables N] "
+                "[--chain-len L]\n");
         return 1;
     }
 
@@ -169,6 +231,39 @@ static int cmd_recommend(int argc, char **argv) {
     if (parse_len(argv[3], "max_len", &max_len) != 0)
         return 1;
     const char *target_str      = argv[4];
+
+    /* Parse optional flags. */
+    unsigned int num_tables = 1;
+    uint64_t user_chain_len = 0;  /* 0 = auto */
+    for (int i = 5; i < argc; i++) {
+        if (strcmp(argv[i], "--tables") == 0 && i + 1 < argc) {
+            char *endp;
+            errno = 0;
+            unsigned long val = strtoul(argv[++i], &endp, 10);
+            if (errno != 0 || endp == argv[i] || *endp != '\0' ||
+                val == 0 || val > 1000) {
+                fprintf(stderr,
+                        "Error: --tables must be in [1, 1000], got '%s'\n",
+                        argv[i]);
+                return 1;
+            }
+            num_tables = (unsigned int)val;
+        } else if (strcmp(argv[i], "--chain-len") == 0 && i + 1 < argc) {
+            char *endp;
+            errno = 0;
+            user_chain_len = (uint64_t)strtoull(argv[++i], &endp, 10);
+            if (errno != 0 || endp == argv[i] || *endp != '\0' ||
+                user_chain_len == 0) {
+                fprintf(stderr,
+                        "Error: --chain-len must be a positive integer, "
+                        "got '%s'\n", argv[i]);
+                return 1;
+            }
+        } else {
+            fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+            return 1;
+        }
+    }
 
     /* Parse target percentage - strip trailing '%' if present. */
     char target_buf[64];
@@ -210,11 +305,14 @@ static int cmd_recommend(int argc, char **argv) {
     printf("Hash:         %s\n", hash_name);
     printf("Mask/Charset: %s\n", charset_or_mask);
     printf("Keyspace:     %llu plaintexts\n", (unsigned long long)keyspace);
-    printf("Target:       %s coverage\n", target_str);
-    printf("\nRecommended:\n");
+    printf("Target:       %s combined coverage", target_str);
+    if (num_tables > 1)
+        printf(" across %u tables", num_tables);
+    printf("\n");
 
     /* Trivial case. */
     if (keyspace == 1) {
+        printf("\nRecommended:\n");
         printf("  Chain length: 1\n");
         printf("  Chains:       1\n");
         printf("  File size:    %.2f MB\n", file_size_mb(1));
@@ -222,33 +320,56 @@ static int cmd_recommend(int argc, char **argv) {
         return 0;
     }
 
-    /* Hellman optimum: chain_len ~ sqrt(keyspace). */
-    uint64_t chain_len = (uint64_t)(sqrt((double)keyspace) + 0.5);
+    /* Per-table coverage target.  Combined coverage of t independent
+     * tables: C = 1 - (1 - c)^t  =>  c = 1 - (1 - C)^(1/t). */
+    double per_table_target = 1.0 - pow(1.0 - target, 1.0 / num_tables);
+
+    /* Chain length: user override or heuristic.
+     * Single table: Hellman optimum chain_len ~ sqrt(N).
+     * Multiple tables: shorter chains avoid excessive merges and keep
+     * lookups fast.  Use N^(1/3) as a practical default. */
+    uint64_t chain_len;
+    if (user_chain_len > 0) {
+        chain_len = user_chain_len;
+    } else if (num_tables == 1) {
+        chain_len = (uint64_t)(sqrt((double)keyspace) + 0.5);
+    } else {
+        chain_len = (uint64_t)(cbrt((double)keyspace) + 0.5);
+    }
     if (chain_len < 1)
         chain_len = 1;
     if (chain_len > keyspace)
         chain_len = keyspace;
 
-    /* Solve for num_chains: coverage = 1 - (1 - cl/N)^n
-     * => n = ceil(log(1 - target) / log(1 - cl/N)) */
-    double p_miss_per_chain = 1.0 - (double)chain_len / (double)keyspace;
-    uint64_t num_chains;
-    if (p_miss_per_chain <= 0.0) {
-        /* A single chain covers everything. */
-        num_chains = 1;
-    } else {
-        double n = ceil(log(1.0 - target) / log(p_miss_per_chain));
-        if (n < 1.0)
-            n = 1.0;
-        num_chains = (uint64_t)n;
+    uint64_t num_chains = solve_num_chains(keyspace, chain_len,
+                                           per_table_target);
+
+    double per_table_cov = coverage(keyspace, chain_len, num_chains);
+    double combined_cov = 1.0 - pow(1.0 - per_table_cov, num_tables);
+
+    printf("\nRecommended (per table index):\n");
+    printf("  Chain length:     %llu\n", (unsigned long long)chain_len);
+    printf("  Chains per table: %llu\n", (unsigned long long)num_chains);
+    printf("  File size/table:  %.2f MB\n", file_size_mb(num_chains));
+    printf("  Coverage/table:   ~%.1f%%\n", per_table_cov * 100.0);
+    if (num_tables > 1) {
+        printf("\nTotals (%u table indices):\n", num_tables);
+        printf("  Total chains:     %llu\n",
+               (unsigned long long)num_chains * num_tables);
+        printf("  Total files:      %u\n", num_tables);
+        printf("  Total file size:  %.2f MB\n",
+               file_size_mb(num_chains) * num_tables);
     }
+    printf("  Combined coverage: ~%.1f%%\n", combined_cov * 100.0);
 
-    double actual_cov = coverage(keyspace, chain_len, num_chains);
-
-    printf("  Chain length: %llu\n", (unsigned long long)chain_len);
-    printf("  Chains:       %llu\n", (unsigned long long)num_chains);
-    printf("  File size:    %.2f MB\n", file_size_mb(num_chains));
-    printf("  Coverage:     ~%.1f%%\n", actual_cov * 100.0);
+    /* Print generation commands. */
+    printf("\nGeneration commands:\n");
+    for (unsigned int t = 0; t < num_tables; t++) {
+        printf("  ./crackalack_gen %s %s %u %u %u %llu %llu 0\n",
+               hash_name, charset_or_mask, min_len, max_len,
+               t, (unsigned long long)chain_len,
+               (unsigned long long)num_chains);
+    }
     return 0;
 }
 
@@ -331,7 +452,7 @@ static void print_usage(void) {
             "  estimate <hash> <charset_or_mask> <min_len> <max_len> "
             "<chain_len> <num_chains>\n"
             "  recommend <hash> <charset_or_mask> <min_len> <max_len> "
-            "<target_pct>\n"
+            "<target_pct> [--tables N] [--chain-len L]\n"
             "  train <wordlist> [charset] [--max-positions N]\n"
             "\n"
             "The train command creates position-aware Markov models (v1).\n"
