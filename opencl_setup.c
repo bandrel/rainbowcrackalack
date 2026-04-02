@@ -362,6 +362,10 @@ void load_kernel(cl_context context, cl_uint num_devices, const cl_device_id *de
     strncat(build_options, " -DAMD_ROCM=1", sizeof(build_options) - 1);
 #endif
 
+  /* NVIDIA: enable aggressive optimizations for kernel compilation. */
+  if (strcmp(device_vendor, "NVIDIA Corporation") == 0)
+    strncat(build_options, " -cl-mad-enable -cl-no-signed-zeros", sizeof(build_options) - 1);
+
   /*printf("Building program with options: %s\n", build_options);*/
   if (rc_clBuildProgram(*program, num_devices, devices, build_options, NULL, NULL) < 0) {
     size_t log_size = 0;

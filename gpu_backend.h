@@ -294,7 +294,9 @@ extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
   rc_clCreateCommandQueueWithProperties(_context, _device, NULL, &err); if (err < 0) { fprintf(stderr, "clCreateCommandQueueWithProperties failed: %d\n", err); exit(-1); }
 
 #define CLRUNKERNEL(_queue, _kernel, _gws_ptr) \
-  { err = rc_clEnqueueNDRangeKernel(_queue, _kernel, 1, NULL, _gws_ptr, NULL, 0, NULL, NULL); if (err < 0) { fprintf(stderr, "clEnqueueNDRangeKernel failed: %d\n", err);  exit(-1); } }
+  { size_t _lws = 256; \
+    size_t *_lws_ptr = (*(_gws_ptr) % _lws == 0) ? &_lws : NULL; \
+    err = rc_clEnqueueNDRangeKernel(_queue, _kernel, 1, NULL, _gws_ptr, _lws_ptr, 0, NULL, NULL); if (err < 0) { fprintf(stderr, "clEnqueueNDRangeKernel failed: %d\n", err);  exit(-1); } }
 
 #define CLFLUSH(_queue) \
   { err = rc_clFlush(_queue); if (err < 0) { fprintf(stderr, "clFlush failed: %d\n", err); exit(-1); } }
