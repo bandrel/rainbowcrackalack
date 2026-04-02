@@ -12,33 +12,36 @@ set -euo pipefail
 # into disjoint training (80%) and testing (20%) halves. The Markov model
 # is trained on the training half; crack rates are measured on the test half.
 #
-# Usage: ./test_markov_accuracy.sh <path/to/rockyou.txt> [plaintext_len] [num_tables] [chain_len] [sample_size] [coverage_levels]
-# plaintext_len defaults to 5. num_tables defaults to 3. coverage_levels is a
-# space-separated quoted string like "10 25 50 100" (default).
+# Usage: ./test_markov_accuracy.sh <path/to/rockyou.txt> [plaintext_lens] [num_tables] [chain_len] [sample_size] [coverage_levels]
+# plaintext_lens is a space-separated quoted string of lengths to test, e.g. "7 8"
+# (default "5"). Lengths are tested in order. num_tables defaults to 1.
+# coverage_levels is a space-separated quoted string like "10 25 50 100" (default).
 
 ROCKYOU="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PT_LEN="${2:-5}"
-NUM_TABLES="${3:-3}"
+IFS=' ' read -r -a PT_LENS <<< "${2:-5}"
+NUM_TABLES="${3:-1}"
 BINDIR="$SCRIPT_DIR"
 
-CHAIN_LEN="${4:-422000}"
-SAMPLE_SIZE="${5:-2000}"
+CHAIN_LEN_ARG="${4:-auto}"
+SAMPLE_SIZE_ARG="${5:-2000}"
 IFS=' ' read -r -a COVERAGE_LEVELS <<< "${6:-10 25 50 100}"
 
 # When the keyspace is so large that even 10% exceeds this limit, switch to
 # fixed chain-count mode with geometrically spaced levels (1x, 2.5x, 5x, 10x).
-MAX_PRACTICAL_CHAINS=1000000000
+MAX_PRACTICAL_CHAINS=100000000
 
 if [ -z "$ROCKYOU" ]; then
     echo "Usage: $0 <path/to/rockyou.txt> [plaintext_len] [num_tables]"
     exit 1
 fi
 
-if ! [[ "$PT_LEN" =~ ^[0-9]+$ ]] || [ "$PT_LEN" -lt 2 ]; then
-    echo "ERROR: plaintext_len must be an integer >= 2 (got: $PT_LEN)"
-    exit 1
-fi
+for _pt in "${PT_LENS[@]}"; do
+    if ! [[ "$_pt" =~ ^[0-9]+$ ]] || [ "$_pt" -lt 2 ]; then
+        echo "ERROR: plaintext_len must be an integer >= 2 (got: $_pt)"
+        exit 1
+    fi
+done
 
 if ! [[ "$NUM_TABLES" =~ ^[0-9]+$ ]] || [ "$NUM_TABLES" -lt 1 ]; then
     echo "ERROR: num_tables must be an integer >= 1 (got: $NUM_TABLES)"
@@ -197,10 +200,45 @@ ln -sfn "$BINDIR/Metal" "$TMPDIR/Metal" 2>/dev/null || true
 ln -sfn "$BINDIR/CL" "$TMPDIR/CL" 2>/dev/null || true
 ln -sfn "$BINDIR/shared.h" "$TMPDIR/shared.h" 2>/dev/null || true
 
+for PT_LEN in "${PT_LENS[@]}"; do
+
+echo ""
+echo "################################################################"
+echo "# Plaintext length: $PT_LEN"
+echo "################################################################"
+
+SAMPLE_SIZE="$SAMPLE_SIZE_ARG"
+
 # Compute keyspace
 KEYSPACE=$(awk -v pt_len="$PT_LEN" 'BEGIN {
     ks = 1; for (i = 0; i < pt_len; i++) ks *= 95; print int(ks)
 }')
+
+# Auto-calculate chain length for fastest precompute while keeping
+# generation practical.  Strategy: pick the shortest chain_len such that
+# 100% coverage doesn't exceed MAX_PRACTICAL_CHAINS.  This gives the
+# fastest possible lookup without making generation infeasible.
+# Floor at 100, and for very large keyspaces fall back to cbrt(keyspace)
+# which is the theoretical optimum for multi-table setups.
+if [ "$CHAIN_LEN_ARG" = "auto" ]; then
+    CHAIN_LEN=$(python3 -c "
+import math
+ks = $KEYSPACE
+max_chains = $MAX_PRACTICAL_CHAINS
+# Shortest chain_len where full coverage fits in max_chains
+cl = max(100, ks // max_chains)
+# But don't go below cbrt for very large keyspaces (diminishing returns)
+cl_cbrt = int(round(ks ** (1/3)))
+if cl > cl_cbrt:
+    cl = cl_cbrt
+# Round to nearest 100 for cleaner filenames
+cl = max(100, (cl // 100) * 100)
+print(cl)
+")
+    echo "  Auto chain_len=$CHAIN_LEN (shortest practical for keyspace=$KEYSPACE)"
+else
+    CHAIN_LEN="$CHAIN_LEN_ARG"
+fi
 
 # Cap sample size to available keyspace
 if [ "$KEYSPACE" -lt "$SAMPLE_SIZE" ]; then
@@ -387,9 +425,16 @@ SANITY_STD_RT="ntlm_ascii-32-95#${PT_LEN}-${PT_LEN}_0_${CHAIN_LEN}x${SANITY_CHAI
 mv "./$SANITY_STD_RT" "$TMPDIR/sanity_std/"
 "$BINDIR/crackalack_sort" "$TMPDIR"/sanity_std/*.rt 2>&1 | tail -1 | sed 's/^/  /'
 rm -f "$BINDIR"/rcracki.precalc.* "$BINDIR"/rainbowcrackalack_*.pot
-sanity_std_out=$("$BINDIR/crackalack_lookup" "$TMPDIR/sanity_std/" "$TMPDIR/sanity_hash.txt" 2>&1) || true
+sanity_std_rc=0
+sanity_std_out=$("$BINDIR/crackalack_lookup" "$TMPDIR/sanity_std/" "$TMPDIR/sanity_hash.txt" 2>&1) || sanity_std_rc=$?
 sanity_std_cracked=$(echo "$sanity_std_out" | parse_cracked)
-echo "  Standard pipeline: cracked=${sanity_std_cracked:-PARSE_ERROR}"
+if [ -z "$sanity_std_cracked" ]; then
+    echo "  Standard pipeline: PARSE_ERROR (exit code $sanity_std_rc)"
+    echo "  crackalack_lookup output:"
+    echo "$sanity_std_out" | tail -20 | sed 's/^/    /'
+else
+    echo "  Standard pipeline: cracked=$sanity_std_cracked"
+fi
 
 # Markov sanity (same chain count)
 mkdir -p "$TMPDIR/sanity_mkv"
@@ -398,9 +443,16 @@ SANITY_MKV_RT="ntlm_ascii-32-95-mk${KEYSPACE}#${PT_LEN}-${PT_LEN}_0_${CHAIN_LEN}
 mv "./$SANITY_MKV_RT" "$TMPDIR/sanity_mkv/"
 "$BINDIR/crackalack_sort" "$TMPDIR"/sanity_mkv/*.rt 2>&1 | tail -1 | sed 's/^/  /'
 rm -f "$BINDIR"/rcracki.precalc.* "$BINDIR"/rainbowcrackalack_*.pot
-sanity_mkv_out=$("$BINDIR/crackalack_lookup" "$TMPDIR/sanity_mkv/" "$TMPDIR/sanity_hash.txt" --markov "$MARKOV" 2>&1) || true
+sanity_mkv_rc=0
+sanity_mkv_out=$("$BINDIR/crackalack_lookup" "$TMPDIR/sanity_mkv/" "$TMPDIR/sanity_hash.txt" --markov "$MARKOV" 2>&1) || sanity_mkv_rc=$?
 sanity_mkv_cracked=$(echo "$sanity_mkv_out" | parse_cracked)
-echo "  Markov pipeline:   cracked=${sanity_mkv_cracked:-PARSE_ERROR}"
+if [ -z "$sanity_mkv_cracked" ]; then
+    echo "  Markov pipeline:   PARSE_ERROR (exit code $sanity_mkv_rc)"
+    echo "  crackalack_lookup output:"
+    echo "$sanity_mkv_out" | tail -20 | sed 's/^/    /'
+else
+    echo "  Markov pipeline:   cracked=$sanity_mkv_cracked"
+fi
 
 if [ "${sanity_std_cracked:-0}" = "0" ] && [ "${sanity_mkv_cracked:-0}" = "0" ]; then
     echo ""
@@ -600,5 +652,8 @@ done
 echo ""
 echo "Methodology: train/test split (80/20), $actual_count deduplicated test passwords,"
 echo "  $NUM_TABLES table(s) per level, Markov model trained on training set only."
+
+done  # end PT_LENS loop
+
 echo ""
 echo "Done."
