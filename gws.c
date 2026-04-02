@@ -25,187 +25,205 @@ unsigned int get_optimal_gws(gpu_device device, const char *kernel_name) {
   get_device_str(device, CL_DEVICE_NAME, name, sizeof(name) - 1);
 
   if (strcmp(vendor, "NVIDIA Corporation") == 0) {
+    unsigned int base_gws = 0;
+
     if (strcmp(name, "GeForce GTX 1080 Ti") == 0)
-      return 28 * 768; /* Guess based on the 1070 & 1070 Ti's performance. */
+      base_gws = 28 * 768; /* Guess based on the 1070 & 1070 Ti's performance. */
     else if (strcmp(name, "GeForce GTX 1080") == 0)
-      return 20 * 768; /* Guess based on the 1070 & 1070 Ti's performance. */
+      base_gws = 20 * 768; /* Guess based on the 1070 & 1070 Ti's performance. */
     else if (strcmp(name, "GeForce GTX 1070 Ti") == 0)
-      return 19 * 768; /* NTLM 8-char: ?/s */
+      base_gws = 19 * 768; /* NTLM 8-char: ?/s */
 
     else if (strcmp(name, "GeForce GTX 770") == 0)
-      return 8 * 768; /* ??? */
+      base_gws = 8 * 768; /* ??? */
 
     else if (strcmp(name, "GeForce GTX 1070") == 0)
-      return 15 * 768; /* NTLM 8-char: 3,028/s */
+      base_gws = 15 * 768; /* NTLM 8-char: 3,028/s */
 
     else if (strcmp(name, "GeForce GTX 1660 Ti") == 0)
-      return 24 * 1536; /* NTLM 8-char: 8,070/s */
+      base_gws = 24 * 1536; /* NTLM 8-char: 8,070/s */
 
     else if (strcmp(name, "GeForce RTX 2060") == 0)
 #ifdef _WIN32
-      return 30 * 256; /* This is a guess based on the RTX 2070's Windows performance.  The RTX 2070's optimal performance is at 36 compute units x 256 = 9216, so maybe the RTX 2060's is 30 compute units x 256 = 7680? */
+      base_gws = 30 * 256; /* This is a guess based on the RTX 2070's Windows performance.  The RTX 2070's optimal performance is at 36 compute units x 256 = 9216, so maybe the RTX 2060's is 30 compute units x 256 = 7680? */
 #else
-      return 30 * 512; /* NTLM 8-char: 5287/s */
+      base_gws = 30 * 512; /* NTLM 8-char: 5287/s */
 #endif
 
     else if (strcmp(name, "GeForce RTX 2070") == 0)
 #ifdef _WIN32
-      return 36 * 256; /* NTLM 8-char: 4,683/s */
+      base_gws = 36 * 256; /* NTLM 8-char: 4,683/s */
 #else
-      return 36 * 512; /* NTLM 8-char: 6,345/s */
+      base_gws = 36 * 512; /* NTLM 8-char: 6,345/s */
 #endif
 
     /* The RTX 2080 numbers are an educated guess based on how the RTX 2070 and 2060's numbers.  Their compute units times 512 is optimal for Linux; their compute units times 256 is optimal for Windows. */
     else if (strcmp(name, "GeForce RTX 2080") == 0)
 #ifdef _WIN32
-      return 46 * 256;
+      base_gws = 46 * 256;
 #else
-      return 46 * 512;
+      base_gws = 46 * 512;
 #endif
 
     /* The RTX 2080 Ti numbers are an educated guess based on how the RTX 2070 and 2060's numbers.  Their compute units times 512 is optimal for Linux; their compute units times 256 is optimal for Windows. */
     else if (strcmp(name, "GeForce RTX 2080 Ti") == 0)
 #ifdef _WIN32
-      return 68 * 256;
+      base_gws = 68 * 256;
 #else
-      return 68 * 512;
+      base_gws = 68 * 512;
 #endif
 
     else if (strcmp(name, "GeForce RTX 3090") == 0)
 #ifdef _WIN32
-      return 82 * 256;
+      base_gws = 82 * 256;
 #else
-      return 82 * 512;
+      base_gws = 82 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 4090") == 0)
 #ifdef _WIN32
-      return 128 * 256;
+      base_gws = 128 * 256;
 #else
-      return 128 * 512;
+      base_gws = 128 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 4080 SUPER") == 0)
 #ifdef _WIN32
-      return 80 * 256;
+      base_gws = 80 * 256;
 #else
-      return 80 * 512;
+      base_gws = 80 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 4080") == 0)
 #ifdef _WIN32
-      return 76 * 256;
+      base_gws = 76 * 256;
 #else
-      return 76 * 512;
+      base_gws = 76 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 4070 Ti SUPER") == 0)
 #ifdef _WIN32
-      return 66 * 256;
+      base_gws = 66 * 256;
 #else
-      return 66 * 512;
+      base_gws = 66 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 4070 Ti") == 0)
 #ifdef _WIN32
-      return 60 * 256;
+      base_gws = 60 * 256;
 #else
-      return 60 * 512;
+      base_gws = 60 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 4070 SUPER") == 0)
 #ifdef _WIN32
-      return 56 * 256;
+      base_gws = 56 * 256;
 #else
-      return 56 * 512;
+      base_gws = 56 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 4070") == 0)
 #ifdef _WIN32
-      return 46 * 256;
+      base_gws = 46 * 256;
 #else
-      return 46 * 512;
+      base_gws = 46 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 4060 Ti") == 0)
 #ifdef _WIN32
-      return 34 * 256;
+      base_gws = 34 * 256;
 #else
-      return 34 * 512;
+      base_gws = 34 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 4060") == 0)
 #ifdef _WIN32
-      return 24 * 256;
+      base_gws = 24 * 256;
 #else
-      return 24 * 512;
+      base_gws = 24 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 3080 Ti") == 0)
 #ifdef _WIN32
-      return 80 * 256;
+      base_gws = 80 * 256;
 #else
-      return 80 * 512;
+      base_gws = 80 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 3080") == 0)
 #ifdef _WIN32
-      return 68 * 256;
+      base_gws = 68 * 256;
 #else
-      return 68 * 512;
+      base_gws = 68 * 768;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 3070 Ti") == 0)
 #ifdef _WIN32
-      return 48 * 256;
+      base_gws = 48 * 256;
 #else
-      return 48 * 512;
+      base_gws = 48 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 3070") == 0)
 #ifdef _WIN32
-      return 46 * 256;
+      base_gws = 46 * 256;
 #else
-      return 46 * 512;
+      base_gws = 46 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 3060 Ti") == 0)
 #ifdef _WIN32
-      return 38 * 256;
+      base_gws = 38 * 256;
 #else
-      return 38 * 512;
+      base_gws = 38 * 512;
 #endif
 
     else if (strcmp(name, "NVIDIA GeForce RTX 3060") == 0)
 #ifdef _WIN32
-      return 28 * 256;
+      base_gws = 28 * 256;
 #else
-      return 28 * 512;
+      base_gws = 28 * 512;
 #endif
 
     else if (strcmp(name, "Tesla V100-SXM2-16GB") == 0) /* Amazon EC2 p3.2xlarge instance */
-      return 80 * 512;
+      base_gws = 80 * 512;
 
     else {
       gpu_uint compute_units = 0;
       get_device_uint(device, CL_DEVICE_MAX_COMPUTE_UNITS, &compute_units);
       if (compute_units > 0) {
 #ifdef _WIN32
-        return compute_units * 256;
+        base_gws = compute_units * 256;
 #else
-        return compute_units * 512;
+        base_gws = compute_units * 512;
 #endif
       }
+    }
+
+    if (base_gws > 0) {
+      /* Markov kernels have higher register pressure and more memory
+       * traffic from bigram table lookups (~136KB sorted_bigram accessed
+       * 7-8 times per chain step with poor coalescing); reduce GWS by
+       * 25% to improve L2 cache hit rates and avoid register spills. */
+      if (markov)
+        return (base_gws * 3) / 4;
+      return base_gws;
     }
   }
 
   if (strcmp(vendor, "Advanced Micro Devices, Inc.") == 0) {
+    unsigned int base_gws = 0;
     if (strcmp(name, "gfx900") == 0) /* AMD Vega 64 */
 #ifdef _WIN32
-      return 64 * 256; /* NTLM 8-char: 2,560/s */
+      base_gws = 64 * 256; /* NTLM 8-char: 2,560/s */
 #else
-      return 64 * 768; /* NTLM 8-char: 5,671/s */
+      base_gws = 64 * 768; /* NTLM 8-char: 5,671/s */
 #endif
+    if (base_gws > 0) {
+      if (markov)
+        return (base_gws * 3) / 4;
+      return base_gws;
+    }
   }
 
 #ifdef USE_METAL
