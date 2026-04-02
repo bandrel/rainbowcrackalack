@@ -11,8 +11,11 @@
 #define QUOTE "'"
 #endif
 
-/* This is the longest chain length that a single kernel invokation can produce.  Beyond this, it must be split up into parts.  Linux drivers don't seem to have a problem with this larger chains, but Windows drivers end up getting killed by the watchdog timer. */
-#define MAX_CHAIN_LEN 450000
+/* This is the longest chain length that a single kernel invokation can produce.  Beyond
+ * this, it must be split up into parts.  Set to 0 to auto-calibrate at runtime using a
+ * probe dispatch (recommended for Metal/macOS where the GPU watchdog kills long kernels).
+ * A non-zero value skips calibration and uses the fixed limit directly. */
+#define MAX_CHAIN_LEN 0
 
 #define CHAIN_SIZE (unsigned int)(sizeof(uint64_t) * 2)
 
