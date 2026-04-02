@@ -67,10 +67,12 @@
 #define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.metal"
 #define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.metal"
 #define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.metal"
+#define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.metal"
 #else
 #define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
 #define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.cl"
 #define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.cl"
+#define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.cl"
 #endif
 
 #define FALSE_ALARM_KERNEL_PATH "false_alarm_check.cl"
@@ -1513,6 +1515,209 @@ static void release_precompute_gpu(unsigned int num_devices, thread_args *args) 
 }
 
 
+/* Batched precompute: processes ALL hashes in a single GPU kernel dispatch.
+ * Instead of dispatching one kernel per hash (sequential, ~4.7s each), this
+ * sends all hashes to the GPU at once, achieving near-constant time regardless
+ * of hash count (up to GPU memory limits).
+ *
+ * Returns 1 if batched path was used, 0 if it should fall back to per-hash. */
+int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
+    char **hashes, char **usernames, unsigned int num_hashes,
+    precomputed_and_potential_indices **ppi_head) {
+
+  /* Only supported for Markov NTLM8 currently. */
+  if (!args[0].use_markov)
+    return 0;
+  if (!is_markov_ntlm8(args[0].hash_type, args[0].charset, args[0].plaintext_len_min,
+        args[0].plaintext_len_max, args[0].reduction_offset, args[0].chain_len, args[0].use_markov))
+    return 0;
+  if (num_hashes < 2)
+    return 0;
+
+  gpu_dev *gpu = &(args[0].gpu);
+  int err = 0;
+  gpu_context context = NULL;
+  gpu_queue queue = NULL;
+  gpu_kernel kernel = NULL;
+  struct timespec batch_start = {0};
+
+  gpu_buffer hashes_buffer = NULL, num_hashes_buffer = NULL, positions_buffer = NULL;
+  gpu_buffer charset_len_buffer = NULL, chain_len_buffer = NULL;
+  gpu_buffer device_num_buffer = NULL, total_devices_buffer = NULL;
+  gpu_buffer output_buffer = NULL;
+  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
+
+  unsigned int positions_per_hash = args[0].chain_len;  /* Single device: all positions */
+  size_t total_work_items = (size_t)num_hashes * positions_per_hash;
+
+  printf("\n  Batched precompute: %u hashes x %u positions = %zu work items\n",
+         num_hashes, positions_per_hash, total_work_items);
+  fflush(stdout);
+
+  /* Check output buffer fits in GPU memory. Each entry is 8 bytes. */
+  size_t output_bytes = total_work_items * sizeof(gpu_ulong);
+  gpu_ulong gpu_mem = 0;
+  get_device_ulong(gpu->device, CL_DEVICE_GLOBAL_MEM_SIZE, &gpu_mem);
+  if (output_bytes > gpu_mem / 2) {
+    printf("  Output buffer too large (%.0f MB vs %.0f MB GPU mem). Falling back to per-hash.\n",
+           (double)output_bytes / 1048576.0, (double)gpu_mem / 1048576.0);
+    return 0;
+  }
+
+  /* Convert all hashes to binary and concatenate. */
+  unsigned char *all_hashes_bin = calloc(num_hashes, 16);
+  if (all_hashes_bin == NULL) {
+    fprintf(stderr, "Error allocating batch hash buffer.\n");
+    return 0;
+  }
+  for (unsigned int i = 0; i < num_hashes; i++)
+    hex_to_bytes(hashes[i], 16, all_hashes_bin + i * 16);
+
+  /* Allocate output buffer on host. */
+  gpu_ulong *all_output = calloc(total_work_items, sizeof(gpu_ulong));
+  if (all_output == NULL) {
+    fprintf(stderr, "Error allocating batch output buffer.\n");
+    free(all_hashes_bin);
+    return 0;
+  }
+
+  /* Set up GPU context and load batch kernel. */
+  gpu->context = CLCREATECONTEXT(context_callback, &(gpu->device));
+  gpu->queue = CLCREATEQUEUE(gpu->context, gpu->device);
+  load_kernel(gpu->context, 1, &(gpu->device),
+              PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH,
+              "precompute_markov_ntlm8_batch",
+              &(gpu->program), &(gpu->kernel), args[0].hash_type);
+
+  context = gpu->context;
+  queue = gpu->queue;
+  kernel = gpu->kernel;
+
+  int charset_len = strlen(args[0].charset);
+  gpu_ulong chain_len_ulong = args[0].chain_len;
+  gpu_uint device_num = 0;
+  gpu_uint total_devices = 1;
+  gpu_uint num_hashes_uint = num_hashes;
+  gpu_uint positions_uint = positions_per_hash;
+
+  /* Set kernel arguments. */
+  CLCREATEARG_ARRAY(0, hashes_buffer, CL_RO, all_hashes_bin, num_hashes * 16);
+  CLCREATEARG(1, num_hashes_buffer, CL_RO, num_hashes_uint, sizeof(gpu_uint));
+  CLCREATEARG(2, positions_buffer, CL_RO, positions_uint, sizeof(gpu_uint));
+  CLCREATEARG(3, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
+  CLCREATEARG(4, chain_len_buffer, CL_RO, chain_len_ulong, sizeof(gpu_ulong));
+  CLCREATEARG(5, device_num_buffer, CL_RO, device_num, sizeof(gpu_uint));  /* pos_start, updated per chunk */
+  CLCREATEARG(6, total_devices_buffer, CL_RO, positions_uint, sizeof(gpu_uint));  /* total_positions */
+  CLCREATEARG_ARRAY(7, output_buffer, CL_WO, all_output, output_bytes);
+  CLCREATEARG_ARRAY(8, sorted_pos0_buffer, CL_RO, args[0].sorted_pos0,
+                    args[0].markov_charset_len * sizeof(uint8_t));
+  CLCREATEARG_ARRAY(9, sorted_bigram_buffer, CL_RO, args[0].sorted_bigram,
+                    args[0].markov_max_positions * args[0].markov_charset_len *
+                    args[0].markov_charset_len * sizeof(uint8_t));
+
+  /* Dispatch in position-based sub-batches to stay within GPU watchdog limits.
+   * Each sub-batch processes all hashes at a range of chain positions.
+   * Work items in each sub-batch have similar workloads (nearby positions),
+   * avoiding the massive load imbalance of a single giant dispatch. */
+  unsigned int chunk_size = 512;  /* positions per sub-batch — smaller = better GPU occupancy for heavy early chunks */
+  unsigned int num_chunks = (positions_per_hash + chunk_size - 1) / chunk_size;
+
+  printf("  Dispatching batch kernel: %u hashes in %u position chunks of %u...\n",
+         num_hashes, num_chunks, chunk_size);
+  fflush(stdout);
+  start_timer(&batch_start);
+
+  /* We need to tell the kernel which position range to process.
+   * Reuse device_num as position offset and total_devices as chunk size. */
+  for (unsigned int chunk = 0; chunk < num_chunks; chunk++) {
+    unsigned int pos_start = chunk * chunk_size;
+    unsigned int pos_end = pos_start + chunk_size;
+    if (pos_end > positions_per_hash) pos_end = positions_per_hash;
+    unsigned int chunk_positions = pos_end - pos_start;
+
+    /* Update device_num to serve as position offset for this chunk. */
+    gpu_uint pos_start_val = pos_start;
+    CLWRITEBUFFER(device_num_buffer, sizeof(gpu_uint), &pos_start_val);
+    gpu_uint chunk_pos_val = chunk_positions;
+    CLWRITEBUFFER(positions_buffer, sizeof(gpu_uint), &chunk_pos_val);
+
+    size_t chunk_gws = (size_t)num_hashes * chunk_positions;
+    chunk_gws = ((chunk_gws + 255) / 256) * 256;
+
+    CLRUNKERNEL(gpu->queue, gpu->kernel, &chunk_gws);
+    CLFLUSH(gpu->queue);
+    CLWAIT(gpu->queue);
+  }
+
+  char time_str[128] = {0};
+  seconds_to_human_time(time_str, sizeof(time_str), get_elapsed(&batch_start));
+  printf("  Batch precompute completed in %s for all %u hashes.\n", time_str, num_hashes);
+  fflush(stdout);
+
+  /* Read results back. */
+  CLREADBUFFER(output_buffer, output_bytes, all_output);
+
+  /* Distribute results to per-hash ppi nodes. */
+  for (unsigned int h = 0; h < num_hashes; h++) {
+    gpu_ulong *hash_output = all_output + (size_t)h * positions_per_hash;
+
+    /* Count non-zero entries (valid precomputed endpoints). */
+    unsigned int count = 0;
+    for (unsigned int p = 0; p < positions_per_hash; p++) {
+      if (hash_output[p] != 0)
+        count++;
+    }
+
+    /* Create ppi node. */
+    precomputed_and_potential_indices *ppi = calloc(1, sizeof(precomputed_and_potential_indices));
+    if (ppi == NULL) { fprintf(stderr, "Error allocating ppi.\n"); exit(-1); }
+
+    ppi->username = usernames[h];
+    ppi->hash = hashes[h];
+    ppi->num_precomputed_end_indices = count;
+    ppi->precomputed_end_indices = calloc(count, sizeof(gpu_ulong));
+    if (ppi->precomputed_end_indices == NULL) { fprintf(stderr, "Error allocating ppi indices.\n"); exit(-1); }
+
+    unsigned int idx = 0;
+    for (unsigned int p = 0; p < positions_per_hash; p++) {
+      if (hash_output[p] != 0)
+        ppi->precomputed_end_indices[idx++] = hash_output[p];
+    }
+
+    /* Append to linked list. */
+    if (*ppi_head == NULL) {
+      *ppi_head = ppi;
+    } else {
+      precomputed_and_potential_indices *tail = *ppi_head;
+      while (tail->next != NULL)
+        tail = tail->next;
+      tail->next = ppi;
+    }
+  }
+
+  /* Cleanup GPU resources. */
+  CLFREEBUFFER(hashes_buffer);
+  CLFREEBUFFER(num_hashes_buffer);
+  CLFREEBUFFER(positions_buffer);
+  CLFREEBUFFER(charset_len_buffer);
+  CLFREEBUFFER(chain_len_buffer);
+  CLFREEBUFFER(device_num_buffer);
+  CLFREEBUFFER(total_devices_buffer);
+  CLFREEBUFFER(output_buffer);
+  CLFREEBUFFER(sorted_pos0_buffer);
+  CLFREEBUFFER(sorted_bigram_buffer);
+  CLRELEASEKERNEL(gpu->kernel);
+  CLRELEASEPROGRAM(gpu->program);
+  CLRELEASEQUEUE(gpu->queue);
+  CLRELEASECONTEXT(gpu->context);
+
+  free(all_hashes_bin);
+  free(all_output);
+
+  return 1;
+}
+
+
 /* If update_ppi is non-NULL, replace its precomputed endpoints in-place (for
  * re-running precomputation against a different table configuration).
  * If NULL, a new ppi node is appended to ppi_head (original behaviour). */
@@ -2908,24 +3113,48 @@ int main(int ac, char **av) {
     num_hashes_precomputed_total = num_uncracked;
     start_timer(&precompute_start_time);
 
+    /* Collect uncracked hashes for batch precompute. */
+    unsigned int batch_count = 0;
+    char **batch_hashes = calloc(num_hashes, sizeof(char *));
+    char **batch_usernames = calloc(num_hashes, sizeof(char *));
     for (i = 0; i < num_hashes; i++) {
       precomputed_and_potential_indices *existing_ppi = ppi_find(ppi_head, hashes[i]);
-
-      /* Skip already-cracked hashes. */
       if (existing_ppi != NULL && existing_ppi->plaintext != NULL)
         continue;
-
-      printf("Pre-computing hash #%u: %s...\n", i + 1, hashes[i]);  fflush(stdout);
-
-      for (j = 0; j < num_devices; j++) {
-        args[j].username = usernames[i];
-        args[j].hash = hashes[i];
-      }
-
-      /* Pass existing_ppi so the function updates in-place on second+ pass,
-       * and creates a new node on the first pass (existing_ppi == NULL). */
-      precompute_hash(num_devices, args, &ppi_head, existing_ppi);
+      batch_hashes[batch_count] = hashes[i];
+      batch_usernames[batch_count] = usernames[i];
+      batch_count++;
     }
+
+    /* Try batched precompute first (all hashes in one GPU dispatch). */
+    int used_batch = 0;
+    if (batch_count > 0) {
+      used_batch = batch_precompute_all_hashes(num_devices, args,
+          batch_hashes, batch_usernames, batch_count, &ppi_head);
+    }
+
+    /* Fall back to per-hash sequential precompute if batch wasn't used. */
+    if (!used_batch) {
+      for (i = 0; i < num_hashes; i++) {
+        precomputed_and_potential_indices *existing_ppi = ppi_find(ppi_head, hashes[i]);
+
+        /* Skip already-cracked hashes. */
+        if (existing_ppi != NULL && existing_ppi->plaintext != NULL)
+          continue;
+
+        printf("Pre-computing hash #%u: %s...\n", i + 1, hashes[i]);  fflush(stdout);
+
+        for (j = 0; j < num_devices; j++) {
+          args[j].username = usernames[i];
+          args[j].hash = hashes[i];
+        }
+
+        precompute_hash(num_devices, args, &ppi_head, existing_ppi);
+      }
+    }
+
+    free(batch_hashes);
+    free(batch_usernames);
 
     time_precomp += get_elapsed(&precompute_start_time);
     seconds_to_human_time(time_precomp_str, sizeof(time_precomp_str), time_precomp);
