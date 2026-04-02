@@ -500,12 +500,9 @@ void *host_thread(void *ptr) {
     exit(-1);
   }
 
+  unsigned int effective_max_chain_len = MAX_CHAIN_LEN;
+  int calibration_done = (effective_max_chain_len > 0);  /* skip calibration if a fixed limit is set */
   num_passes = 1;
-  if (args->chain_len > MAX_CHAIN_LEN) {
-    num_passes = args->chain_len / MAX_CHAIN_LEN;
-    if ((args->chain_len % MAX_CHAIN_LEN) > 0)
-      num_passes++;
-  }
 
   while(1) {
     LOCK_START_INDEX();
@@ -609,16 +606,61 @@ void *host_thread(void *ptr) {
       CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
     }
 
-    /* If the chain length is greater than MAX_CHAIN_LEN, then the chains must be computed in multiple passes (otherwise Windows drivers crash). */
+    /* Auto-calibrate the max chain steps per kernel dispatch on first iteration.
+     * Runs a short probe kernel, measures wall time, and extrapolates the largest
+     * pass size that stays under a safe GPU time budget.  This avoids watchdog
+     * kills on macOS Metal and Windows while letting fast Linux/CUDA GPUs run
+     * full-length chains in a single dispatch. */
+    if (!calibration_done) {
+#define PROBE_STEPS 2000
+#define TARGET_SECONDS 3.0
+      gpu_uint probe_chain_len = (args->chain_len < PROBE_STEPS) ? args->chain_len : PROBE_STEPS;
+      gpu_uint probe_pos_start = 0;
+      CLWRITEBUFFER(chain_len_buffer, sizeof(gpu_uint), &probe_chain_len);
+      CLWRITEBUFFER(pos_start_buffer, sizeof(gpu_uint), &probe_pos_start);
+
+      struct timespec t0, t1;
+      clock_gettime(CLOCK_MONOTONIC, &t0);
+      CLRUNKERNEL(gpu->queue, gpu->kernel, &gws);
+      CLFLUSH(gpu->queue);
+      CLWAIT(gpu->queue);
+      clock_gettime(CLOCK_MONOTONIC, &t1);
+
+      double probe_secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+      if (probe_secs < 0.001) probe_secs = 0.001;
+
+      effective_max_chain_len = (unsigned int)(probe_chain_len * (TARGET_SECONDS / probe_secs));
+      if (effective_max_chain_len < PROBE_STEPS)
+        effective_max_chain_len = PROBE_STEPS;
+      if (effective_max_chain_len > args->chain_len)
+        effective_max_chain_len = args->chain_len;
+
+      num_passes = 1;
+      if (args->chain_len > effective_max_chain_len) {
+        num_passes = args->chain_len / effective_max_chain_len;
+        if ((args->chain_len % effective_max_chain_len) > 0)
+          num_passes++;
+      }
+
+      printf("GPU #%u auto-calibrated: %u max chain steps/pass, %u passes (probe: %u steps in %.3fs)\n",
+             gpu->device_number, effective_max_chain_len, num_passes, probe_chain_len, probe_secs);
+      fflush(stdout);
+
+      /* Re-upload the original start indices since the probe consumed them. */
+      CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
+      calibration_done = 1;
+    }
+
+    /* If the chain length exceeds the per-pass limit, split into multiple kernel dispatches. */
     for (pass = 0; pass < num_passes; pass++) {
       chain_len = args->chain_len;
 
-      /* If we're doing multiple passes, and aren't handling the last pass, set the chain length to a multiple of MAX_CHAIN_LEN.  We add one at the end because the GPU code stops one short of the chain length. */
+      /* If we're doing multiple passes, and aren't handling the last pass, set the chain length to a multiple of effective_max_chain_len.  We add one at the end because the GPU code stops one short of the chain length. */
       if ((num_passes > 1) && (pass != (num_passes - 1)))
-	chain_len = ((pass + 1) * MAX_CHAIN_LEN) + 1;
+	chain_len = ((pass + 1) * effective_max_chain_len) + 1;
 
-      /* Starting at 0, the position start increases by a multiple of MAX_CHAIN_LEN. */
-      pos_start = pass * MAX_CHAIN_LEN;
+      /* Starting at 0, the position start increases by a multiple of effective_max_chain_len. */
+      pos_start = pass * effective_max_chain_len;
 
       CLWRITEBUFFER(chain_len_buffer, sizeof(gpu_uint), &chain_len);
       CLWRITEBUFFER(pos_start_buffer, sizeof(gpu_uint), &pos_start);
