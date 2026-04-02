@@ -25,8 +25,8 @@ ifeq ($(BUILD),linux)
   CC := $(CC_linux)
   EXE :=
   CPPFLAGS := $(CPPFLAGS_common)
-  CFLAGS   := $(CFLAGS_common)
-  LDFLAGS  := $(LDFLAGS_common)
+  CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
+  LDFLAGS  := $(LDFLAGS_common) -flto=auto
   LIBS     := -lpthread -ldl -lgcrypt -lOpenCL
 endif
 
@@ -34,8 +34,8 @@ ifeq ($(BUILD),macos)
   CC := clang
   EXE :=
   CPPFLAGS := $(CPPFLAGS_common) -DUSE_METAL -I/opt/homebrew/include
-  CFLAGS   := $(CFLAGS_common)
-  LDFLAGS  := $(LDFLAGS_common) -L/opt/homebrew/lib
+  CFLAGS   := $(CFLAGS_common) -march=native -flto
+  LDFLAGS  := $(LDFLAGS_common) -L/opt/homebrew/lib -flto
   LIBS     := -lpthread -lgcrypt -framework Metal -framework Foundation
   GPU_BACKEND_OBJ := $(OBJDIR)/metal_setup.o
 endif
