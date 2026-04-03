@@ -23,15 +23,12 @@
 #include <windows.h>
 #elif defined(__APPLE__)
 #include <sys/sysctl.h>
-#define O_BINARY 0
 #else
 #include <sys/sysinfo.h>
-#define O_BINARY 0
 #endif
 
 #include <dirent.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <inttypes.h>
 #include <locale.h>
 #include <pthread.h>
@@ -49,6 +46,7 @@
 #include "cpu_rt_functions.h"
 #include "hash_validate.h"
 #include "markov.h"
+#include "bloom.h"
 #include "misc.h"
 #include "rtc_decompress.h"
 #include "shared.h"
@@ -106,7 +104,6 @@ struct _precomputed_and_potential_indices {
   unsigned int *potential_start_index_positions; /* Buffer size is always num_potential_start_indices. */
 
   char *plaintext;        /* Set if hash is cracked. */
-  char *index_filename;   /* File path containing the ".index" file. */
   struct _precomputed_and_potential_indices *next;
 };
 typedef struct _precomputed_and_potential_indices precomputed_and_potential_indices;
@@ -176,6 +173,7 @@ typedef struct {
 typedef struct {
   gpu_ulong *rainbow_table;
   uint64_t num_chains;
+  bloom_filter *bf;
   precomputed_and_potential_indices *ppi_head;
   unsigned int thread_number;
   unsigned int total_threads;
@@ -205,6 +203,7 @@ struct _preloaded_table {
   char *filepath;
   gpu_ulong *rainbow_table;
   uint64_t num_chains;
+  bloom_filter *bf;
   struct _preloaded_table *next;
 };
 typedef struct _preloaded_table preloaded_table;
@@ -233,23 +232,10 @@ void free_loaded_hashes(char **usernames, char **hashes);
 void *host_thread_false_alarm(void *ptr);
 void *preloading_thread(void *ptr);
 void print_eta_precompute();
-gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
 void launch_false_alarm_check(precomputed_and_potential_indices *ppi, thread_args *args, false_alarm_state *state);
 void harvest_false_alarm_results(false_alarm_state *state);
 void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash_type);
-void load_precalc_cache(void);
-void free_precalc_cache(void);
-void insert_precalc_cache(const char *index_data, const char *data_filename);
-
-typedef struct precalc_cache_entry {
-  char *index_data;
-  char *data_filename;
-  struct precalc_cache_entry *next;
-} precalc_cache_entry;
-
-#define PRECALC_CACHE_BUCKETS 1024
-static precalc_cache_entry *precalc_cache[PRECALC_CACHE_BUCKETS];
 
 
 /* The path of the pot file to store cracked hashes in.  This can be overridden by
@@ -902,7 +888,7 @@ void ppi_reset_endpoints(precomputed_and_potential_indices *head) {
     if (head->plaintext == NULL) {
       FREE(head->precomputed_end_indices);
       head->num_precomputed_end_indices = 0;
-      FREE(head->index_filename);
+
     }
     head = head->next;
   }
@@ -936,7 +922,7 @@ void free_precomputed_and_potential_indices(precomputed_and_potential_indices **
     FREE(ppi->precomputed_end_indices);
     FREE(ppi->potential_start_indices);
     FREE(ppi->potential_start_index_positions);
-    FREE(ppi->index_filename);
+
     ppi->num_potential_start_indices = 0;
     FREE(ppi->plaintext);
     FREE(ppi);
@@ -1586,7 +1572,6 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   int charset_len = strlen(args[0].charset);
   gpu_ulong chain_len_ulong = args[0].chain_len;
   gpu_uint device_num = 0;
-  gpu_uint total_devices = 1;
   gpu_uint num_hashes_uint = num_hashes;
   gpu_uint positions_uint = positions_per_hash;
 
@@ -1713,182 +1698,98 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
  * If NULL, a new ppi node is appended to ppi_head (original behaviour). */
 void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_and_potential_indices **ppi_head, precomputed_and_potential_indices *update_ppi) {
   pthread_t threads[MAX_NUM_DEVICES] = {0};
-  char filename[128] = {0}, time_str[128] = {0}, index_data[256] = {0};
+  char time_str[128] = {0};
   struct timespec start_time = {0};
   unsigned int i = 0, j = 0, output_index = 0;
   int k = 0;
   uint64_t *output = NULL;
-  FILE *f = NULL;
   precomputed_and_potential_indices *ppi = NULL;
 
+  /* Start the timer for this hash. */
+  start_timer(&start_time);
 
-  /* Set the index data we're looking for (or will create later). */
-  snprintf(index_data, sizeof(index_data) - 1, "%s_%s#%u-%u_%u_%u:%s\n", args->hash_name, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->table_index, args->chain_len, args->hash); /*ntlm_loweralpha#8-8_0_100:49e5bfaab1be72a6c5236f15736a3e15*/
+  /* Start one thread to control each GPU. */
+  for (i = 0; i < num_devices; i++) {
+    if (pthread_create(&(threads[i]), NULL, &host_thread_precompute, &(args[i]))) {
+      perror("Failed to create thread");
+      exit(-1);
+    }
+  }
 
-  /* Search through the cache and see if we already precomputed the indices for this
-   * hash. */
-  output = search_precompute_cache(index_data, &output_index, filename, sizeof(filename));
+  /* Wait for all threads to finish. */
+  for (i = 0; i < num_devices; i++) {
+    if (pthread_join(threads[i], NULL) != 0) {
+      perror("Failed to join with thread");
+      exit(-1);
+    }
+  }
 
-  /* Cache miss... */
+  num_hashes_precomputed++;
+
+  seconds_to_human_time(time_str, sizeof(time_str), get_elapsed(&start_time));
+  printf("  Completed in %s.\n", time_str);  fflush(stdout);
+  print_eta_precompute();
+
+  /* Create one output array to hold all the results. */
+  output = calloc(args[0].num_results * num_devices, sizeof(uint64_t));
   if (output == NULL) {
-  
-    /* Start the timer for this hash. */
-    start_timer(&start_time);
+    fprintf(stderr, "Error allocating buffer for GPU results.\n");
+    exit(-1);
+  }
 
-    /* Start one thread to control each GPU. */
-    for (i = 0; i < num_devices; i++) {
-      if (pthread_create(&(threads[i]), NULL, &host_thread_precompute, &(args[i]))) {
-	perror("Failed to create thread");
-	exit(-1);
+  /*
+    The results end up spread out like this across many GPUs:
+
+    GPU 0: 100 94 88 82 76 70 64 58 52 46 40 34 28 22 16 10 4
+    GPU 1: 99 93 87 81 75 69 63 57 51 45 39 33 27 21 15 9 3
+    GPU 2: 98 92 86 80 74 68 62 56 50 44 38 32 26 20 14 8 2
+    GPU 3: 97 91 85 79 73 67 61 55 49 43 37 31 25 19 13 7 1
+    GPU 4: 96 90 84 78 72 66 60 54 48 42 36 30 24 18 12 6 0
+    GPU 5: 95 89 83 77 71 65 59 53 47 41 35 29 23 17 11 5 0
+
+    Below, we collate the results into a single array containing "100 99 98 [...]".
+  */
+  {
+    unsigned int total_results = args[0].num_results * num_devices;
+    if (total_results >= args[0].chain_len - 1)
+      total_results = args[0].chain_len - 1;
+
+    output_index = total_results;
+
+    unsigned int ri = total_results - 1;
+    for (i = 0; i < args[0].num_results; i++) {
+      for (j = 0; j < num_devices; j++) {
+        if (ri < total_results)
+          output[ri] = args[j].results[i];
+        if (ri == 0)
+          goto collation_done;
+        ri--;
       }
     }
+    collation_done: ;
+  }
 
-    /* Wait for all threads to finish. */
-    for (i = 0; i < num_devices; i++) {
-      if (pthread_join(threads[i], NULL) != 0) {
-	perror("Failed to join with thread");
-	exit(-1);
-      }
-    }
+  /* Now that pulled all the GPU results into one array, free them. */
+  for (i = 0; i < num_devices; i++) {
+    FREE(args[i].results);
+    args[i].num_results = 0;
+  }
 
-    num_hashes_precomputed++;
+  /* Ensure we didn't get all zeros. */
+  for (k = 0; k < output_index; k++)
+    if (output[k] != 0)
+      break;
 
-    seconds_to_human_time(time_str, sizeof(time_str), get_elapsed(&start_time));
-    printf("  Completed in %s.\n", time_str);  fflush(stdout);
-    print_eta_precompute();
-
-    /* Create one output array to hold all the results. */
-    output = calloc(args[0].num_results * num_devices, sizeof(uint64_t));
-    if (output == NULL) {
-      fprintf(stderr, "Error allocating buffer for GPU results.\n");
-      exit(-1);
-    }
-
-    /*
-      The results end up spread out like this across many GPUs:
-
-      GPU 0: 100 94 88 82 76 70 64 58 52 46 40 34 28 22 16 10 4 
-      GPU 1: 99 93 87 81 75 69 63 57 51 45 39 33 27 21 15 9 3 
-      GPU 2: 98 92 86 80 74 68 62 56 50 44 38 32 26 20 14 8 2 
-      GPU 3: 97 91 85 79 73 67 61 55 49 43 37 31 25 19 13 7 1 
-      GPU 4: 96 90 84 78 72 66 60 54 48 42 36 30 24 18 12 6 0 
-      GPU 5: 95 89 83 77 71 65 59 53 47 41 35 29 23 17 11 5 0 
-
-      Below, we collate the results into a single array containing "100 99 98 [...]".
-    */
-    {
-      unsigned int total_results = args[0].num_results * num_devices;
-      if (total_results >= args[0].chain_len - 1)
-        total_results = args[0].chain_len - 1;
-
-      output_index = total_results;
-
-      unsigned int ri = total_results - 1;
-      for (i = 0; i < args[0].num_results; i++) {
-        for (j = 0; j < num_devices; j++) {
-          if (ri < total_results)
-            output[ri] = args[j].results[i];
-          if (ri == 0)
-            goto collation_done;
-          ri--;
-        }
-      }
-      collation_done: ;
-    }
-
-    /* Now that pulled all the GPU results into one array, free them. */
-    for (i = 0; i < num_devices; i++) {
-      FREE(args[i].results);
-      args[i].num_results = 0;
-    }
-
-    /* Ensure we didn't get all zeros. */
-    for (k = 0; k < output_index; k++)
-      if (output[k] != 0)
-	break;
-
-    if (k == output_index) {
-      fprintf(stderr, "Error: all zeros in precomputation!\n");
-      exit(-1);
-    }
-
-    /* Search for the first unused filename in the space of rcracki.precalc.[0-1048576]. */
-    for (i = 0; i < 1048576; i++) {
-      int fd = -1;
-
-      snprintf(filename, sizeof(filename) - 1, "rcracki.precalc.%d", i);
-
-      /* Create a file for writing with permissions of 0600. */
-      fd = open(filename, O_CREAT | O_EXCL | O_WRONLY | O_BINARY, S_IRUSR | S_IWUSR);
-
-      if (fd != -1) { /* On success, convert to a file pointer. */
-	f = fdopen(fd, "wb");
-	break;
-      }
-    }
-
-    if (f == NULL) {
-      fprintf(stderr, "Error: could not create any precalc file (rcracki.precalc.[0-1048576])\n");
-      exit(-1);
-    }
-
-    /* Ok, so it turns out that we generated the array backwards.  Oh well.  We will
-     * just iterate backwards here to compensate. */
-    /*for (k = output_index - 1; k >= 0; k--)
-      fwrite(&(output[k]), sizeof(gpu_ulong), 1, f);*/
-
-    for (k = 0; k < output_index; k++)
-      fwrite(&(output[k]), sizeof(gpu_ulong), 1, f);
-
-    FCLOSE(f);
-
-    /* Now create the rcracki.precalc.?.index file. */
-    strncat(filename, ".index", sizeof(filename) - strlen(filename) - 1);
-    f = fopen(filename, "wb");
-    if (f == NULL) {
-      fprintf(stderr, "Error while creating file: %s\n", filename);
-      exit(-1);
-    } else {
-      fwrite(index_data, sizeof(char), strlen(index_data), f);
-      FCLOSE(f);
-
-      /* Insert into the in-memory cache so subsequent lookups find it
-       * without a directory rescan.  Recover the data filename by
-       * stripping the ".index" suffix we appended above. */
-      {
-        char data_fn[128];
-        strncpy(data_fn, filename, sizeof(data_fn) - 1);
-        data_fn[sizeof(data_fn) - 1] = '\0';
-        data_fn[strlen(data_fn) - 6] = '\0';
-        insert_precalc_cache(index_data, data_fn);
-      }
-    }
-
-  } else {
-    num_hashes_precomputed_total--;
-    printf("Using cached pre-computed indices for hash %s.\n", args->hash);  fflush(stdout);
+  if (k == output_index) {
+    fprintf(stderr, "Error: all zeros in precomputation!\n");
+    exit(-1);
   }
 
   total_precomputed_indices_loaded += output_index;
 
-  /*
-  printf("output_index: %u\nFinal array: ", output_index);
-
-  for (i = 0; i < output_index; i++)
-    printf("%"PRIu64" ", output[i]);
-  printf("\n");
-
-  printf("\nFinal array hex: ");
-
-  for (i = 0; i < output_index; i++)
-    printf("%08"PRIx64" ", output[i]);
-  printf("\n");
-  */
-
   if (update_ppi != NULL) {
     /* Update an existing ppi node for a new table configuration. */
     FREE(update_ppi->precomputed_end_indices);
-    FREE(update_ppi->index_filename);
     update_ppi->num_precomputed_end_indices = output_index;
     update_ppi->precomputed_end_indices = calloc(output_index, sizeof(gpu_ulong));
     if (update_ppi->precomputed_end_indices == NULL) {
@@ -1897,7 +1798,6 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
     }
     for (i = 0; i < output_index; i++)
       update_ppi->precomputed_end_indices[i] = output[i];
-    update_ppi->index_filename = strdup(filename);
   } else {
     /* Original behaviour: append a new ppi node to ppi_head. */
     if (*ppi_head == NULL) {
@@ -1931,8 +1831,6 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
 
     for (i = 0; i < ppi->num_precomputed_end_indices; i++)
       ppi->precomputed_end_indices[i] = output[i];
-
-    ppi->index_filename = strdup(filename);
   }
 
   FREE(output);
@@ -2047,6 +1945,13 @@ void _preloading_thread(char *rt_dir, const rt_parameters *filter) {
 	  pt->filepath = strdup(filepath);
 	  pt->rainbow_table = rainbow_table;
 	  pt->num_chains = num_chains;
+
+	  /* Build bloom filter on table endpoints for fast search pre-check. */
+	  pt->bf = bloom_create(num_chains);
+	  if (pt->bf != NULL) {
+	    for (uint64_t c = 0; c < num_chains; c++)
+	      bloom_insert(pt->bf, rainbow_table[(c * 2) + 1]);
+	  }
 
 	  /* Lock the preloading system, since we're modifying shared structures. */
 	  pthread_mutex_lock(&preloaded_tables_lock);
@@ -2235,6 +2140,8 @@ void *rt_binary_search_thread(void *ptr) {
   while (ppi_cur != NULL) {
     if (ppi_cur->plaintext == NULL) {
       for (i = 0 + args->thread_number; i < ppi_cur->num_precomputed_end_indices; i += args->total_threads) {
+	if (args->bf != NULL && !bloom_query(args->bf, ppi_cur->precomputed_end_indices[i]))
+	  continue;
 	if (_rt_binary_search(args->rainbow_table, 0, args->num_chains, ppi_cur->precomputed_end_indices[i], &start)) {
 	  if (args->num_local_results == args->local_results_capacity) {
 	    args->local_results_capacity *= 2;
@@ -2263,7 +2170,7 @@ void *rt_binary_search_thread(void *ptr) {
  * precomputed end indices.  If/when matches are found, the corresponding start indices
  * are added to the precomputed_and_potential_indices's potential_start_indices
  * array. */
-void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, precomputed_and_potential_indices *ppi_head) {
+void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filter *bf, precomputed_and_potential_indices *ppi_head) {
   struct timespec start_time_searching = {0};
   char time_searching_str[64] = {0};
   unsigned int num_threads = get_num_cpu_cores();
@@ -2288,6 +2195,7 @@ void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, precomputed
     args[i].total_threads = num_threads;
     args[i].rainbow_table = rainbow_table;
     args[i].num_chains = num_chains;
+    args[i].bf = bf;
     args[i].ppi_head = ppi_head;
 
     if (pthread_create(&(threads[i]), NULL, &rt_binary_search_thread, &(args[i]))) {
@@ -2328,7 +2236,6 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
   FILE *jtr_file = fopen(jtr_pot_filename, "ab"), *hashcat_file = fopen(hashcat_pot_filename, "ab");
   unsigned int hash_len = strlen(ppi->hash);
   unsigned int plaintext_len = strlen(ppi->plaintext);
-  char *dot_pos = strrchr(ppi->index_filename, '.');
 
 
   if (jtr_file == NULL) {
@@ -2380,161 +2287,11 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
   FCLOSE(jtr_file);
   FCLOSE(hashcat_file);
 
-  /* Delete the index file containing information about the precomputed indices.  Since
-   * this hash was cracked, this is no longer needed. */
-  if (unlink(ppi->index_filename) != 0) {
-    fprintf(stderr, "Error while deleting precompute index file: %s: %s\n", ppi->index_filename, strerror(errno));
-    /*exit(-1);*/
-  }
-
-  /* Truncate the ".index" off the end of the filename; this forms the precomputation
-   * filename. */
-  if (dot_pos != NULL) {
-    *dot_pos = '\0';
-    if (unlink(ppi->index_filename) != 0) {
-      fprintf(stderr, "Error while deleting precompute file: %s: %s\n", ppi->index_filename, strerror(errno));
-    }
-  }
-
   num_cracked++;
   num_falsealarms--;
 }
 
 
-static unsigned int precalc_hash_fn(const char *s) {
-  unsigned int h = 5381;
-  while (*s)
-    h = ((h << 5) + h) ^ (unsigned char)*s++;
-  return h % PRECALC_CACHE_BUCKETS;
-}
-
-void insert_precalc_cache(const char *index_data, const char *data_filename) {
-  unsigned int bucket = precalc_hash_fn(index_data);
-  precalc_cache_entry *e = malloc(sizeof(*e));
-  if (e == NULL) {
-    fprintf(stderr, "Failed to allocate precalc cache entry.\n");
-    exit(-1);
-  }
-  e->index_data = strdup(index_data);
-  e->data_filename = strdup(data_filename);
-  e->next = precalc_cache[bucket];
-  precalc_cache[bucket] = e;
-}
-
-void load_precalc_cache(void) {
-  DIR *d = opendir(".");
-  struct dirent *de;
-  char buf[256];
-  FILE *f;
-  int64_t file_size;
-
-  if (d == NULL) {
-    fprintf(stderr, "Can't open current directory for precalc cache.\n");
-    exit(-1);
-  }
-
-  memset(precalc_cache, 0, sizeof(precalc_cache));
-
-  while ((de = readdir(d)) != NULL) {
-    if (!str_ends_with(de->d_name, ".index"))
-      continue;
-
-    f = fopen(de->d_name, "rb");
-    if (f == NULL) {
-      fprintf(stderr, "Failed to open %s for reading.\n", de->d_name);
-      exit(-1);
-    }
-
-    file_size = get_file_size(f);
-    if (file_size <= 0 || file_size >= (int64_t)sizeof(buf)) {
-      FCLOSE(f);
-      continue;
-    }
-
-    memset(buf, 0, sizeof(buf));
-    if (fread(buf, sizeof(char), file_size, f) != (size_t)file_size) {
-      fprintf(stderr, "Failed to read index data from %s: %s\n", de->d_name, strerror(errno));
-      FCLOSE(f);
-      continue;
-    }
-    FCLOSE(f);
-
-    char data_filename[512];
-    strncpy(data_filename, de->d_name, sizeof(data_filename) - 1);
-    data_filename[sizeof(data_filename) - 1] = '\0';
-    data_filename[strlen(data_filename) - 6] = '\0';
-
-    insert_precalc_cache(buf, data_filename);
-  }
-  closedir(d);
-}
-
-void free_precalc_cache(void) {
-  for (unsigned int i = 0; i < PRECALC_CACHE_BUCKETS; i++) {
-    precalc_cache_entry *e = precalc_cache[i];
-    while (e != NULL) {
-      precalc_cache_entry *next = e->next;
-      free(e->index_data);
-      free(e->data_filename);
-      free(e);
-      e = next;
-    }
-    precalc_cache[i] = NULL;
-  }
-}
-
-/* Searches the precompute cache for matching index data.  If found, an array of
- * indices is returned, num_indices set to the array size, and the filename buffer
- * is set to the *.index cache file. */
-gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size) {
-  int64_t file_size = 0;
-  FILE *f = NULL;
-  gpu_ulong *ret = NULL;
-
-  *num_indices = 0;
-  memset(filename, 0, filename_size);
-
-  unsigned int bucket = precalc_hash_fn(index_data);
-  precalc_cache_entry *e = precalc_cache[bucket];
-  while (e != NULL) {
-    if (strcmp(index_data, e->index_data) == 0) {
-      char index_filename[512];
-      snprintf(index_filename, sizeof(index_filename), "%s.index", e->data_filename);
-      strncpy(filename, index_filename, filename_size - 1);
-
-      f = fopen(e->data_filename, "rb");
-      if (f == NULL) {
-	fprintf(stderr, "Failed to open precomputed index file: %s\n", e->data_filename);
-	exit(-1);
-      }
-
-      file_size = get_file_size(f);
-
-      if (file_size % sizeof(gpu_ulong) != 0) {
-	fprintf(stderr, "Precomputed indices file is not a multiple of %"PRIu64": %"PRId64"\n", (uint64_t)sizeof(gpu_ulong), file_size);
-	exit(-1);
-      }
-
-      *num_indices = file_size / sizeof(gpu_ulong);
-
-      ret = calloc(*num_indices, sizeof(gpu_ulong));
-      if (ret == NULL) {
-	fprintf(stderr, "Failed to create indices buffer.\n");
-	exit(-1);
-      }
-
-      if (fread(ret, sizeof(gpu_ulong), *num_indices, f) != *num_indices) {
-	fprintf(stderr, "Failed to read indices file.\n");
-	exit(-1);
-      }
-      FCLOSE(f);
-      break;
-    }
-    e = e->next;
-  }
-
-  return ret;
-}
 
 
 /* Returns a preloaded_table entry, or NULL if no more tables are left to process.  The caller must
@@ -2618,7 +2375,7 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
      *     and GPU false alarm uses its own snapshot copy)
      *   - harvest (which modifies ppi->plaintext and frees precomputed_end_indices
      *     for cracked hashes) runs AFTER binary search completes */
-    rt_binary_search(pt->rainbow_table, pt->num_chains, ppi);
+    rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi);
 
     num_chains_processed += pt->num_chains;
     num_tables_processed++;
@@ -2626,6 +2383,8 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     /* Free the preloaded table -- binary search is done with it. */
     FREE(pt->filepath);
     FREE(pt->rainbow_table);
+    bloom_free(pt->bf);
+    pt->bf = NULL;
     pt->num_chains = 0;
     FREE(pt);
 
@@ -2657,6 +2416,8 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
 
     FREE(preloaded_table_list->filepath);
     FREE(preloaded_table_list->rainbow_table);
+    bloom_free(preloaded_table_list->bf);
+    preloaded_table_list->bf = NULL;
     preloaded_table_list->num_chains = 0;
     FREE(preloaded_table_list);
 
@@ -3028,8 +2789,6 @@ int main(int ac, char **av) {
     }
   }
 
-  load_precalc_cache();
-
   /* Count config groups for progress reporting. */
   unsigned int num_config_groups = 0;
   for (config_group *cg = cg_head; cg != NULL; cg = cg->next)
@@ -3202,7 +2961,7 @@ int main(int ac, char **av) {
 
   printf(" %s* Statistics *%s\n\n          Number of tables processed: %u\n              Number of false alarms: %" QUOTE PRIu64"\n          Number of chains processed: %" QUOTE PRIu64"\n\n                Time spent per table: %s\n     False alarms checked per second: %" QUOTE ".1f\n\n         False alarms per no. chains: %.5f%%\n  Successful cracks per false alarms: %.5f%%\n  Successful cracks per total chains: %.8f%%\n\n\n", WHITEB, CLR, num_tables_processed, num_falsealarms, num_chains_processed, time_per_table_str, (double)num_falsealarms / time_falsealarms, ((double)num_falsealarms / (double)num_chains_processed) * 100.0, ((double)num_cracked / (double)num_falsealarms) * 100.0, ((double)num_cracked / (double)num_chains_processed) * 100.0);
 
-  free_precalc_cache();
+
   free_precomputed_and_potential_indices(&ppi_head);
   free_loaded_hashes(usernames, hashes);
   FREE(args);
@@ -3214,7 +2973,7 @@ int main(int ac, char **av) {
  err:
   FCLOSE(f);
   FREE(file_data);
-  free_precalc_cache();
+
   free_precomputed_and_potential_indices(&ppi_head);
   free_loaded_hashes(usernames, hashes);
   FREE(args);
