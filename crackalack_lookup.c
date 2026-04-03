@@ -58,21 +58,25 @@
 #define PRECOMPUTE_KERNEL_PATH "precompute.cl"
 #define PRECOMPUTE_NTLM8_KERNEL_PATH "precompute_ntlm8.cl"
 #define PRECOMPUTE_NTLM9_KERNEL_PATH "precompute_ntlm9.cl"
+#define PRECOMPUTE_NTLM10_KERNEL_PATH "precompute_ntlm10.cl"
 #define PRECOMPUTE_MD5_8_KERNEL_PATH "precompute_md5_8.cl"
 #define PRECOMPUTE_MD5_9_KERNEL_PATH "precompute_md5_9.cl"
 #ifdef USE_METAL
 #define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.metal"
 #define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.metal"
 #define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.metal"
+#define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.metal"
 #define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.metal"
 #else
 #define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
 #define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.cl"
 #define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.cl"
+#define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.cl"
 #define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.cl"
 #endif
 
 #define FALSE_ALARM_KERNEL_PATH "false_alarm_check.cl"
+#define FALSE_ALARM_NTLM10_KERNEL_PATH "false_alarm_check_ntlm10.cl"
 #define FALSE_ALARM_NTLM8_KERNEL_PATH "false_alarm_check_ntlm8.cl"
 #define FALSE_ALARM_NTLM9_KERNEL_PATH "false_alarm_check_ntlm9.cl"
 #define FALSE_ALARM_MD5_8_KERNEL_PATH "false_alarm_check_md5_8.cl"
@@ -81,10 +85,12 @@
 #define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.metal"
 #define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.metal"
 #define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "false_alarm_check_markov_ntlm9.metal"
+#define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.metal"
 #else
 #define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.cl"
 #define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.cl"
 #define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "false_alarm_check_markov_ntlm9.cl"
+#define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.cl"
 #endif
 
 #define HASH_FILE_FORMAT_PLAIN 1
@@ -1016,6 +1022,13 @@ void *host_thread_false_alarm(void *ptr) {
       printf("\nNote: optimized NTLM9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
       printed_false_alarm_optimized_message = 1;
     }
+  } else if (is_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+    kernel_path = FALSE_ALARM_NTLM10_KERNEL_PATH;
+    kernel_name = "false_alarm_check_ntlm10";
+    if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
+      printf("\nNote: optimized NTLM10 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+      printed_false_alarm_optimized_message = 1;
+    }
   } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
     kernel_path = FALSE_ALARM_MD5_8_KERNEL_PATH;
     kernel_name = "false_alarm_check_md5_8";
@@ -1047,6 +1060,13 @@ void *host_thread_false_alarm(void *ptr) {
       kernel_name = "false_alarm_check_markov_ntlm9";
       if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
         printf("\nNote: optimized Markov NTLM9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+        printed_false_alarm_optimized_message = 1;
+      }
+    } else if (is_markov_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->use_markov)) {
+      kernel_path = FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH;
+      kernel_name = "false_alarm_check_markov_ntlm10";
+      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
+        printf("\nNote: optimized Markov NTLM10 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
         printed_false_alarm_optimized_message = 1;
       }
     } else {
@@ -1271,6 +1291,13 @@ void *host_thread_precompute(void *ptr) {
       printf("\nNote: optimized NTLM9 kernel will be used for precomputation.\n\n"); fflush(stdout);
       printed_precompute_optimized_message = 1;
     }
+  } else if (is_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+    kernel_path = PRECOMPUTE_NTLM10_KERNEL_PATH;
+    kernel_name = "precompute_ntlm10";
+    if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
+      printf("\nNote: optimized NTLM10 kernel will be used for precomputation.\n\n"); fflush(stdout);
+      printed_precompute_optimized_message = 1;
+    }
   } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
     kernel_path = PRECOMPUTE_MD5_8_KERNEL_PATH;
     kernel_name = "precompute_md5_8";
@@ -1302,6 +1329,13 @@ void *host_thread_precompute(void *ptr) {
       kernel_name = "precompute_markov_ntlm9";
       if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
         printf("\nNote: optimized Markov NTLM9 kernel will be used for precomputation.\n\n"); fflush(stdout);
+        printed_precompute_optimized_message = 1;
+      }
+    } else if (is_markov_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->use_markov)) {
+      kernel_path = PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH;
+      kernel_name = "precompute_markov_ntlm10";
+      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
+        printf("\nNote: optimized Markov NTLM10 kernel will be used for precomputation.\n\n"); fflush(stdout);
         printed_precompute_optimized_message = 1;
       }
     } else {
