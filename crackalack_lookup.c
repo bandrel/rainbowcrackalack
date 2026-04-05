@@ -81,6 +81,8 @@
 #define FALSE_ALARM_NTLM9_KERNEL_PATH "false_alarm_check_ntlm9.cl"
 #define FALSE_ALARM_MD5_8_KERNEL_PATH "false_alarm_check_md5_8.cl"
 #define FALSE_ALARM_MD5_9_KERNEL_PATH "false_alarm_check_md5_9.cl"
+#define PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH "precompute_netntlmv1_7.cl"
+#define FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH "false_alarm_check_netntlmv1_7.cl"
 #ifdef USE_METAL
 #define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.metal"
 #define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.metal"
@@ -1029,6 +1031,13 @@ void *host_thread_false_alarm(void *ptr) {
       printf("\nNote: optimized NTLM10 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
       printed_false_alarm_optimized_message = 1;
     }
+  } else if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
+    kernel_path = FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH;
+    kernel_name = "false_alarm_check_netntlmv1_7";
+    if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
+      printf("\nNote: optimized NetNTLMv1-7 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+      printed_false_alarm_optimized_message = 1;
+    }
   } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
     kernel_path = FALSE_ALARM_MD5_8_KERNEL_PATH;
     kernel_name = "false_alarm_check_md5_8";
@@ -1296,6 +1305,13 @@ void *host_thread_precompute(void *ptr) {
     kernel_name = "precompute_ntlm10";
     if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
       printf("\nNote: optimized NTLM10 kernel will be used for precomputation.\n\n"); fflush(stdout);
+      printed_precompute_optimized_message = 1;
+    }
+  } else if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
+    kernel_path = PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH;
+    kernel_name = "precompute_netntlmv1_7";
+    if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
+      printf("\nNote: optimized NetNTLMv1-7 kernel will be used for precomputation.\n\n"); fflush(stdout);
       printed_precompute_optimized_message = 1;
     }
   } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
