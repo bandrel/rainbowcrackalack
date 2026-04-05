@@ -52,6 +52,7 @@
 #define CRACKALACK_NTLM9_KERNEL_PATH "crackalack_ntlm9.cl"
 #define CRACKALACK_MD5_8_KERNEL_PATH "crackalack_md5_8.cl"
 #define CRACKALACK_MD5_9_KERNEL_PATH "crackalack_md5_9.cl"
+#define CRACKALACK_NETNTLMV1_7_KERNEL_PATH "crackalack_netntlmv1_7.cl"
 #ifdef USE_METAL
 #define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.metal"
 #define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.metal"
@@ -137,6 +138,7 @@ typedef struct {
 
   unsigned int hash_type;
   char *charset;
+  char *charset_name;
   unsigned int plaintext_len_min;
   unsigned int plaintext_len_max;
   unsigned int table_index;
@@ -355,6 +357,13 @@ void *host_thread(void *ptr) {
     if (args->gpu.device_number == 0) { /* Only the first thread prints this. */
       printf("%sNote: optimized MD5_8 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
     }
+  } else if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
+    kernel_path = CRACKALACK_NETNTLMV1_7_KERNEL_PATH;
+    kernel_name = "crackalack_netntlmv1_7";
+    using_fast_path_kernel = 1;
+    if (args->gpu.device_number == 0) {
+      printf("%sNote: optimized NetNTLMv1-7 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
+    }
   } else if (is_md5_9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
     kernel_path = CRACKALACK_MD5_9_KERNEL_PATH;
     kernel_name = "crackalack_md5_9";
@@ -384,7 +393,7 @@ void *host_thread(void *ptr) {
         printf("%sNote: optimized Markov NTLM9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
       }
     } else {
-      if (strcmp(kernel_path, CRACKALACK_NTLM8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NTLM9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_9_KERNEL_PATH) == 0) {
+      if (strcmp(kernel_path, CRACKALACK_NTLM8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NTLM9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NETNTLMV1_7_KERNEL_PATH) == 0) {
         if (args->gpu.device_number == 0) {
           printf("%sNote: --markov cannot use fast-path kernels. Falling back to Markov generic kernel.%s\n", YELLOWB, CLR); fflush(stdout);
         }
@@ -1168,6 +1177,7 @@ int main(int ac, char **av) {
     args[i].benchmark_mode = benchmark_mode;
     args[i].hash_type = hash_type;
     args[i].charset = charset;
+    args[i].charset_name = charset_name;
     args[i].plaintext_len_min = plaintext_len_min;
     args[i].plaintext_len_max = plaintext_len_max;
     args[i].table_index = table_index;
