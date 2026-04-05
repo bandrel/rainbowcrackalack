@@ -1,14 +1,14 @@
-#include "ntlm10_functions.cl"
+#include "netntlmv1_7_functions.cl"
 
 
-__kernel void false_alarm_check_ntlm10(
+__kernel void false_alarm_check_netntlmv1_7(
     __global unsigned int *unused1,
     __global char *unused2,
     __global unsigned int *unused3,
     __global unsigned int *unused4,
     __global unsigned int *unused5,
+    __global unsigned int *g_reduction_offset,
     __global unsigned long *unused6,
-    __global unsigned long *unused7,
     __global unsigned long *unused_pspace_table,
     __global unsigned int *g_device_num,
     __global unsigned int *g_total_devices,
@@ -23,19 +23,19 @@ __kernel void false_alarm_check_ntlm10(
   if (index_pos < 0)
     return;
 
-  unsigned char plaintext[10];
+  unsigned int reduction_offset = *g_reduction_offset;
+  unsigned char plaintext[8];
   unsigned long index = g_start_indices[index_pos], previous_index = 0;
-  /* 95^10 > 2^64: hash_base_index is already in range, no modulo needed. */
-  unsigned long hash_base_index = g_hash_base_indices[index_pos];
+  unsigned long hash_base_index = g_hash_base_indices[index_pos] & 0x00FFFFFFFFFFFFFFUL;
   unsigned int endpoint = g_start_index_positions[index_pos];
 
   for (unsigned int pos = 0; pos < endpoint + 1; pos++) {
-    index_to_plaintext_ntlm10(index, plaintext);
+    index_to_plaintext_netntlmv1_7(index, plaintext);
 
     previous_index = index;
-    index = hash_to_index_ntlm10(hash_ntlm10(plaintext), pos);
+    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7(plaintext), reduction_offset, pos);
 
-    if (index == (hash_base_index + pos)) {
+    if ((index == (hash_base_index + pos)) || (index == (hash_base_index + pos - 72057594037927936UL))) {
       g_plaintext_indices[index_pos] = previous_index;
       return;
     }

@@ -198,7 +198,6 @@ $(OUTDIR)/$(RTC2RT_PROG): \
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 $(OUTDIR)/$(LOOKUP_PROG): \
-	$(OBJDIR)/bloom.o \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/clock.o \
 	$(OBJDIR)/cpu_rt_functions.o \
