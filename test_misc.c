@@ -67,16 +67,16 @@ static int group_c(void)
 {
     int ok = 1;
 
-    /* is_ntlm8 - reduction_offset==0 is part of the fast-path check; non-zero
-     * reduction_offset means a non-zero table_index, which uses the generic path. */
+    /* is_ntlm8 - matches any NTLM ascii-32-95 8-char config regardless of
+     * chain_len or reduction_offset (dynamic chain_len support). */
     if (is_ntlm8(HASH_NTLM, CHARSET_ASCII_32_95, 8, 8, 0, 422000) != 1)
         { fprintf(stderr, "IN8-01 failed\n"); ok = 0; }
-    if (is_ntlm8(HASH_NTLM, CHARSET_ASCII_32_95, 8, 8, 0, 100000) != 0)
-        { fprintf(stderr, "IN8-02 failed: wrong chain_len accepted\n"); ok = 0; }
+    if (is_ntlm8(HASH_NTLM, CHARSET_ASCII_32_95, 8, 8, 0, 100000) != 1)
+        { fprintf(stderr, "IN8-02 failed: any chain_len should be accepted\n"); ok = 0; }
     if (is_ntlm8(HASH_NTLM, CHARSET_NUMERIC, 8, 8, 0, 422000) != 0)
         { fprintf(stderr, "IN8-03 failed: wrong charset accepted\n"); ok = 0; }
-    if (is_ntlm8(HASH_NTLM, CHARSET_ASCII_32_95, 8, 8, 65536, 422000) != 0)
-        { fprintf(stderr, "IN8-04 failed: non-zero reduction_offset accepted\n"); ok = 0; }
+    if (is_ntlm8(HASH_NTLM, CHARSET_ASCII_32_95, 8, 8, 65536, 422000) != 1)
+        { fprintf(stderr, "IN8-04 failed: any reduction_offset should be accepted\n"); ok = 0; }
 
     /* is_ntlm9 */
     if (is_ntlm9(HASH_NTLM, CHARSET_ASCII_32_95, 9, 9, 0, 803000) != 1)
