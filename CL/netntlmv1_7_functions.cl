@@ -1,4 +1,4 @@
-#include "netntlmv1.cl"
+#include "netntlmv1_fast.cl"
 
 
 /* For the byte charset (256 values, 0x00-0xFF), each byte of the index IS a
@@ -23,6 +23,32 @@ inline unsigned long hash_netntlmv1_7(unsigned char *plaintext) {
 
   /* Pack in little-endian order to match the generic hash_to_index byte
    * assembly: ret = hash[7]<<56 | hash[6]<<48 | ... | hash[0]. */
+  return ((unsigned long)output[7] << 56) |
+         ((unsigned long)output[6] << 48) |
+         ((unsigned long)output[5] << 40) |
+         ((unsigned long)output[4] << 32) |
+         ((unsigned long)output[3] << 24) |
+         ((unsigned long)output[2] << 16) |
+         ((unsigned long)output[1] << 8) |
+         ((unsigned long)output[0]);
+}
+
+
+/* Fast variant using __local S-boxes for optimized kernels. */
+inline unsigned long hash_netntlmv1_7_fast(
+    unsigned char *plaintext,
+    __local uint32_t *l_SB1, __local uint32_t *l_SB2,
+    __local uint32_t *l_SB3, __local uint32_t *l_SB4,
+    __local uint32_t *l_SB5, __local uint32_t *l_SB6,
+    __local uint32_t *l_SB7, __local uint32_t *l_SB8) {
+  uint32_t SK[32];
+  unsigned char output[8];
+
+  plaintext[7] = '\0';
+  netntlmv1_hash_fast(SK, plaintext, output,
+                       l_SB1, l_SB2, l_SB3, l_SB4,
+                       l_SB5, l_SB6, l_SB7, l_SB8);
+
   return ((unsigned long)output[7] << 56) |
          ((unsigned long)output[6] << 48) |
          ((unsigned long)output[5] << 40) |
