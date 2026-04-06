@@ -21,7 +21,21 @@ kernel void false_alarm_check_netntlmv1_7(
     device ulong *g_hash_base_indices [[buffer(13)]],
     device unsigned int *g_exec_block_scaler [[buffer(14)]],
     device ulong *g_plaintext_indices [[buffer(15)]],
-    uint gid [[thread_position_in_grid]]) {
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint lsz [[threads_per_threadgroup]]) {
+
+  /* Threadgroup S-box arrays -- one copy per threadgroup. */
+  threadgroup uint32_t l_SB1[64], l_SB2[64], l_SB3[64], l_SB4[64];
+  threadgroup uint32_t l_SB5[64], l_SB6[64], l_SB7[64], l_SB8[64];
+
+  for (uint _i = lid; _i < 64; _i += lsz) {
+    l_SB1[_i] = SB1[_i]; l_SB2[_i] = SB2[_i];
+    l_SB3[_i] = SB3[_i]; l_SB4[_i] = SB4[_i];
+    l_SB5[_i] = SB5[_i]; l_SB6[_i] = SB6[_i];
+    l_SB7[_i] = SB7[_i]; l_SB8[_i] = SB8[_i];
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
 
   int index_pos = (*g_num_start_indices - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
   if (index_pos < 0)
@@ -37,7 +51,7 @@ kernel void false_alarm_check_netntlmv1_7(
     index_to_plaintext_netntlmv1_7(index, plaintext);
 
     previous_index = index;
-    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7(plaintext), reduction_offset, pos);
+    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, pos);
 
     if ((index == (hash_base_index + pos)) || (index == (hash_base_index + pos - 72057594037927936UL))) {
       g_plaintext_indices[index_pos] = previous_index;

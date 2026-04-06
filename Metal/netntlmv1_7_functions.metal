@@ -1,4 +1,4 @@
-#include "netntlmv1.metal"
+#include "netntlmv1_fast.metal"
 
 
 /* For the byte charset (256 values, 0x00-0xFF), each byte of the index IS a
@@ -23,6 +23,32 @@ inline ulong hash_netntlmv1_7(thread unsigned char *plaintext) {
 
   /* Pack in little-endian order to match the generic hash_to_index byte
    * assembly: ret = hash[7]<<56 | hash[6]<<48 | ... | hash[0]. */
+  return ((ulong)output[7] << 56) |
+         ((ulong)output[6] << 48) |
+         ((ulong)output[5] << 40) |
+         ((ulong)output[4] << 32) |
+         ((ulong)output[3] << 24) |
+         ((ulong)output[2] << 16) |
+         ((ulong)output[1] << 8) |
+         ((ulong)output[0]);
+}
+
+
+/* Fast variant using threadgroup S-boxes for optimized kernels. */
+inline ulong hash_netntlmv1_7_fast(
+    thread unsigned char *plaintext,
+    threadgroup uint32_t *l_SB1, threadgroup uint32_t *l_SB2,
+    threadgroup uint32_t *l_SB3, threadgroup uint32_t *l_SB4,
+    threadgroup uint32_t *l_SB5, threadgroup uint32_t *l_SB6,
+    threadgroup uint32_t *l_SB7, threadgroup uint32_t *l_SB8) {
+  uint32_t SK[32];
+  unsigned char output[8];
+
+  plaintext[7] = '\0';
+  netntlmv1_hash_fast(SK, plaintext, output,
+                       l_SB1, l_SB2, l_SB3, l_SB4,
+                       l_SB5, l_SB6, l_SB7, l_SB8);
+
   return ((ulong)output[7] << 56) |
          ((ulong)output[6] << 48) |
          ((ulong)output[5] << 40) |
