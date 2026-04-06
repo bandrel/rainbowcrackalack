@@ -20,7 +20,21 @@ kernel void precompute_netntlmv1_7(
     device ulong *g_output [[buffer(12)]],
     device ulong *unused8 [[buffer(13)]],
     device ulong *unused9 [[buffer(14)]],
-    uint gid [[thread_position_in_grid]]) {
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint lsz [[threads_per_threadgroup]]) {
+
+  /* Threadgroup S-box arrays -- one copy per threadgroup. */
+  threadgroup uint32_t l_SB1[64], l_SB2[64], l_SB3[64], l_SB4[64];
+  threadgroup uint32_t l_SB5[64], l_SB6[64], l_SB7[64], l_SB8[64];
+
+  for (uint _i = lid; _i < 64; _i += lsz) {
+    l_SB1[_i] = SB1[_i]; l_SB2[_i] = SB2[_i];
+    l_SB3[_i] = SB3[_i]; l_SB4[_i] = SB4[_i];
+    l_SB5[_i] = SB5[_i]; l_SB6[_i] = SB6[_i];
+    l_SB7[_i] = SB7[_i]; l_SB8[_i] = SB8[_i];
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
 
   long target_chain_len = (881689 - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
 
@@ -35,7 +49,7 @@ kernel void precompute_netntlmv1_7(
 
   for(unsigned int i = target_chain_len; i < 881688; i++) {
     index_to_plaintext_netntlmv1_7(index, plaintext);
-    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7(plaintext), reduction_offset, i);
+    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
   }
 
   g_output[gid] = index;
