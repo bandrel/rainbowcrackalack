@@ -18,6 +18,14 @@ __kernel void precompute_netntlmv1_7(
     __global unsigned long *unused8,
     __global unsigned long *unused9) {
 
+  /* Shared-memory S-box arrays -- one copy per workgroup. */
+  __local uint32_t l_SB1[64], l_SB2[64], l_SB3[64], l_SB4[64];
+  __local uint32_t l_SB5[64], l_SB6[64], l_SB7[64], l_SB8[64];
+
+  LOAD_LOCAL_SBOXES(get_local_id(0), get_local_size(0),
+                     l_SB1, l_SB2, l_SB3, l_SB4,
+                     l_SB5, l_SB6, l_SB7, l_SB8);
+
   long target_chain_len = (881689 - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
 
   if (target_chain_len < 1) {
@@ -31,7 +39,7 @@ __kernel void precompute_netntlmv1_7(
 
   for(unsigned int i = target_chain_len; i < 881688; i++) {
     index_to_plaintext_netntlmv1_7(index, plaintext);
-    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7(plaintext), reduction_offset, i);
+    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
   }
 
   g_output[get_global_id(0)] = index;
