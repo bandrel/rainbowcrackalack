@@ -73,7 +73,7 @@ int rc_flock(rc_file f) {
 
 
 size_t rc_fread(void *ptr, size_t size, size_t nmemb, rc_file f) {
-  size_t ret = -1;
+  size_t ret = 0;
 
 #ifdef _WIN32
   DWORD bytes_read = 0;
@@ -90,7 +90,7 @@ size_t rc_fread(void *ptr, size_t size, size_t nmemb, rc_file f) {
 
 
 size_t rc_fwrite(const void *ptr, size_t size, size_t nmemb, rc_file f) {
-  size_t ret = -1;
+  size_t ret = 0;
 
 #ifdef _WIN32
   DWORD bytes_written = 0;
