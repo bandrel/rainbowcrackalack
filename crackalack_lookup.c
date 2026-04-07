@@ -107,8 +107,8 @@ struct _precomputed_and_potential_indices {
   gpu_uint num_precomputed_end_indices;
 
   gpu_ulong *potential_start_indices;
-  unsigned int num_potential_start_indices;
-  unsigned int potential_start_indices_size;
+  size_t num_potential_start_indices;
+  size_t potential_start_indices_size;
   unsigned int *potential_start_index_positions; /* Buffer size is always num_potential_start_indices. */
 
   char *plaintext;        /* Set if hash is cracked. */
@@ -363,13 +363,17 @@ void add_potential_start_index_and_position(precomputed_and_potential_indices *p
 
   /* If its time to re-size the array... */
   if (ppi->num_potential_start_indices == ppi->potential_start_indices_size) {
-    unsigned int new_size_in_ulongs = ppi->potential_start_indices_size * 2;
+    if (ppi->potential_start_indices_size > SIZE_MAX / 2) {
+      fprintf(stderr, "potential_start_indices_size overflow: cannot double beyond %zu.\n", ppi->potential_start_indices_size);
+      exit(-1);
+    }
+    size_t new_size_in_ulongs = ppi->potential_start_indices_size * 2;
 
-    /*printf("Resizing array from %u to %u.\n", ppi->potential_start_indices_size, new_size_in_ulongs);*/
+    /*printf("Resizing array from %zu to %zu.\n", ppi->potential_start_indices_size, new_size_in_ulongs);*/
     ppi->potential_start_indices = recalloc(ppi->potential_start_indices, new_size_in_ulongs * sizeof(gpu_ulong), ppi->potential_start_indices_size * sizeof(gpu_ulong));
     ppi->potential_start_index_positions = recalloc(ppi->potential_start_index_positions, new_size_in_ulongs * sizeof(unsigned int), ppi->potential_start_indices_size * sizeof(unsigned int));
     if ((ppi->potential_start_indices == NULL) || (ppi->potential_start_index_positions == NULL)) {
-      fprintf(stderr, "Failed to re-allocate potential_start_indices/potential_start_index_positions buffer to %u.\n", new_size_in_ulongs);
+      fprintf(stderr, "Failed to re-allocate potential_start_indices/potential_start_index_positions buffer to %zu.\n", new_size_in_ulongs);
       exit(-1);
     }
     ppi->potential_start_indices_size = new_size_in_ulongs;
