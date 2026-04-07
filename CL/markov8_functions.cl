@@ -1,6 +1,61 @@
 __constant char charset[] = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
 
 
+/* Local-memory variant: first 5 position tables (45125 bytes) are in __local,
+ * last 2 positions read from __global.  This fits in the 48KB local memory
+ * limit on NVIDIA GPUs and eliminates most global memory latency. */
+inline void index_to_plaintext_markov8_local(
+    unsigned long index,
+    __constant unsigned char *sorted_pos0,
+    __local const unsigned char *l_bigram,
+    __global const unsigned char *g_bigram,
+    unsigned char *plaintext)
+{
+    unsigned int indexHi = (unsigned int)(index / 81450625UL);
+    unsigned int indexLo = (unsigned int)(index - 81450625UL * indexHi);
+
+    unsigned short group_23 = (unsigned short)(indexLo / 9025);
+    unsigned short group_01 = (unsigned short)(indexLo - (unsigned int)9025 * group_23);
+    unsigned short group_67 = (unsigned short)(indexHi / 9025);
+    unsigned short group_45 = (unsigned short)(indexHi - (unsigned int)9025 * group_67);
+
+    unsigned char rank1 = (unsigned char)(group_01 / 95);
+    unsigned char rank0 = (unsigned char)(group_01 - (unsigned short)95 * rank1);
+    unsigned char rank3 = (unsigned char)(group_23 / 95);
+    unsigned char rank2 = (unsigned char)(group_23 - (unsigned short)95 * rank3);
+    unsigned char rank5 = (unsigned char)(group_45 / 95);
+    unsigned char rank4 = (unsigned char)(group_45 - (unsigned short)95 * rank5);
+    unsigned char rank7 = (unsigned char)(group_67 / 95);
+    unsigned char rank6 = (unsigned char)(group_67 - (unsigned short)95 * rank7);
+
+    /* Positions 0-4: read from local memory (fast) */
+    unsigned int ci = sorted_pos0[rank0];
+    plaintext[0] = ci + 32;
+
+    ci = l_bigram[ci * 95 + rank1];
+    plaintext[1] = ci + 32;
+
+    ci = l_bigram[9025 + ci * 95 + rank2];
+    plaintext[2] = ci + 32;
+
+    ci = l_bigram[18050 + ci * 95 + rank3];
+    plaintext[3] = ci + 32;
+
+    ci = l_bigram[27075 + ci * 95 + rank4];
+    plaintext[4] = ci + 32;
+
+    ci = l_bigram[36100 + ci * 95 + rank5];
+    plaintext[5] = ci + 32;
+
+    /* Positions 5-6: read from global memory (L2 cached) */
+    ci = g_bigram[45125 + ci * 95 + rank6];
+    plaintext[6] = ci + 32;
+
+    ci = g_bigram[54150 + ci * 95 + rank7];
+    plaintext[7] = ci + 32;
+}
+
+/* Original __global variant for kernels that don't use local caching. */
 inline void index_to_plaintext_markov8(
     unsigned long index,
     __constant char *charset,

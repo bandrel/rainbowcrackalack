@@ -9,9 +9,9 @@ __kernel void crackalack_ntlm8(
     __global unsigned int *unused4,
     __global unsigned int *unused5,
     __global unsigned int *unused6,
-    __global unsigned int *unused_chain_len,
+    __global unsigned int *g_chain_len,
     __global unsigned long *g_indices,
-    __global unsigned long *unused8,
+    __global unsigned int *g_pos_start,
     __global unsigned long *unused9,
     __global unsigned int *unused10,
     __global char *unused11,
@@ -21,7 +21,7 @@ __kernel void crackalack_ntlm8(
   unsigned char plaintext[8];
 
 
-  for (unsigned int pos = 0; pos < 421999; pos++) {
+  for (unsigned int pos = *g_pos_start; pos < (*g_chain_len - 1); pos++) {
     index_to_plaintext_ntlm8(index, charset, plaintext);
     index = hash_to_index_ntlm8(hash_ntlm8(plaintext), pos);
   }
