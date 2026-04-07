@@ -374,9 +374,13 @@ void load_kernel(cl_context context, cl_uint num_devices, const cl_device_id *de
     fprintf(stderr, "clBuildProgram failed.\n");
     rc_clGetProgramBuildInfo(*program, devices[0], CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
     error_str = calloc(log_size + 1, sizeof(char));
-    rc_clGetProgramBuildInfo(*program, devices[0], CL_PROGRAM_BUILD_LOG, log_size, error_str, NULL);
-    fprintf(stderr, "%s\n", error_str);
-    FREE(error_str);
+    if (error_str != NULL) {
+      rc_clGetProgramBuildInfo(*program, devices[0], CL_PROGRAM_BUILD_LOG, log_size, error_str, NULL);
+      fprintf(stderr, "%s\n", error_str);
+      FREE(error_str);
+    } else {
+      fprintf(stderr, "(build log unavailable: memory allocation failed)\n");
+    }
     exit(-1);
   }
 
