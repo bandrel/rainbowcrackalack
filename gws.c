@@ -5,20 +5,11 @@
 #include "gws.h"
 
 
-/* Returns 1 if kernel_name refers to a Markov kernel (higher register pressure,
- * more memory traffic than standard NTLM kernels). */
-static int is_markov_kernel(const char *kernel_name) {
-  if (kernel_name == NULL) return 0;
-  return strstr(kernel_name, "markov") != NULL;
-}
-
 /* Given a GPU device and optional kernel name, returns the optimal GWS setting
  * (found through manual experimentation).  Returns 0 if the optimal setting on
- * the device is unknown.  Markov kernels use ~25% lower GWS due to higher
- * register pressure and memory traffic. */
+ * the device is unknown. */
 unsigned int get_optimal_gws(gpu_device device, const char *kernel_name) {
   char vendor[128] = {0}, name[64] = {0};
-  int markov = is_markov_kernel(kernel_name);
 
 
   get_device_str(device, CL_DEVICE_VENDOR, vendor, sizeof(vendor) - 1);
@@ -200,15 +191,8 @@ unsigned int get_optimal_gws(gpu_device device, const char *kernel_name) {
       }
     }
 
-    if (base_gws > 0) {
-      /* Markov kernels have higher register pressure and more memory
-       * traffic from bigram table lookups (~136KB sorted_bigram accessed
-       * 7-8 times per chain step with poor coalescing); reduce GWS by
-       * 25% to improve L2 cache hit rates and avoid register spills. */
-      if (markov)
-        return (base_gws * 3) / 4;
+    if (base_gws > 0)
       return base_gws;
-    }
   }
 
   if (strcmp(vendor, "Advanced Micro Devices, Inc.") == 0) {
@@ -219,11 +203,8 @@ unsigned int get_optimal_gws(gpu_device device, const char *kernel_name) {
 #else
       base_gws = 64 * 768; /* NTLM 8-char: 5,671/s */
 #endif
-    if (base_gws > 0) {
-      if (markov)
-        return (base_gws * 3) / 4;
+    if (base_gws > 0)
       return base_gws;
-    }
   }
 
 #ifdef USE_METAL
@@ -270,11 +251,6 @@ unsigned int get_optimal_gws(gpu_device device, const char *kernel_name) {
       else
         base_gws = 256 * 256;
     }
-    /* Markov kernels have higher register pressure and more memory
-     * traffic from bigram lookups; reduce GWS by 25% to avoid
-     * register spills and improve per-thread cache residency. */
-    if (markov)
-      return (base_gws * 3) / 4;
     return base_gws;
   }
 #endif

@@ -1123,9 +1123,11 @@ void *host_thread_false_alarm(void *ptr) {
   } else {
     /*gws = kernel_work_group_size * kernel_preferred_work_group_size_multiple;*/
 
-    /* TODO: fix this so that false alarm checking is done in partitions instead of
-     * all at once (this can improve speed).  Currently, when GWS != num_start_indices,
-     * lookups don't succeed due to some bug. */
+    /* NOTE: false alarm kernels write to g_plaintext_indices[index_pos] where index_pos
+     * is an absolute position (not block-local like precompute.cl's get_global_id(0)).
+     * When GWS < num_start_indices and the kernel runs in multiple blocks, index_pos
+     * can fall outside [0, gws), causing OOB writes. Until the kernels are fixed to
+     * write block-locally, GWS must equal num_start_indices (single dispatch). */
     gws = num_start_indices;
 
     /* Somehow, on AMD GPUs, the kernel crashes with a message like:
@@ -1149,7 +1151,9 @@ void *host_thread_false_alarm(void *ptr) {
     num_exec_blocks++;
   //printf("num_exec_blocks: %d, num_start_indices: %d\n", num_exec_blocks, num_start_indices);
 
-  output_block_len = gws;
+  /* Output buffer must be at least num_start_indices to prevent OOB writes,
+   * since false alarm kernels write at absolute index_pos positions. */
+  output_block_len = (gws > num_start_indices) ? gws : num_start_indices;
   output_block = malloc(output_block_len * sizeof(gpu_ulong));
   if (output_block == NULL) {
     fprintf(stderr, "Error while allocating output buffer(s).\n");
