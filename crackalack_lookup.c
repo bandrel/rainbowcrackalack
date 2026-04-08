@@ -67,12 +67,14 @@
 #define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.metal"
 #define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.metal"
 #define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.metal"
+#define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "precompute_ntlm8_batch.metal"
 #else
 #define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
 #define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.cl"
 #define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.cl"
 #define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.cl"
 #define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.cl"
+#define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "precompute_ntlm8_batch.cl"
 #endif
 
 #define FALSE_ALARM_KERNEL_PATH "false_alarm_check.cl"
@@ -1554,16 +1556,21 @@ static void release_precompute_gpu(unsigned int num_devices, thread_args *args) 
  * sends all hashes to the GPU at once, achieving near-constant time regardless
  * of hash count (up to GPU memory limits).
  *
+ * Supports both standard and Markov NTLM8 tables.
+ *
  * Returns 1 if batched path was used, 0 if it should fall back to per-hash. */
 int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     char **hashes, char **usernames, unsigned int num_hashes,
     precomputed_and_potential_indices **ppi_head) {
 
-  /* Only supported for Markov NTLM8 currently. */
-  if (!args[0].use_markov)
-    return 0;
-  if (!is_markov_ntlm8(args[0].hash_type, args[0].charset, args[0].plaintext_len_min,
-        args[0].plaintext_len_max, args[0].reduction_offset, args[0].chain_len, args[0].use_markov))
+  int use_markov_batch = args[0].use_markov &&
+      is_markov_ntlm8(args[0].hash_type, args[0].charset, args[0].plaintext_len_min,
+        args[0].plaintext_len_max, args[0].reduction_offset, args[0].chain_len, args[0].use_markov);
+  int use_standard_batch = !args[0].use_markov &&
+      is_ntlm8(args[0].hash_type, args[0].charset, args[0].plaintext_len_min,
+        args[0].plaintext_len_max, args[0].reduction_offset, args[0].chain_len);
+
+  if (!use_markov_batch && !use_standard_batch)
     return 0;
   if (num_hashes < 2)
     return 0;
@@ -1584,7 +1591,8 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   unsigned int positions_per_hash = args[0].chain_len;  /* Single device: all positions */
   size_t total_work_items = (size_t)num_hashes * positions_per_hash;
 
-  printf("\n  Batched precompute: %u hashes x %u positions = %zu work items\n",
+  printf("\n  Batched precompute (%s): %u hashes x %u positions = %zu work items\n",
+         use_markov_batch ? "Markov NTLM8" : "NTLM8",
          num_hashes, positions_per_hash, total_work_items);
   fflush(stdout);
 
@@ -1615,13 +1623,20 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     return 0;
   }
 
-  /* Set up GPU context and load batch kernel. */
+  /* Set up GPU context and load the appropriate batch kernel. */
   gpu->context = CLCREATECONTEXT(context_callback, &(gpu->device));
   gpu->queue = CLCREATEQUEUE(gpu->context, gpu->device);
-  load_kernel(gpu->context, 1, &(gpu->device),
-              PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH,
-              "precompute_markov_ntlm8_batch",
-              &(gpu->program), &(gpu->kernel), args[0].hash_type);
+  if (use_markov_batch) {
+    load_kernel(gpu->context, 1, &(gpu->device),
+                PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH,
+                "precompute_markov_ntlm8_batch",
+                &(gpu->program), &(gpu->kernel), args[0].hash_type);
+  } else {
+    load_kernel(gpu->context, 1, &(gpu->device),
+                PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH,
+                "precompute_ntlm8_batch",
+                &(gpu->program), &(gpu->kernel), args[0].hash_type);
+  }
 
   context = gpu->context;
   queue = gpu->queue;
@@ -1633,7 +1648,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   gpu_uint num_hashes_uint = num_hashes;
   gpu_uint positions_uint = positions_per_hash;
 
-  /* Set kernel arguments. */
+  /* Set kernel arguments (args 0-7 are shared between standard and Markov). */
   CLCREATEARG_ARRAY(0, hashes_buffer, CL_RO, all_hashes_bin, num_hashes * 16);
   CLCREATEARG(1, num_hashes_buffer, CL_RO, num_hashes_uint, sizeof(gpu_uint));
   CLCREATEARG(2, positions_buffer, CL_RO, positions_uint, sizeof(gpu_uint));
@@ -1642,11 +1657,15 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   CLCREATEARG(5, device_num_buffer, CL_RO, device_num, sizeof(gpu_uint));  /* pos_start, updated per chunk */
   CLCREATEARG(6, total_devices_buffer, CL_RO, positions_uint, sizeof(gpu_uint));  /* total_positions */
   CLCREATEARG_ARRAY(7, output_buffer, CL_WO, all_output, output_bytes);
-  CLCREATEARG_ARRAY(8, sorted_pos0_buffer, CL_RO, args[0].sorted_pos0,
-                    args[0].markov_charset_len * sizeof(uint8_t));
-  CLCREATEARG_ARRAY(9, sorted_bigram_buffer, CL_RO, args[0].sorted_bigram,
-                    args[0].markov_max_positions * args[0].markov_charset_len *
-                    args[0].markov_charset_len * sizeof(uint8_t));
+
+  /* Markov batch kernel takes two additional args for the Markov statistics. */
+  if (use_markov_batch) {
+    CLCREATEARG_ARRAY(8, sorted_pos0_buffer, CL_RO, args[0].sorted_pos0,
+                      args[0].markov_charset_len * sizeof(uint8_t));
+    CLCREATEARG_ARRAY(9, sorted_bigram_buffer, CL_RO, args[0].sorted_bigram,
+                      args[0].markov_max_positions * args[0].markov_charset_len *
+                      args[0].markov_charset_len * sizeof(uint8_t));
+  }
 
   /* Dispatch in position-based sub-batches to stay within GPU watchdog limits.
    * Each sub-batch processes all hashes at a range of chain positions.
@@ -1737,8 +1756,10 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   CLFREEBUFFER(device_num_buffer);
   CLFREEBUFFER(total_devices_buffer);
   CLFREEBUFFER(output_buffer);
-  CLFREEBUFFER(sorted_pos0_buffer);
-  CLFREEBUFFER(sorted_bigram_buffer);
+  if (use_markov_batch) {
+    CLFREEBUFFER(sorted_pos0_buffer);
+    CLFREEBUFFER(sorted_bigram_buffer);
+  }
   CLRELEASEKERNEL(gpu->kernel);
   CLRELEASEPROGRAM(gpu->program);
   CLRELEASEQUEUE(gpu->queue);
