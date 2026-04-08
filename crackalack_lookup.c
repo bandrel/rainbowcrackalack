@@ -50,6 +50,7 @@
 #include "bloom.h"
 #include "misc.h"
 #include "rtc_decompress.h"
+#include "rti2_decompress.h"
 #include "shared.h"
 #include "test_shared.h"  /* TODO: move hex_to_bytes() elsewhere. */
 #include "verify.h"
@@ -771,7 +772,7 @@ void find_rt_params(char *dir_name, rt_parameters *rt_params) {
       }
 
     /* If this is a compressed or uncompressed rainbow table, process it! */
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2")) {
 
       /* Try to parse them from this file name.  On success, return immediately
        * (no further processing needed), otherwise continue searching until the
@@ -819,7 +820,7 @@ static void collect_config_groups_dir(char *dir_name, config_group **head) {
         && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
       collect_config_groups_dir(filepath, head);
 
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2")) {
       rt_parameters p = {0};
       parse_rt_params(&p, filepath);
       if (!p.parsed)
@@ -874,7 +875,7 @@ unsigned int count_tables_for_config(char *dir, const rt_parameters *filter) {
     if ((strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0)
         && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
       count += count_tables_for_config(filepath, filter);
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2")) {
       rt_parameters p = {0};
       parse_rt_params(&p, filepath);
       if (p.parsed && configs_match(&p, filter))
@@ -1950,7 +1951,7 @@ void _preloading_thread(char *rt_dir, const rt_parameters *filter) {
       _preloading_thread(filepath, filter);
 
     /* If this is a compressed or uncompressed rainbow table, load it! */
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2")) {
       gpu_ulong *rainbow_table = NULL;
       uint64_t num_chains = 0;
       unsigned int is_uncompressed_table = 0;
@@ -1963,6 +1964,15 @@ void _preloading_thread(char *rt_dir, const rt_parameters *filter) {
 	start_timer(&start_time_io);    /* For loading the table only. */
 	if ((ret = rtc_decompress(filepath, &rainbow_table, &num_chains)) != 0) {
 	  fprintf(stderr, "Error while decompressing RTC table %s: %d\n", filepath, ret);
+	  exit(-1);
+	}
+	time_io += get_elapsed(&start_time_io);
+      } else if (str_ends_with(de->d_name, ".rti2")) {
+	int ret = 0;
+
+	start_timer(&start_time_io);
+	if ((ret = rti2_decompress(filepath, &rainbow_table, &num_chains)) != 0) {
+	  fprintf(stderr, "Error while decompressing RTI2 table %s: %d\n", filepath, ret);
 	  exit(-1);
 	}
 	time_io += get_elapsed(&start_time_io);
