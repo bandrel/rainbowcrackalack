@@ -2206,7 +2206,10 @@ static uint64_t get_ram_budget(void) {
   sysinfo(&si);
   total = (uint64_t)si.totalram * si.mem_unit;
 #endif
-  uint64_t reserve = (uint64_t)4 * 1024 * 1024 * 1024;
+  /* Reserve 10% of RAM + 2GB for bloom filters, page tables, process overhead.
+   * The OOM killer will strike if we're too aggressive — 87 x 1GB tables on
+   * 96GB RAM triggered OOM with only a 4GB reserve. */
+  uint64_t reserve = (total / 10) + (uint64_t)2 * 1024 * 1024 * 1024;
   return (total > reserve) ? total - reserve : 0;
 }
 
