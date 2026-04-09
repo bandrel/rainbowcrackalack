@@ -69,6 +69,7 @@
 #define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.metal"
 #define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.metal"
 #define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "precompute_ntlm8_batch.metal"
+#define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH "precompute_netntlmv1_7_batch.metal"
 #else
 #define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
 #define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.cl"
@@ -76,6 +77,7 @@
 #define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.cl"
 #define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.cl"
 #define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "precompute_ntlm8_batch.cl"
+#define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH "precompute_netntlmv1_7_batch.cl"
 #endif
 
 #define FALSE_ALARM_KERNEL_PATH "false_alarm_check.cl"
@@ -1661,8 +1663,10 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   int use_standard_batch = !args[0].use_markov &&
       is_ntlm8(args[0].hash_type, args[0].charset, args[0].plaintext_len_min,
         args[0].plaintext_len_max, args[0].reduction_offset, args[0].chain_len);
+  int use_netntlmv1_batch = is_netntlmv1_7(args[0].hash_type, args[0].charset_name,
+        args[0].plaintext_len_min, args[0].plaintext_len_max, args[0].chain_len);
 
-  if (!use_markov_batch && !use_standard_batch)
+  if (!use_markov_batch && !use_standard_batch && !use_netntlmv1_batch)
     return 0;
   if (num_hashes < 2)
     return 0;
@@ -1683,8 +1687,9 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   unsigned int positions_per_hash = args[0].chain_len;  /* Single device: all positions */
   size_t total_work_items = (size_t)num_hashes * positions_per_hash;
 
+  const char *batch_label = use_markov_batch ? "Markov NTLM8" : use_netntlmv1_batch ? "NetNTLMv1-7" : "NTLM8";
   printf("\n  Batched precompute (%s): %u hashes x %u positions = %zu work items\n",
-         use_markov_batch ? "Markov NTLM8" : "NTLM8",
+         batch_label,
          num_hashes, positions_per_hash, total_work_items);
   fflush(stdout);
 
@@ -1723,6 +1728,11 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
                 PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH,
                 "precompute_markov_ntlm8_batch",
                 &(gpu->program), &(gpu->kernel), args[0].hash_type);
+  } else if (use_netntlmv1_batch) {
+    load_kernel(gpu->context, 1, &(gpu->device),
+                PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH,
+                "precompute_netntlmv1_7_batch",
+                &(gpu->program), &(gpu->kernel), args[0].hash_type);
   } else {
     load_kernel(gpu->context, 1, &(gpu->device),
                 PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH,
@@ -1734,17 +1744,26 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   queue = gpu->queue;
   kernel = gpu->kernel;
 
-  int charset_len = strlen(args[0].charset);
   gpu_ulong chain_len_ulong = args[0].chain_len;
   gpu_uint device_num = 0;
   gpu_uint num_hashes_uint = num_hashes;
   gpu_uint positions_uint = positions_per_hash;
 
-  /* Set kernel arguments (args 0-7 are shared between standard and Markov). */
+  /* Set kernel arguments.  Args 0-2 and 4-7 are shared across all batch
+   * kernels.  Arg 3 differs: charset_len for NTLM, reduction_offset for
+   * NetNTLMv1. */
   CLCREATEARG_ARRAY(0, hashes_buffer, CL_RO, all_hashes_bin, num_hashes * 16);
   CLCREATEARG(1, num_hashes_buffer, CL_RO, num_hashes_uint, sizeof(gpu_uint));
   CLCREATEARG(2, positions_buffer, CL_RO, positions_uint, sizeof(gpu_uint));
-  CLCREATEARG(3, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
+
+  if (use_netntlmv1_batch) {
+    gpu_uint reduction_offset = args[0].reduction_offset;
+    CLCREATEARG(3, charset_len_buffer, CL_RO, reduction_offset, sizeof(gpu_uint));
+  } else {
+    int charset_len = strlen(args[0].charset);
+    CLCREATEARG(3, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
+  }
+
   CLCREATEARG(4, chain_len_buffer, CL_RO, chain_len_ulong, sizeof(gpu_ulong));
   CLCREATEARG(5, device_num_buffer, CL_RO, device_num, sizeof(gpu_uint));  /* pos_start, updated per chunk */
   CLCREATEARG(6, total_devices_buffer, CL_RO, positions_uint, sizeof(gpu_uint));  /* total_positions */
