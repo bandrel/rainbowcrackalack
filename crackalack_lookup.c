@@ -250,6 +250,7 @@ void free_loaded_hashes(char **usernames, char **hashes);
 void *host_thread_false_alarm(void *ptr);
 void *preloading_thread(void *ptr);
 void print_eta_precompute();
+void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filter *bf, precomputed_and_potential_indices *ppi_head);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
 void launch_false_alarm_check(precomputed_and_potential_indices *ppi, thread_args *args, false_alarm_state *state);
 void harvest_false_alarm_results(false_alarm_state *state);
@@ -2374,6 +2375,305 @@ static void bulk_free_tables(bulk_table_array *bta) {
   FREE(bta->tables);
   bta->num_tables = 0;
   bta->capacity = 0;
+}
+
+
+/* CPU precompute thread pool types and worker. */
+typedef struct {
+  char **hashes;
+  char **usernames;
+  unsigned int num_hashes;
+  thread_args *args;
+  uint64_t *plaintext_space_up_to_index;
+  uint64_t plaintext_space_total;
+  precomputed_and_potential_indices **results;  /* One ppi per hash, output */
+} cpu_precompute_batch;
+
+typedef struct {
+  cpu_precompute_batch *batch;
+  unsigned int start;
+  unsigned int end;
+} cpu_precompute_thread_args;
+
+static void *cpu_precompute_worker(void *ptr) {
+  cpu_precompute_thread_args *ta = (cpu_precompute_thread_args *)ptr;
+  cpu_precompute_batch *batch = ta->batch;
+  thread_args *a = batch->args;
+
+  for (unsigned int i = ta->start; i < ta->end; i++) {
+    batch->results[i] = cpu_precompute_hash(
+        a->hash_type, batch->hashes[i], batch->usernames[i],
+        a->charset, strlen(a->charset),
+        a->plaintext_len_min, a->plaintext_len_max,
+        a->reduction_offset, a->chain_len,
+        batch->plaintext_space_up_to_index,
+        batch->plaintext_space_total);
+  }
+  return NULL;
+}
+
+/* Runs CPU precompute on num_hashes hashes using num_threads threads.
+ * Appends resulting ppi nodes to *ppi_head (mutex-protected). */
+static void cpu_precompute_parallel(
+    char **hashes, char **usernames, unsigned int num_hashes,
+    thread_args *args, unsigned int num_threads,
+    uint64_t *plaintext_space_up_to_index, uint64_t plaintext_space_total,
+    precomputed_and_potential_indices **ppi_head) {
+
+  if (num_hashes == 0 || num_threads == 0) return;
+  if (num_threads > num_hashes) num_threads = num_hashes;
+
+  cpu_precompute_batch batch = {0};
+  batch.hashes = hashes;
+  batch.usernames = usernames;
+  batch.num_hashes = num_hashes;
+  batch.args = args;
+  batch.plaintext_space_up_to_index = plaintext_space_up_to_index;
+  batch.plaintext_space_total = plaintext_space_total;
+  batch.results = calloc(num_hashes, sizeof(precomputed_and_potential_indices *));
+
+  pthread_t *threads = calloc(num_threads, sizeof(pthread_t));
+  cpu_precompute_thread_args *targs = calloc(num_threads, sizeof(cpu_precompute_thread_args));
+
+  unsigned int per_thread = num_hashes / num_threads;
+  unsigned int remainder = num_hashes % num_threads;
+  unsigned int offset = 0;
+
+  for (unsigned int t = 0; t < num_threads; t++) {
+    targs[t].batch = &batch;
+    targs[t].start = offset;
+    targs[t].end = offset + per_thread + (t < remainder ? 1 : 0);
+    offset = targs[t].end;
+    pthread_create(&threads[t], NULL, cpu_precompute_worker, &targs[t]);
+  }
+
+  for (unsigned int t = 0; t < num_threads; t++)
+    pthread_join(threads[t], NULL);
+
+  /* Append results to ppi list. */
+  pthread_mutex_lock(&ppi_mutex);
+  for (unsigned int i = 0; i < num_hashes; i++) {
+    if (batch.results[i] == NULL) continue;
+    precomputed_and_potential_indices *ppi = batch.results[i];
+    ppi->next = NULL;
+    if (*ppi_head == NULL) {
+      *ppi_head = ppi;
+    } else {
+      precomputed_and_potential_indices *tail = *ppi_head;
+      while (tail->next != NULL) tail = tail->next;
+      tail->next = ppi;
+    }
+  }
+  pthread_mutex_unlock(&ppi_mutex);
+
+  free(batch.results);
+  free(threads);
+  free(targs);
+}
+
+
+/* Pipelined lookup: bulk-loads tables into RAM, then runs batched
+ * GPU+CPU precompute with search against all loaded tables.
+ * Replaces the sequential precompute + search_tables pattern. */
+void pipelined_lookup(char *rt_dir, const rt_parameters *filter,
+                      unsigned int num_devices, thread_args *args,
+                      char **hashes, char **usernames, unsigned int total_hashes,
+                      precomputed_and_potential_indices **ppi_head) {
+
+  unsigned int total_paths = 0;
+  char **all_paths = collect_table_paths(rt_dir, filter, &total_paths);
+  if (total_paths == 0) {
+    printf("No tables found for this config group.\n");
+    free(all_paths);
+    return;
+  }
+  printf("Found %u tables for this config group.\n", total_paths);
+  fflush(stdout);
+
+  /* Build plaintext space table for CPU precompute. */
+  uint64_t plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
+  uint64_t plaintext_space_total = fill_plaintext_space_table(
+      strlen(args[0].charset), args[0].plaintext_len_min,
+      args[0].plaintext_len_max, plaintext_space_up_to_index);
+
+  unsigned int cpu_threads = 14;
+  double gpu_time_per_hash = 0;
+  double cpu_time_per_hash = 0;
+  int tuning_done = 0;
+
+  /* Outer loop: table chunks that fit in RAM. */
+  unsigned int table_start_idx = 0;
+  unsigned int chunk_num = 0;
+
+  while (table_start_idx < total_paths) {
+    chunk_num++;
+    bulk_table_array bta = {0};
+    bulk_load_tables(all_paths, total_paths, &table_start_idx, &bta);
+
+    if (bta.num_tables == 0) {
+      printf("Warning: no tables could be loaded in this chunk.\n");
+      break;
+    }
+
+    printf("Phase 2: Batched precompute + search (chunk %u, %u tables)...\n\n",
+           chunk_num, bta.num_tables);
+    fflush(stdout);
+
+    /* Collect uncracked hashes. */
+    unsigned int num_uncracked = 0;
+    char **uncracked_hashes = calloc(total_hashes, sizeof(char *));
+    char **uncracked_usernames = calloc(total_hashes, sizeof(char *));
+
+    for (unsigned int i = 0; i < total_hashes; i++) {
+      precomputed_and_potential_indices *existing = ppi_find(*ppi_head, hashes[i]);
+      if (existing != NULL && existing->plaintext != NULL)
+        continue;
+      uncracked_hashes[num_uncracked] = hashes[i];
+      uncracked_usernames[num_uncracked] = usernames[i];
+      num_uncracked++;
+    }
+
+    if (num_uncracked == 0) {
+      printf("All hashes cracked. Skipping remaining table chunks.\n");
+      free(uncracked_hashes); free(uncracked_usernames);
+      bulk_free_tables(&bta);
+      break;
+    }
+
+    /* Determine GPU/CPU split. */
+    unsigned int gpu_count = num_uncracked;
+    unsigned int cpu_count = 0;
+    if (tuning_done && cpu_time_per_hash > 0 && gpu_time_per_hash > 0) {
+      double gpu_total_time = gpu_time_per_hash * num_uncracked;
+      unsigned int cpu_capacity = (unsigned int)(gpu_total_time / cpu_time_per_hash);
+      if (cpu_capacity > num_uncracked) cpu_capacity = num_uncracked;
+      if (cpu_capacity > cpu_threads * 2) cpu_capacity = cpu_threads * 2;
+      cpu_count = cpu_capacity;
+      gpu_count = num_uncracked - cpu_count;
+      if (gpu_count < 2) { gpu_count = num_uncracked; cpu_count = 0; }
+    }
+
+    /* === GPU + CPU precompute === */
+    struct timespec precomp_start = {0};
+    start_timer(&precomp_start);
+    printf("  Precomputing %u hashes (GPU: %u, CPU: %u)...\n",
+           num_uncracked, gpu_count, cpu_count);
+    fflush(stdout);
+
+    ppi_reset_endpoints(*ppi_head);
+
+    /* GPU batch precompute. */
+    int used_batch = 0;
+    if (gpu_count >= 2)
+      used_batch = batch_precompute_all_hashes(num_devices, args,
+          uncracked_hashes, uncracked_usernames, gpu_count, ppi_head);
+
+    if (!used_batch) {
+      for (unsigned int i = 0; i < gpu_count; i++) {
+        for (unsigned int j = 0; j < num_devices; j++) {
+          args[j].username = uncracked_usernames[i];
+          args[j].hash = uncracked_hashes[i];
+        }
+        precomputed_and_potential_indices *existing = ppi_find(*ppi_head, uncracked_hashes[i]);
+        precompute_hash(num_devices, args, ppi_head, existing);
+      }
+    }
+
+    /* CPU precompute for the CPU slice (runs after GPU finishes for now;
+     * future: overlap with GPU via background threads). */
+    if (cpu_count > 0) {
+      cpu_precompute_parallel(
+          uncracked_hashes + gpu_count, uncracked_usernames + gpu_count,
+          cpu_count, args, cpu_threads,
+          plaintext_space_up_to_index, plaintext_space_total, ppi_head);
+    }
+
+    /* Auto-tune after first batch. */
+    if (!tuning_done && num_uncracked > 0) {
+      double elapsed = get_elapsed(&precomp_start);
+      gpu_time_per_hash = (gpu_count > 0) ? elapsed / gpu_count : 0;
+      if (num_uncracked > 0) {
+        struct timespec cpu_bench = {0};
+        start_timer(&cpu_bench);
+        precomputed_and_potential_indices *bench_ppi = cpu_precompute_hash(
+            args[0].hash_type, uncracked_hashes[0], uncracked_usernames[0],
+            args[0].charset, strlen(args[0].charset),
+            args[0].plaintext_len_min, args[0].plaintext_len_max,
+            args[0].reduction_offset, args[0].chain_len,
+            plaintext_space_up_to_index, plaintext_space_total);
+        cpu_time_per_hash = get_elapsed(&cpu_bench);
+        if (bench_ppi != NULL) {
+          FREE(bench_ppi->precomputed_end_indices);
+          FREE(bench_ppi);
+        }
+        printf("  Auto-tune: GPU=%.3fs/hash, CPU=%.3fs/hash, %u CPU threads\n",
+               gpu_time_per_hash, cpu_time_per_hash, cpu_threads);
+        fflush(stdout);
+      }
+      tuning_done = 1;
+    }
+
+    release_precompute_gpu(num_devices, args);
+
+    char precomp_time_str[128] = {0};
+    seconds_to_human_time(precomp_time_str, sizeof(precomp_time_str),
+                          get_elapsed(&precomp_start));
+    printf("  Precompute finished in %s.\n\n", precomp_time_str);
+    fflush(stdout);
+
+    /* === Search all loaded tables === */
+    false_alarm_state fa_state = {0};
+
+    for (unsigned int t = 0; t < bta.num_tables; t++) {
+      preloaded_table *pt = &bta.tables[t];
+
+      unsigned int still_uncracked = 0;
+      precomputed_and_potential_indices *ppi_cur = *ppi_head;
+      while (ppi_cur != NULL) {
+        if (ppi_cur->plaintext == NULL) still_uncracked++;
+        ppi_cur = ppi_cur->next;
+      }
+      if (still_uncracked == 0) {
+        harvest_false_alarm_results(&fa_state);
+        printf("All hashes cracked. Skipping remaining tables.\n");
+        break;
+      }
+
+      printf("  [%u of %u] Searching: %s\n", t + 1, bta.num_tables, pt->filepath);
+      fflush(stdout);
+
+      rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, *ppi_head);
+      num_chains_processed += pt->num_chains;
+      num_tables_processed++;
+
+      harvest_false_alarm_results(&fa_state);
+      launch_false_alarm_check(*ppi_head, args, &fa_state);
+      clear_potential_start_indices(*ppi_head);
+
+      printf("  Cracked %u of %u hashes.\n", num_cracked, total_hashes);
+      fflush(stdout);
+    }
+
+    harvest_false_alarm_results(&fa_state);
+    release_false_alarm_gpu(num_devices, args);
+
+    free(uncracked_hashes);
+    free(uncracked_usernames);
+    bulk_free_tables(&bta);
+
+    /* Check if all cracked before next chunk. */
+    unsigned int remaining = 0;
+    precomputed_and_potential_indices *p = *ppi_head;
+    while (p != NULL) { if (p->plaintext == NULL) remaining++; p = p->next; }
+    if (remaining == 0) {
+      printf("All hashes cracked. Skipping remaining table chunks.\n");
+      break;
+    }
+  }
+
+  for (unsigned int i = 0; i < total_paths; i++)
+    free(all_paths[i]);
+  free(all_paths);
 }
 
 
