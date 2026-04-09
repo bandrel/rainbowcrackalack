@@ -60,8 +60,8 @@ Tests cover: chain generation, NTLM hashing, hash-to-index reduction, and index-
 ### Three-phase pipeline
 
 1. **Generation** (`crackalack_gen`) - GPU computes rainbow chains from start points using iterated hash + reduce cycles. Output: `.rt` binary table files.
-2. **Table storage** - Binary `.rt` files store (start_point, end_point) pairs. Compressed `.rtc` format also supported (`crackalack_rtc2rt` decompresses). Table parameters are encoded in the filename: `ntlm_ascii-32-95#8-8_0_422000x67108864_0.rt`.
-3. **Lookup** (`crackalack_lookup`) - GPU-accelerated precomputation of candidate endpoints, binary search in sorted tables, then false alarm checking to confirm matches. Tables are pre-loaded in parallel with search for throughput.
+2. **Table storage** - Binary `.rt` files store (start_point, end_point) pairs. Compressed `.rtc` and `.rti2` (RTI 2.0 variable-length bit-packed) formats also supported. Table parameters are encoded in the filename: `ntlm_ascii-32-95#8-8_0_422000x67108864_0.rt`.
+3. **Lookup** (`crackalack_lookup`) - Uses a pipelined two-phase approach: (1) bulk-load tables into RAM up to an auto-detected memory budget, then (2) batch precompute hashes using GPU + CPU threads in parallel, binary search all loaded tables, and run false alarm checks. If tables exceed RAM, the pipeline processes them in chunks. The GPU/CPU hash split is auto-tuned based on measured timing.
 
 ### GPU abstraction layer
 
