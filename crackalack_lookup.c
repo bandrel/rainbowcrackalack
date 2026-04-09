@@ -1562,6 +1562,82 @@ static void release_precompute_gpu(unsigned int num_devices, thread_args *args) 
 }
 
 
+/* CPU precompute: walks the chain from every position for a single hash,
+ * producing a ppi node with all candidate endpoints.  Mirrors what the GPU
+ * batch kernel does, but runs on the CPU using cpu_rt_functions primitives.
+ * Returns a heap-allocated ppi node, or NULL on error. */
+static precomputed_and_potential_indices *cpu_precompute_hash(
+    unsigned int hash_type,
+    char *hash_hex,
+    char *username,
+    char *charset,
+    unsigned int charset_len,
+    unsigned int plaintext_len_min,
+    unsigned int plaintext_len_max,
+    unsigned int reduction_offset,
+    unsigned int chain_len,
+    uint64_t *plaintext_space_up_to_index,
+    uint64_t plaintext_space_total) {
+
+  unsigned char hash_bin[16] = {0};
+  hex_to_bytes(hash_hex, 16, hash_bin);
+
+  uint64_t *endpoints = calloc(chain_len, sizeof(uint64_t));
+  if (endpoints == NULL) return NULL;
+
+  char plaintext[MAX_PLAINTEXT_LEN + 1] = {0};
+  unsigned char hash_buf[16] = {0};
+  unsigned int plaintext_len = 0, hash_len = 16;
+
+  for (unsigned int pos = 0; pos < chain_len; pos++) {
+    long target_chain_len = (long)chain_len - (long)pos - 1;
+    if (target_chain_len < 1) {
+      endpoints[pos] = 0;
+      continue;
+    }
+
+    uint64_t index = hash_to_index(hash_bin, hash_len, reduction_offset,
+                                   plaintext_space_total, target_chain_len - 1);
+
+    for (unsigned int i = target_chain_len; i < chain_len - 1; i++) {
+      index_to_plaintext(index, charset, charset_len, plaintext_len_min,
+                         plaintext_len_max, plaintext_space_up_to_index,
+                         plaintext, &plaintext_len);
+      if (hash_type == HASH_MD5)
+        md5_hash(plaintext, plaintext_len, hash_buf);
+      else
+        ntlm_hash(plaintext, plaintext_len, hash_buf);
+      index = hash_to_index(hash_buf, hash_len, reduction_offset,
+                            plaintext_space_total, i);
+    }
+
+    endpoints[pos] = index;
+  }
+
+  /* Count non-zero endpoints. */
+  unsigned int count = 0;
+  for (unsigned int p = 0; p < chain_len; p++)
+    if (endpoints[p] != 0) count++;
+
+  precomputed_and_potential_indices *ppi = calloc(1, sizeof(precomputed_and_potential_indices));
+  if (ppi == NULL) { free(endpoints); return NULL; }
+
+  ppi->hash = hash_hex;
+  ppi->username = username;
+  ppi->num_precomputed_end_indices = count;
+  ppi->precomputed_end_indices = calloc(count, sizeof(gpu_ulong));
+  if (ppi->precomputed_end_indices == NULL) { free(endpoints); free(ppi); return NULL; }
+
+  unsigned int idx = 0;
+  for (unsigned int p = 0; p < chain_len; p++)
+    if (endpoints[p] != 0)
+      ppi->precomputed_end_indices[idx++] = endpoints[p];
+
+  free(endpoints);
+  return ppi;
+}
+
+
 /* Batched precompute: processes ALL hashes in a single GPU kernel dispatch.
  * Instead of dispatching one kernel per hash (sequential, ~4.7s each), this
  * sends all hashes to the GPU at once, achieving near-constant time regardless
