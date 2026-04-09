@@ -225,6 +225,13 @@ typedef struct {
   unsigned int use_filter;
 } preloading_thread_args;
 
+/* Bulk-loaded table array for pipelined lookup. */
+typedef struct {
+  preloaded_table *tables;   /* Flat array of loaded tables */
+  unsigned int num_tables;   /* Number of tables loaded */
+  unsigned int capacity;     /* Allocated array size */
+} bulk_table_array;
+
 typedef struct _config_group {
   rt_parameters params;
   struct _config_group *next;
@@ -2179,6 +2186,194 @@ void *preloading_thread(void *ptr) {
   pthread_cond_signal(&condition_wait_for_tables);
   pthread_mutex_unlock(&preloaded_tables_lock);
   return NULL;
+}
+
+
+/* Returns the available RAM in bytes, minus a 4GB reserve. */
+static uint64_t get_ram_budget(void) {
+  uint64_t total = 0;
+#ifdef __APPLE__
+  size_t len = sizeof(total);
+  sysctlbyname("hw.memsize", &total, &len, NULL, 0);
+#elif defined(_WIN32)
+  MEMORYSTATUSEX ms;
+  ms.dwLength = sizeof(ms);
+  GlobalMemoryStatusEx(&ms);
+  total = ms.ullTotalPhys;
+#else
+  struct sysinfo si;
+  sysinfo(&si);
+  total = (uint64_t)si.totalram * si.mem_unit;
+#endif
+  uint64_t reserve = (uint64_t)4 * 1024 * 1024 * 1024;
+  return (total > reserve) ? total - reserve : 0;
+}
+
+
+/* Collects all table file paths in a directory (recursively) matching a filter.
+ * Returns a malloc'd array of strdup'd paths; sets *out_count. */
+static char **collect_table_paths(char *rt_dir, const rt_parameters *filter,
+                                  unsigned int *out_count) {
+  DIR *dir = NULL;
+  struct dirent *de = NULL;
+  struct stat st;
+  char filepath[512] = {0};
+  unsigned int count = 0, capacity = 256;
+  char **paths = calloc(capacity, sizeof(char *));
+
+  dir = opendir(rt_dir);
+  if (dir == NULL) { *out_count = 0; return paths; }
+
+  while ((de = readdir(dir)) != NULL) {
+    filepath_join(filepath, sizeof(filepath), rt_dir, de->d_name);
+
+    if ((strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0) &&
+        (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
+      unsigned int sub_count = 0;
+      char **sub_paths = collect_table_paths(filepath, filter, &sub_count);
+      for (unsigned int s = 0; s < sub_count; s++) {
+        if (count >= capacity) { capacity *= 2; paths = realloc(paths, capacity * sizeof(char *)); }
+        paths[count++] = sub_paths[s];
+      }
+      free(sub_paths);
+      continue;
+    }
+
+    if (!str_ends_with(de->d_name, ".rt") && !str_ends_with(de->d_name, ".rtc") &&
+        !str_ends_with(de->d_name, ".rti2"))
+      continue;
+
+    if (filter != NULL) {
+      rt_parameters pt_params = {0};
+      parse_rt_params(&pt_params, filepath);
+      if (!pt_params.parsed || !configs_match(&pt_params, filter))
+        continue;
+    }
+
+    if (count >= capacity) { capacity *= 2; paths = realloc(paths, capacity * sizeof(char *)); }
+    paths[count++] = strdup(filepath);
+  }
+  closedir(dir);
+  *out_count = count;
+  return paths;
+}
+
+
+/* Loads a single table file (any supported format) into a preloaded_table struct. */
+static int load_single_table(const char *filepath, preloaded_table *pt) {
+  gpu_ulong *rainbow_table = NULL;
+  uint64_t num_chains = 0;
+
+  if (str_ends_with(filepath, ".rtc")) {
+    if (rtc_decompress((char *)filepath, &rainbow_table, &num_chains) != 0)
+      return -1;
+  } else if (str_ends_with(filepath, ".rti2")) {
+    if (rti2_decompress((char *)filepath, &rainbow_table, &num_chains) != 0)
+      return -1;
+  } else {
+    FILE *f = fopen(filepath, "rb");
+    if (f == NULL) return -1;
+    int64_t file_size = get_file_size(f);
+    if ((file_size % (sizeof(gpu_ulong) * 2) != 0) || file_size <= 0) { fclose(f); return -1; }
+    unsigned int num_longs = file_size / sizeof(gpu_ulong);
+    rainbow_table = calloc(num_longs, sizeof(gpu_ulong));
+    if (rainbow_table == NULL) { fclose(f); return -1; }
+    if (fread(rainbow_table, sizeof(gpu_ulong), num_longs, f) != num_longs) {
+      free(rainbow_table); fclose(f); return -1;
+    }
+    fclose(f);
+    num_chains = num_longs / 2;
+
+    if (!verify_rainbowtable(rainbow_table, num_chains, VERIFY_TABLE_TYPE_LOOKUP, 0, 0, NULL)) {
+      free(rainbow_table);
+      return -1;
+    }
+  }
+
+  if (rainbow_table == NULL || num_chains == 0) return -1;
+
+  pt->filepath = strdup(filepath);
+  pt->rainbow_table = rainbow_table;
+  pt->num_chains = num_chains;
+  pt->bf = bloom_create(num_chains);
+  for (uint64_t c = 0; c < num_chains; c++)
+    bloom_insert(pt->bf, rainbow_table[(c * 2) + 1]);
+  pt->next = NULL;
+  return 0;
+}
+
+
+/* Bulk-loads tables from all_paths[*start_idx..] into bta until the RAM budget
+ * is exhausted.  Updates *start_idx to the next unloaded table index. */
+static int bulk_load_tables(char **all_paths, unsigned int total_paths,
+                            unsigned int *start_idx, bulk_table_array *bta) {
+  uint64_t ram_budget = get_ram_budget();
+  uint64_t ram_used = 0;
+  unsigned int capacity = 128;
+  struct timespec load_start = {0};
+  char time_str[128] = {0};
+
+  bta->tables = calloc(capacity, sizeof(preloaded_table));
+  bta->num_tables = 0;
+  bta->capacity = capacity;
+
+  start_timer(&load_start);
+  printf("\nPhase 1: Bulk-loading tables into RAM (budget: %.1f GB)...\n",
+         (double)ram_budget / (1024.0 * 1024.0 * 1024.0));
+  fflush(stdout);
+
+  for (; *start_idx < total_paths; (*start_idx)++) {
+    rt_parameters rp = {0};
+    parse_rt_params(&rp, all_paths[*start_idx]);
+    uint64_t table_bytes = rp.parsed ? rp.num_chains * sizeof(gpu_ulong) * 2 : (uint64_t)1024 * 1024 * 1024;
+
+    if (ram_used + table_bytes > ram_budget && bta->num_tables > 0)
+      break;
+
+    if (bta->num_tables >= bta->capacity) {
+      bta->capacity *= 2;
+      bta->tables = realloc(bta->tables, bta->capacity * sizeof(preloaded_table));
+    }
+
+    preloaded_table *pt = &bta->tables[bta->num_tables];
+    memset(pt, 0, sizeof(preloaded_table));
+
+    if (load_single_table(all_paths[*start_idx], pt) != 0) {
+      fprintf(stderr, "Warning: skipping unloadable table: %s\n", all_paths[*start_idx]);
+      continue;
+    }
+
+    ram_used += pt->num_chains * sizeof(gpu_ulong) * 2;
+    bta->num_tables++;
+
+    printf("  [%u] Loaded %s (%'" PRIu64 " chains, %.1f MB, total %.1f GB)\n",
+           bta->num_tables, pt->filepath, pt->num_chains,
+           (double)(pt->num_chains * 16) / (1024.0 * 1024.0),
+           (double)ram_used / (1024.0 * 1024.0 * 1024.0));
+    fflush(stdout);
+  }
+
+  seconds_to_human_time(time_str, sizeof(time_str), get_elapsed(&load_start));
+  printf("Loaded %u tables (%.1f GB) in %s.\n\n", bta->num_tables,
+         (double)ram_used / (1024.0 * 1024.0 * 1024.0), time_str);
+  fflush(stdout);
+  return 0;
+}
+
+
+/* Frees all tables in a bulk_table_array. */
+static void bulk_free_tables(bulk_table_array *bta) {
+  for (unsigned int i = 0; i < bta->num_tables; i++) {
+    FREE(bta->tables[i].filepath);
+    FREE(bta->tables[i].rainbow_table);
+    if (bta->tables[i].bf != NULL) {
+      bloom_free(bta->tables[i].bf);
+      bta->tables[i].bf = NULL;
+    }
+  }
+  FREE(bta->tables);
+  bta->num_tables = 0;
+  bta->capacity = 0;
 }
 
 
