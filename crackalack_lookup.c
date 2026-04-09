@@ -3512,88 +3512,11 @@ int main(int ac, char **av) {
     printed_precompute_optimized_message = 0;
     printed_false_alarm_optimized_message = 0;
 
-    /* Release any stale precomputed endpoints from the previous config group
-     * so they are recomputed with the current config's parameters. */
-    ppi_reset_endpoints(ppi_head);
-
-    /* Start preloading tables for this config group in the background. */
-    table_loading_complete = 0;
-    preload_thread_args.rt_dir = strdup(rt_dir);
-    preload_thread_args.filter = cg->params;
-    preload_thread_args.use_filter = 1;
-    err = pthread_create(&preload_thread_id, NULL, preloading_thread, &preload_thread_args);
-    if (err != 0) {
-      printf("Failed to create preloading thread: %d\n", err);
-      goto err;
-    }
-
-    /* Precompute endpoints for all uncracked hashes under this config. */
-    num_hashes_precomputed = 0;
-    num_hashes_precomputed_total = num_uncracked;
+    /* Pipelined lookup: bulk-load tables, batched GPU+CPU precompute, search. */
     start_timer(&precompute_start_time);
-
-    /* Collect uncracked hashes for batch precompute. */
-    unsigned int batch_count = 0;
-    char **batch_hashes = calloc(num_hashes, sizeof(char *));
-    char **batch_usernames = calloc(num_hashes, sizeof(char *));
-    for (i = 0; i < num_hashes; i++) {
-      precomputed_and_potential_indices *existing_ppi = ppi_find(ppi_head, hashes[i]);
-      if (existing_ppi != NULL && existing_ppi->plaintext != NULL)
-        continue;
-      batch_hashes[batch_count] = hashes[i];
-      batch_usernames[batch_count] = usernames[i];
-      batch_count++;
-    }
-
-    /* Try batched precompute first (all hashes in one GPU dispatch). */
-    int used_batch = 0;
-    if (batch_count > 0) {
-      used_batch = batch_precompute_all_hashes(num_devices, args,
-          batch_hashes, batch_usernames, batch_count, &ppi_head);
-    }
-
-    /* Fall back to per-hash sequential precompute if batch wasn't used. */
-    if (!used_batch) {
-      for (i = 0; i < num_hashes; i++) {
-        precomputed_and_potential_indices *existing_ppi = ppi_find(ppi_head, hashes[i]);
-
-        /* Skip already-cracked hashes. */
-        if (existing_ppi != NULL && existing_ppi->plaintext != NULL)
-          continue;
-
-        printf("Pre-computing hash #%u: %s...\n", i + 1, hashes[i]);  fflush(stdout);
-
-        for (j = 0; j < num_devices; j++) {
-          args[j].username = usernames[i];
-          args[j].hash = hashes[i];
-        }
-
-        precompute_hash(num_devices, args, &ppi_head, existing_ppi);
-      }
-    }
-
-    free(batch_hashes);
-    free(batch_usernames);
-
+    pipelined_lookup(rt_dir, &cg->params, num_devices, args,
+                     hashes, usernames, num_hashes, &ppi_head);
     time_precomp += get_elapsed(&precompute_start_time);
-    seconds_to_human_time(time_precomp_str, sizeof(time_precomp_str), time_precomp);
-    printf("\nPre-computation finished in %s.\n\n", time_precomp_str);  fflush(stdout);
-
-    /* Release precompute GPU resources before false alarm phase reuses gpu_dev. */
-    release_precompute_gpu(num_devices, args);
-
-    /* Warn if precomputed indices are consuming excessive RAM. */
-    check_memory_usage();
-
-    /* Binary search all tables for this config group. */
-    total_tables = config_table_count;
-    start_timer(&search_start_time);
-    search_tables(total_tables, ppi_head, args);
-
-    /* Release false alarm GPU resources before next config group iteration. */
-    release_false_alarm_gpu(num_devices, args);
-
-    pthread_join(preload_thread_id, NULL);
   }
 
   free_config_groups(&cg_head);
