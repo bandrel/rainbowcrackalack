@@ -39,6 +39,7 @@ RC_COMPACT_QUEUE_MAX="${RC_COMPACT_QUEUE_MAX:-2}"
 RC_LOOKUP_BATCH_SIZE="${RC_LOOKUP_BATCH_SIZE:-115}"
 RC_STATE_DIR="${RC_STATE_DIR:-}"
 RC_RTC_DEST_OVERFLOW="${RC_RTC_DEST_OVERFLOW:-}"
+RC_RTC_DEST_OVERFLOW_2="${RC_RTC_DEST_OVERFLOW_2:-}"
 RC_OVERFLOW_MIN_GB="${RC_OVERFLOW_MIN_GB:-400}"
 
 # ---------------------------------------------------------------------------
@@ -536,15 +537,21 @@ cmd_compact() {
 
             local comp_secs=$(( $(date +%s) - comp_start ))
 
-            # Choose destination — spill to overflow when primary is low on space
+            # Choose destination — waterfall: primary → overflow → overflow2
             local write_dest="$RC_RTC_DEST"
-            if [[ -n "$RC_RTC_DEST_OVERFLOW" ]]; then
-                local free_gb
-                free_gb=$(nvme_free_gb "$RC_RTC_DEST")
-                if (( free_gb < RC_OVERFLOW_MIN_GB )); then
+            local free_gb
+            free_gb=$(nvme_free_gb "$RC_RTC_DEST")
+            if (( free_gb < RC_OVERFLOW_MIN_GB )) && [[ -n "$RC_RTC_DEST_OVERFLOW" ]]; then
+                local free_gb2
+                free_gb2=$(nvme_free_gb "$RC_RTC_DEST_OVERFLOW" 2>/dev/null || echo 0)
+                if (( free_gb2 >= RC_OVERFLOW_MIN_GB )) || [[ -z "$RC_RTC_DEST_OVERFLOW_2" ]]; then
                     write_dest="$RC_RTC_DEST_OVERFLOW"
                     mkdir -p "$write_dest"
-                    log "  Primary dest <${RC_OVERFLOW_MIN_GB}GB free (${free_gb}GB), spilling to overflow: $write_dest"
+                    log "  Primary <${RC_OVERFLOW_MIN_GB}GB free (${free_gb}GB), spilling to overflow: $write_dest"
+                else
+                    write_dest="$RC_RTC_DEST_OVERFLOW_2"
+                    mkdir -p "$write_dest"
+                    log "  Primary (${free_gb}GB) and overflow (${free_gb2}GB) both <${RC_OVERFLOW_MIN_GB}GB free, spilling to overflow2: $write_dest"
                 fi
             fi
 
@@ -664,7 +671,7 @@ cmd_lookup() {
         local -A seen_table=()
         local all_tables=()
         local all_table_dirs=()
-        for scan_dir in "$RC_RTC_DEST" ${RC_RTC_DEST_OVERFLOW:+"$RC_RTC_DEST_OVERFLOW"}; do
+        for scan_dir in "$RC_RTC_DEST" ${RC_RTC_DEST_OVERFLOW:+"$RC_RTC_DEST_OVERFLOW"} ${RC_RTC_DEST_OVERFLOW_2:+"$RC_RTC_DEST_OVERFLOW_2"}; do
             [[ -d "$scan_dir" ]] || continue
             local rtc_count rt_count
             rtc_count=$(find "$scan_dir" -maxdepth 1 -name '*.rtc' | wc -l)
@@ -684,7 +691,7 @@ cmd_lookup() {
             done < <(find "$scan_dir" -maxdepth 1 -name "*.${ext}" -printf '%f\n' | sort)
         done
 
-        [[ ${#all_tables[@]} -eq 0 ]] && die "No .rt or .rtc files found in $RC_RTC_DEST${RC_RTC_DEST_OVERFLOW:+ or $RC_RTC_DEST_OVERFLOW}"
+        [[ ${#all_tables[@]} -eq 0 ]] && die "No .rt or .rtc files found in $RC_RTC_DEST${RC_RTC_DEST_OVERFLOW:+ or $RC_RTC_DEST_OVERFLOW}${RC_RTC_DEST_OVERFLOW_2:+ or $RC_RTC_DEST_OVERFLOW_2}"
 
         load_done "$lookup_done"
 
