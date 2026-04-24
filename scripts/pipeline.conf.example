@@ -51,3 +51,12 @@ RC_LOOKUP_BATCH_SIZE=115
 # Contains .done tracking files, per-stage logs, and cracked output.
 # ---------------------------------------------------------------------------
 RC_STATE_DIR=""
+
+# ---------------------------------------------------------------------------
+# Overflow destination for compact
+# When RC_RTC_DEST has less than RC_OVERFLOW_MIN_GB free, compact spills new
+# .rtc files here instead. Lookup scans both dirs automatically.
+# Leave RC_RTC_DEST_OVERFLOW empty to disable spillover.
+# ---------------------------------------------------------------------------
+RC_RTC_DEST_OVERFLOW=""
+RC_OVERFLOW_MIN_GB=400
