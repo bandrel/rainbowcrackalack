@@ -595,6 +595,7 @@ cmd_lookup() {
             --batch-size)  batch_size="$2";  shift 2 ;;
             --start-index) start_index="$2"; shift 2 ;;
             --end-index)   end_index="$2";   shift 2 ;;
+            --source)      shift 2 ;;
             --dry-run)     dry_run=1;        shift ;;
             --config)      config_file="$2"; shift 2 ;;
             --help|-h)     usage_lookup ;;
@@ -726,14 +727,22 @@ cmd_lookup() {
             log "Copying batch $((batch_num+1))/$num_batches ($bc tables) to $stage_dir"
             clean_stage "$stage_dir"
 
-            local copied=0
+            local copied=0 failed=0
             for ((j=bs; j<=be; j++)); do
-                rsync -a --inplace "$RC_RTC_DEST/${tables[$j]}" "$stage_dir/" && ((copied++)) || true
-                if (( copied % 10 == 0 )); then
+                if rsync -a --inplace "$RC_RTC_DEST/${tables[$j]}" "$stage_dir/"; then
+                    ((copied++))
+                else
+                    log "  WARNING: failed to copy ${tables[$j]}"
+                    ((failed++)) || true
+                fi
+                if (( copied % 10 == 0 && copied > 0 )); then
                     log "  Copied $copied/$bc files..."
                 fi
             done
             log "Batch $((batch_num+1)) copy done: $copied/$bc files"
+            if (( failed > 0 )); then
+                return 1
+            fi
         }
 
         # Helper: run lookup on a staged batch
