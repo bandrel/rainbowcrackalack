@@ -1,0 +1,53 @@
+# pipeline.conf.example — copy to pipeline.conf and edit for your environment
+#
+# Config resolution order for every setting:
+#   1. CLI flag
+#   2. Environment variable (RC_* prefix)
+#   3. This file (sourced by nvme_pipeline.sh)
+#   4. Hardcoded default (where a safe default exists)
+#
+# This file is shell-sourced, so standard bash variable syntax applies.
+
+# ---------------------------------------------------------------------------
+# External rainbowcrack binaries (not part of this repo)
+# Obtain from the upstream rainbowcrack project.
+# ---------------------------------------------------------------------------
+RC_RTSORT="/path/to/rtsort"
+RC_RT2RTC="/path/to/rt2rtc"
+
+# crackalack_lookup — auto-detected from repo root (../crackalack_lookup) if
+# empty, then falls back to PATH. Set explicitly if auto-detection fails.
+RC_LOOKUP=""
+
+# ---------------------------------------------------------------------------
+# NVMe staging root
+# Must have at least ~2× the batch-size worth of free space for double-buffering.
+# ---------------------------------------------------------------------------
+RC_NVME_ROOT="/mnt/nvme"
+
+# ---------------------------------------------------------------------------
+# Table source and destination paths
+# ---------------------------------------------------------------------------
+# RC_RT_SOURCE: directory containing raw/sorted .rt tables
+#   Input for: sort (sorted in-place), compact (reads sorted .rt)
+RC_RT_SOURCE=""
+
+# RC_RTC_DEST: directory for compressed .rtc output
+#   Output for: compact (writes .rtc here)
+#   Input for:  lookup (reads .rtc from here; falls back to .rt if no .rtc)
+RC_RTC_DEST=""
+
+# ---------------------------------------------------------------------------
+# Per-stage batch sizes
+# Override at runtime with --batch-size (sort/lookup) flags.
+# ---------------------------------------------------------------------------
+RC_SORT_BATCH_SIZE=50
+RC_COMPACT_QUEUE_MAX=2
+RC_LOOKUP_BATCH_SIZE=115
+
+# ---------------------------------------------------------------------------
+# State directory
+# If empty, defaults to $RC_NVME_ROOT/.pipeline-state.
+# Contains .done tracking files, per-stage logs, and cracked output.
+# ---------------------------------------------------------------------------
+RC_STATE_DIR=""
