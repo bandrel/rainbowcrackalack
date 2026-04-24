@@ -383,7 +383,7 @@ cmd_sort() {
                 rsync -a --inplace "$stage_dir/${tables[$i]}" "$RC_RT_SOURCE/${tables[$i]}.sorted"
                 mv "$RC_RT_SOURCE/${tables[$i]}.sorted" "$RC_RT_SOURCE/${tables[$i]}"
                 mark_done "$sort_done" "${tables[$i]}"
-                ((sorted_count++))
+                ((sorted_count++)) || true
                 if (( (i - bstart + 1) % 10 == 0 )); then
                     log "  Written $((i - bstart + 1))/$bcount..."
                 fi
@@ -545,7 +545,7 @@ cmd_compact() {
 
             if [[ $rtc_found -eq 1 ]]; then
                 mark_done "$compact_done" "$table"
-                ((compressed++))
+                ((compressed++)) || true
             else
                 log "  WARNING: no .rtc created for $table!"
             fi
@@ -730,7 +730,7 @@ cmd_lookup() {
             local copied=0 failed=0
             for ((j=bs; j<=be; j++)); do
                 if rsync -a --inplace "$RC_RTC_DEST/${tables[$j]}" "$stage_dir/"; then
-                    ((copied++))
+                    ((copied++)) || true
                 else
                     log "  WARNING: failed to copy ${tables[$j]}"
                     ((failed++)) || true
