@@ -38,6 +38,8 @@ RC_SORT_BATCH_SIZE="${RC_SORT_BATCH_SIZE:-50}"
 RC_COMPACT_QUEUE_MAX="${RC_COMPACT_QUEUE_MAX:-2}"
 RC_LOOKUP_BATCH_SIZE="${RC_LOOKUP_BATCH_SIZE:-115}"
 RC_STATE_DIR="${RC_STATE_DIR:-}"
+RC_RTC_DEST_OVERFLOW="${RC_RTC_DEST_OVERFLOW:-}"
+RC_OVERFLOW_MIN_GB="${RC_OVERFLOW_MIN_GB:-400}"
 
 # ---------------------------------------------------------------------------
 # Shared utilities
@@ -534,12 +536,24 @@ cmd_compact() {
 
             local comp_secs=$(( $(date +%s) - comp_start ))
 
+            # Choose destination — spill to overflow when primary is low on space
+            local write_dest="$RC_RTC_DEST"
+            if [[ -n "$RC_RTC_DEST_OVERFLOW" ]]; then
+                local free_gb
+                free_gb=$(nvme_free_gb "$RC_RTC_DEST")
+                if (( free_gb < RC_OVERFLOW_MIN_GB )); then
+                    write_dest="$RC_RTC_DEST_OVERFLOW"
+                    mkdir -p "$write_dest"
+                    log "  Primary dest <${RC_OVERFLOW_MIN_GB}GB free (${free_gb}GB), spilling to overflow: $write_dest"
+                fi
+            fi
+
             # Move .rtc to destination
             local expected_rtc="${table%.rt}.rtc"
             local rtc_found=0
             for rtc_file in "$cur_stage"/*.rtc; do
                 [[ -f "$rtc_file" ]] || continue
-                rsync -a --inplace "$rtc_file" "$RC_RTC_DEST/$expected_rtc"
+                rsync -a --inplace "$rtc_file" "$write_dest/$expected_rtc"
                 rtc_found=1
             done
 
@@ -645,29 +659,43 @@ cmd_lookup() {
         log "Cracked:    $cracked_file"
         log "State:      $RC_STATE_DIR"
 
-        # Auto-detect table format (prefer .rtc)
-        local rtc_count rt_count table_ext
-        rtc_count=$(find "$RC_RTC_DEST" -maxdepth 1 -name '*.rtc' | wc -l)
-        rt_count=$(find "$RC_RTC_DEST" -maxdepth 1 -name '*.rt' | wc -l)
-
+        # Collect tables from primary dest and overflow (if set), dedup by filename
+        local table_ext="rtc"
+        local -A seen_table=()
         local all_tables=()
-        if [[ $rtc_count -gt 0 ]]; then
-            table_ext="rtc"
-            log "Found $rtc_count .rtc tables — using compressed format"
-            mapfile -t all_tables < <(find "$RC_RTC_DEST" -maxdepth 1 -name '*.rtc' -printf '%f\n' | sort)
-        elif [[ $rt_count -gt 0 ]]; then
-            table_ext="rt"
-            log "Found $rt_count .rt tables — using uncompressed format"
-            mapfile -t all_tables < <(find "$RC_RTC_DEST" -maxdepth 1 -name '*.rt' -printf '%f\n' | sort)
-        else
-            die "No .rt or .rtc files found in $RC_RTC_DEST"
-        fi
+        local all_table_dirs=()
+        for scan_dir in "$RC_RTC_DEST" ${RC_RTC_DEST_OVERFLOW:+"$RC_RTC_DEST_OVERFLOW"}; do
+            [[ -d "$scan_dir" ]] || continue
+            local rtc_count rt_count
+            rtc_count=$(find "$scan_dir" -maxdepth 1 -name '*.rtc' | wc -l)
+            rt_count=$(find  "$scan_dir" -maxdepth 1 -name '*.rt'  | wc -l)
+            local ext=""
+            if   [[ $rtc_count -gt 0 ]]; then ext="rtc"
+            elif [[ $rt_count  -gt 0 ]]; then ext="rt"
+            else continue
+            fi
+            log "Scanning $scan_dir: $rtc_count .rtc, $rt_count .rt"
+            while IFS= read -r fname; do
+                if [[ -z "${seen_table[$fname]+x}" ]]; then
+                    seen_table["$fname"]=1
+                    all_tables+=("$fname")
+                    all_table_dirs+=("$scan_dir")
+                fi
+            done < <(find "$scan_dir" -maxdepth 1 -name "*.${ext}" -printf '%f\n' | sort)
+        done
+
+        [[ ${#all_tables[@]} -eq 0 ]] && die "No .rt or .rtc files found in $RC_RTC_DEST${RC_RTC_DEST_OVERFLOW:+ or $RC_RTC_DEST_OVERFLOW}"
 
         load_done "$lookup_done"
 
         local pending=()
-        for t in "${all_tables[@]}"; do
-            [[ -z "${DONE[$t]+x}" ]] && pending+=("$t")
+        local pending_dirs=()
+        for i in "${!all_tables[@]}"; do
+            local t="${all_tables[$i]}"
+            if [[ -z "${DONE[$t]+x}" ]]; then
+                pending+=("$t")
+                pending_dirs+=("${all_table_dirs[$i]}")
+            fi
         done
 
         local num_pending=${#pending[@]}
@@ -685,6 +713,7 @@ cmd_lookup() {
         [[ $end_index -ge $num_pending  ]] && end_index=$((num_pending - 1))
 
         local tables=("${pending[@]:$start_index:$((end_index - start_index + 1))}")
+        local table_dirs=("${pending_dirs[@]:$start_index:$((end_index - start_index + 1))}")
         local num_tables=${#tables[@]}
         local num_batches=$(( (num_tables + RC_LOOKUP_BATCH_SIZE - 1) / RC_LOOKUP_BATCH_SIZE ))
 
@@ -729,7 +758,7 @@ cmd_lookup() {
 
             local copied=0 failed=0
             for ((j=bs; j<=be; j++)); do
-                if rsync -a --inplace "$RC_RTC_DEST/${tables[$j]}" "$stage_dir/"; then
+                if rsync -a --inplace "${table_dirs[$j]}/${tables[$j]}" "$stage_dir/"; then
                     ((copied++)) || true
                 else
                     log "  WARNING: failed to copy ${tables[$j]}"
