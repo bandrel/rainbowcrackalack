@@ -718,11 +718,11 @@ cmd_lookup() {
         log "State:      $RC_STATE_DIR"
 
         # Collect tables from primary dest and overflow (if set), dedup by table key
-        local table_ext="rtc"
         local nested_mode=0
         local -A seen_table=()
         local all_tables=()
         local all_table_dirs=()
+        local all_table_layouts=()
         for scan_dir in "$RC_RTC_DEST" ${RC_RTC_DEST_OVERFLOW:+"$RC_RTC_DEST_OVERFLOW"} ${RC_RTC_DEST_OVERFLOW_2:+"$RC_RTC_DEST_OVERFLOW_2"}; do
             [[ -d "$scan_dir" ]] || continue
             if is_nested_layout "$scan_dir"; then
@@ -735,6 +735,7 @@ cmd_lookup() {
                         seen_table["$idx"]=1
                         all_tables+=("$idx")
                         all_table_dirs+=("$scan_dir")
+                        all_table_layouts+=(1)
                     fi
                 done < <(find "$scan_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -n)
             else
@@ -752,23 +753,26 @@ cmd_lookup() {
                         seen_table["$fname"]=1
                         all_tables+=("$fname")
                         all_table_dirs+=("$scan_dir")
+                        all_table_layouts+=(0)
                     fi
                 done < <(find "$scan_dir" -maxdepth 1 -name "*.${ext}" -printf '%f\n' | sort)
             fi
         done
 
         [[ ${#all_tables[@]} -eq 0 ]] && die "No .rt or .rtc files found in $RC_RTC_DEST${RC_RTC_DEST_OVERFLOW:+ or $RC_RTC_DEST_OVERFLOW}${RC_RTC_DEST_OVERFLOW_2:+ or $RC_RTC_DEST_OVERFLOW_2}"
-        log "Layout: $([ $nested_mode -eq 1 ] && echo 'nested (index subdirs)' || echo 'flat')"
+        log "Layout: $([[ $nested_mode -eq 1 ]] && echo 'nested (index subdirs)' || echo 'flat')"
 
         load_done "$lookup_done"
 
         local pending=()
         local pending_dirs=()
+        local pending_layouts=()
         for i in "${!all_tables[@]}"; do
             local t="${all_tables[$i]}"
             if [[ -z "${DONE[$t]+x}" ]]; then
                 pending+=("$t")
                 pending_dirs+=("${all_table_dirs[$i]}")
+                pending_layouts+=("${all_table_layouts[$i]}")
             fi
         done
 
@@ -788,6 +792,7 @@ cmd_lookup() {
 
         local tables=("${pending[@]:$start_index:$((end_index - start_index + 1))}")
         local table_dirs=("${pending_dirs[@]:$start_index:$((end_index - start_index + 1))}")
+        local table_layouts=("${pending_layouts[@]:$start_index:$((end_index - start_index + 1))}")
         local num_tables=${#tables[@]}
         local num_batches=$(( (num_tables + RC_LOOKUP_BATCH_SIZE - 1) / RC_LOOKUP_BATCH_SIZE ))
 
@@ -818,6 +823,7 @@ cmd_lookup() {
         total_cracked_file="$(mktemp)"
         echo 0 > "$total_cracked_file"
 
+        # Reads nested vars from cmd_lookup scope: nested_mode, table_dirs, table_layouts, num_tables, tables, RC_LOOKUP_BATCH_SIZE, num_batches, table_ext
         copy_batch_to_stage() {
             local batch_num=$1
             local stage_dir=$2
@@ -835,12 +841,16 @@ cmd_lookup() {
                 local key="${tables[$j]}"
                 local ok=0
 
-                if [[ $nested_mode -eq 1 ]]; then
+                if [[ "${table_layouts[$j]}" -eq 1 ]]; then
                     local src_subdir="$src_base/$key"
-                    if rsync -a "$src_subdir/"*.rtc "$stage_dir/" 2>/dev/null; then
+                    local rtc_in_subdir
+                    rtc_in_subdir=$(find "$src_subdir" -maxdepth 1 -name "*.rtc" -type f 2>/dev/null | wc -l)
+                    if [[ $rtc_in_subdir -eq 0 ]]; then
+                        log "  WARNING: $src_subdir has no .rtc files (skipping)"
+                    elif rsync -a "$src_subdir/"*.rtc "$stage_dir/"; then
                         ok=1
                     else
-                        log "  WARNING: failed to copy from $src_subdir/"
+                        log "  WARNING: rsync failed for $src_subdir/"
                     fi
                 else
                     if rsync -a --inplace "$src_base/$key" "$stage_dir/"; then
