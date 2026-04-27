@@ -95,6 +95,14 @@ mark_done() {
     ) 200>"${done_file}.lock"
 }
 
+# is_nested_layout DIR — returns 0 (true) if DIR contains subdirectories with .rtc files
+is_nested_layout() {
+    local dir="$1"
+    local found
+    found=$(find "$dir" -mindepth 2 -maxdepth 2 -name "*.rtc" -type f 2>/dev/null | head -1)
+    [[ -n "$found" ]]
+}
+
 # ---------------------------------------------------------------------------
 # Usage
 # ---------------------------------------------------------------------------
@@ -709,32 +717,48 @@ cmd_lookup() {
         log "Cracked:    $cracked_file"
         log "State:      $RC_STATE_DIR"
 
-        # Collect tables from primary dest and overflow (if set), dedup by filename
+        # Collect tables from primary dest and overflow (if set), dedup by table key
         local table_ext="rtc"
+        local nested_mode=0
         local -A seen_table=()
         local all_tables=()
         local all_table_dirs=()
         for scan_dir in "$RC_RTC_DEST" ${RC_RTC_DEST_OVERFLOW:+"$RC_RTC_DEST_OVERFLOW"} ${RC_RTC_DEST_OVERFLOW_2:+"$RC_RTC_DEST_OVERFLOW_2"}; do
             [[ -d "$scan_dir" ]] || continue
-            local rtc_count rt_count
-            rtc_count=$(find "$scan_dir" -maxdepth 1 -name '*.rtc' | wc -l)
-            rt_count=$(find  "$scan_dir" -maxdepth 1 -name '*.rt'  | wc -l)
-            local ext=""
-            if   [[ $rtc_count -gt 0 ]]; then ext="rtc"
-            elif [[ $rt_count  -gt 0 ]]; then ext="rt"
-            else continue
-            fi
-            log "Scanning $scan_dir: $rtc_count .rtc, $rt_count .rt"
-            while IFS= read -r fname; do
-                if [[ -z "${seen_table[$fname]+x}" ]]; then
-                    seen_table["$fname"]=1
-                    all_tables+=("$fname")
-                    all_table_dirs+=("$scan_dir")
+            if is_nested_layout "$scan_dir"; then
+                nested_mode=1
+                local subdir_count
+                subdir_count=$(find "$scan_dir" -mindepth 1 -maxdepth 1 -type d | wc -l)
+                log "Scanning $scan_dir (nested): $subdir_count index subdirs"
+                while IFS= read -r idx; do
+                    if [[ -z "${seen_table[$idx]+x}" ]]; then
+                        seen_table["$idx"]=1
+                        all_tables+=("$idx")
+                        all_table_dirs+=("$scan_dir")
+                    fi
+                done < <(find "$scan_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -n)
+            else
+                local rtc_count rt_count
+                rtc_count=$(find "$scan_dir" -maxdepth 1 -name '*.rtc' | wc -l)
+                rt_count=$(find  "$scan_dir" -maxdepth 1 -name '*.rt'  | wc -l)
+                local ext=""
+                if   [[ $rtc_count -gt 0 ]]; then ext="rtc"
+                elif [[ $rt_count  -gt 0 ]]; then ext="rt"
+                else continue
                 fi
-            done < <(find "$scan_dir" -maxdepth 1 -name "*.${ext}" -printf '%f\n' | sort)
+                log "Scanning $scan_dir (flat): $rtc_count .rtc, $rt_count .rt"
+                while IFS= read -r fname; do
+                    if [[ -z "${seen_table[$fname]+x}" ]]; then
+                        seen_table["$fname"]=1
+                        all_tables+=("$fname")
+                        all_table_dirs+=("$scan_dir")
+                    fi
+                done < <(find "$scan_dir" -maxdepth 1 -name "*.${ext}" -printf '%f\n' | sort)
+            fi
         done
 
         [[ ${#all_tables[@]} -eq 0 ]] && die "No .rt or .rtc files found in $RC_RTC_DEST${RC_RTC_DEST_OVERFLOW:+ or $RC_RTC_DEST_OVERFLOW}${RC_RTC_DEST_OVERFLOW_2:+ or $RC_RTC_DEST_OVERFLOW_2}"
+        log "Layout: $([ $nested_mode -eq 1 ] && echo 'nested (index subdirs)' || echo 'flat')"
 
         load_done "$lookup_done"
 
@@ -794,7 +818,6 @@ cmd_lookup() {
         total_cracked_file="$(mktemp)"
         echo 0 > "$total_cracked_file"
 
-        # Helper: copy a batch to a stage dir (blocking)
         copy_batch_to_stage() {
             local batch_num=$1
             local stage_dir=$2
@@ -808,17 +831,36 @@ cmd_lookup() {
 
             local copied=0 failed=0
             for ((j=bs; j<=be; j++)); do
-                if rsync -a --inplace "${table_dirs[$j]}/${tables[$j]}" "$stage_dir/"; then
+                local src_base="${table_dirs[$j]}"
+                local key="${tables[$j]}"
+                local ok=0
+
+                if [[ $nested_mode -eq 1 ]]; then
+                    local src_subdir="$src_base/$key"
+                    if rsync -a "$src_subdir/"*.rtc "$stage_dir/" 2>/dev/null; then
+                        ok=1
+                    else
+                        log "  WARNING: failed to copy from $src_subdir/"
+                    fi
+                else
+                    if rsync -a --inplace "$src_base/$key" "$stage_dir/"; then
+                        ok=1
+                    else
+                        log "  WARNING: failed to copy $key"
+                    fi
+                fi
+
+                if (( ok )); then
                     ((copied++)) || true
                 else
-                    log "  WARNING: failed to copy ${tables[$j]}"
                     ((failed++)) || true
                 fi
+
                 if (( copied % 10 == 0 && copied > 0 )); then
-                    log "  Copied $copied/$bc files..."
+                    log "  Copied $copied/$bc tables..."
                 fi
             done
-            log "Batch $((batch_num+1)) copy done: $copied/$bc files"
+            log "Batch $((batch_num+1)) copy done: $copied/$bc tables"
             if (( failed > 0 )); then
                 return 1
             fi
@@ -833,7 +875,7 @@ cmd_lookup() {
             [[ $be -ge $num_tables ]] && be=$((num_tables - 1))
 
             local table_count
-            table_count=$(find "$stage_dir" -maxdepth 1 -name "*.${table_ext}" | wc -l)
+            table_count=$(find "$stage_dir" -maxdepth 1 \( -name "*.rtc" -o -name "*.rt" \) | wc -l)
             log "Lookup batch $((batch_num+1))/$num_batches ($table_count tables in $stage_dir)"
 
             local lookup_start
