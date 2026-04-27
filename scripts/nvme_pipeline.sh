@@ -1088,9 +1088,16 @@ EOF
 
     # Dest totals
     if [[ -n "$RC_RTC_DEST" ]] && [[ -d "$RC_RTC_DEST" ]]; then
-        local rtc_total
-        rtc_total=$(find "$RC_RTC_DEST" -maxdepth 1 -name '*.rtc' | wc -l)
-        echo "RTC dest ($RC_RTC_DEST): $rtc_total .rtc files total"
+        local rtc_flat rtc_subdirs
+        rtc_flat=$(find "$RC_RTC_DEST" -maxdepth 1 -name '*.rtc' | wc -l)
+        rtc_subdirs=$(find "$RC_RTC_DEST" -mindepth 1 -maxdepth 1 -type d | wc -l)
+        if (( rtc_subdirs > 0 )); then
+            local rtc_total
+            rtc_total=$(find "$RC_RTC_DEST" -mindepth 2 -maxdepth 2 -name '*.rtc' | wc -l)
+            echo "RTC dest ($RC_RTC_DEST): $rtc_subdirs index subdirs, $rtc_total .rtc files (nested layout)"
+        else
+            echo "RTC dest ($RC_RTC_DEST): $rtc_flat .rtc files (flat layout)"
+        fi
     fi
 
     echo ""
