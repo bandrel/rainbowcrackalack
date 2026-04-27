@@ -511,7 +511,7 @@ cmd_compact() {
                     done
                 done < <(find "$tdir" -maxdepth 1 -mindepth 1 -type d)
             done
-            (( torrent_marked > 0 )) && log "Marked $torrent_marked tables done from torrent dirs"
+            [[ $torrent_marked -gt 0 ]] && log "Marked $torrent_marked tables done from torrent dirs"
         fi
 
         log "Scanning for pending tables in: $RC_RT_SOURCE"
@@ -823,7 +823,7 @@ cmd_lookup() {
         total_cracked_file="$(mktemp)"
         echo 0 > "$total_cracked_file"
 
-        # Reads nested vars from cmd_lookup scope: nested_mode, table_dirs, table_layouts, num_tables, tables, RC_LOOKUP_BATCH_SIZE, num_batches, table_ext
+        # Reads nested vars from cmd_lookup scope: nested_mode, table_dirs, table_layouts, num_tables, tables, RC_LOOKUP_BATCH_SIZE, num_batches
         copy_batch_to_stage() {
             local batch_num=$1
             local stage_dir=$2
