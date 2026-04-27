@@ -41,6 +41,8 @@ RC_STATE_DIR="${RC_STATE_DIR:-}"
 RC_RTC_DEST_OVERFLOW="${RC_RTC_DEST_OVERFLOW:-}"
 RC_RTC_DEST_OVERFLOW_2="${RC_RTC_DEST_OVERFLOW_2:-}"
 RC_OVERFLOW_MIN_GB="${RC_OVERFLOW_MIN_GB:-400}"
+RC_RT2RTC_FLAGS="${RC_RT2RTC_FLAGS:--s 32 -e 48 -c 512 -p}"
+RC_COMPACT_TORRENT_DIRS="${RC_COMPACT_TORRENT_DIRS:-}"
 
 # ---------------------------------------------------------------------------
 # Shared utilities
@@ -162,6 +164,7 @@ Optional:
   --state-dir DIR    State directory
   --start-index N    First table index (default: 0)
   --end-index N      Last table index (default: all)
+  --torrent-dirs DIRS  Colon-separated dirs with complete torrent .rtc subdirs to skip (RC_COMPACT_TORRENT_DIRS)
   --dry-run
   --config FILE
 EOF
@@ -420,16 +423,17 @@ cmd_compact() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --source)      source="$2";      shift 2 ;;
-            --dest)        dest="$2";        shift 2 ;;
-            --nvme)        nvme="$2";        shift 2 ;;
-            --state-dir)   state_dir="$2";   shift 2 ;;
-            --start-index) start_index="$2"; shift 2 ;;
-            --end-index)   end_index="$2";   shift 2 ;;
-            --dry-run)     dry_run=1;        shift ;;
-            --config)      config_file="$2"; shift 2 ;;
-            --help|-h)     usage_compact ;;
-            *)             die "Unknown flag: $1" ;;
+            --source)         source="$2";                    shift 2 ;;
+            --dest)           dest="$2";                      shift 2 ;;
+            --nvme)           nvme="$2";                      shift 2 ;;
+            --state-dir)      state_dir="$2";                 shift 2 ;;
+            --start-index)    start_index="$2";               shift 2 ;;
+            --end-index)      end_index="$2";                 shift 2 ;;
+            --torrent-dirs)   RC_COMPACT_TORRENT_DIRS="$2";   shift 2 ;;
+            --dry-run)        dry_run=1;                      shift ;;
+            --config)         config_file="$2";               shift 2 ;;
+            --help|-h)        usage_compact ;;
+            *)                die "Unknown flag: $1" ;;
         esac
     done
 
@@ -466,12 +470,45 @@ cmd_compact() {
         log "StageA:   $stage_a"
         log "StageB:   $stage_b"
         log "State:    $RC_STATE_DIR"
+        log "rt2rtc flags: $RC_RT2RTC_FLAGS"
+        [[ -n "$RC_COMPACT_TORRENT_DIRS" ]] && log "Torrent dirs: $RC_COMPACT_TORRENT_DIRS"
 
         load_done "$compact_done"
 
+        # Mark tables as done if their index already has .rtc files in torrent dirs
+        if [[ -n "$RC_COMPACT_TORRENT_DIRS" ]]; then
+            log "Scanning torrent dirs for already-downloaded tables..."
+            local torrent_marked=0
+            IFS=: read -ra torrent_dirs <<< "$RC_COMPACT_TORRENT_DIRS"
+            for tdir in "${torrent_dirs[@]}"; do
+                [[ -d "$tdir" ]] || continue
+                while IFS= read -r idx_dir; do
+                    local idx
+                    idx=$(basename "$idx_dir")
+                    # Find the matching .rt filename for this index
+                    for rt_candidate in "$RC_RT_SOURCE"/*_"${idx}".rt; do
+                        [[ -f "$rt_candidate" ]] || continue
+                        local rt_name
+                        rt_name=$(basename "$rt_candidate")
+                        if [[ -z "${DONE[$rt_name]+x}" ]]; then
+                            # Check that the torrent dir has at least one .rtc file
+                            local rtc_count
+                            rtc_count=$(find "$idx_dir" -maxdepth 1 -name '*.rtc' -type f 2>/dev/null | wc -l)
+                            if (( rtc_count >= 4 )); then
+                                mark_done "$compact_done" "$rt_name"
+                                DONE["$rt_name"]=1
+                                ((torrent_marked++)) || true
+                            fi
+                        fi
+                    done
+                done < <(find "$tdir" -maxdepth 1 -mindepth 1 -type d)
+            done
+            (( torrent_marked > 0 )) && log "Marked $torrent_marked tables done from torrent dirs"
+        fi
+
         log "Scanning for pending tables in: $RC_RT_SOURCE"
         local all_tables=()
-        mapfile -t all_tables < <(find "$RC_RT_SOURCE" -maxdepth 1 -name '*.rt' -printf '%f\n' | sort)
+        mapfile -t all_tables < <(find "$RC_RT_SOURCE" -maxdepth 1 -name '*.rt' -printf '%f\n' | sort -r)
 
         local pending=()
         for t in "${all_tables[@]}"; do
@@ -533,9 +570,14 @@ cmd_compact() {
             log "[$((i+1))/$num_tables] Compressing $table..."
             local comp_start
             comp_start=$(date +%s)
-            (cd "$cur_stage" && "$RC_RT2RTC" "$cur_stage/") 2>&1 | tail -2
+            # shellcheck disable=SC2086
+            (cd "$cur_stage" && "$RC_RT2RTC" "$cur_stage/" $RC_RT2RTC_FLAGS) 2>&1 | tail -2
 
             local comp_secs=$(( $(date +%s) - comp_start ))
+
+            # Extract table index from filename (last _NUM before .rt)
+            local table_index="${table%.rt}"
+            table_index="${table_index##*_}"
 
             # Choose destination — waterfall: primary → overflow → overflow2
             local write_dest="$RC_RTC_DEST"
@@ -555,12 +597,13 @@ cmd_compact() {
                 fi
             fi
 
-            # Move .rtc to destination
-            local expected_rtc="${table%.rt}.rtc"
+            # Move .rtc files to destination subdir (one per table index)
+            local dest_subdir="$write_dest/$table_index"
+            mkdir -p "$dest_subdir"
             local rtc_found=0
             for rtc_file in "$cur_stage"/*.rtc; do
                 [[ -f "$rtc_file" ]] || continue
-                rsync -a --inplace "$rtc_file" "$write_dest/$expected_rtc"
+                rsync -a --inplace "$rtc_file" "$dest_subdir/"
                 rtc_found=1
             done
 
