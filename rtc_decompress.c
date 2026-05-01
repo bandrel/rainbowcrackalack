@@ -119,26 +119,38 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *
   }
   /*printf("s_mask: %"PRIu64"\n", s_mask);*/
 
+  /* Bulk-read all chain bytes in a single I/O call.  Per-chain fread() is
+   * dramatically slower than one bulk read followed by in-memory decode. */
+  size_t chains_bytes = (size_t)num_chains * chain_size;
+  uint8_t *chain_buf = malloc(chains_bytes);
+  if (chain_buf == NULL) {
+    fprintf(stderr, "Error: could not allocate %zu bytes for chain buffer.\n", chains_bytes);
+    ret = -7;
+    goto done;
+  }
+
+  if (fread(chain_buf, 1, chains_bytes, f) != chains_bytes) {
+    fprintf(stderr, "Error while reading chains: %s (%d)\n", strerror(errno), errno);
+    free(chain_buf);
+    ret = -7;
+    goto done;
+  }
+
   for (i = 0; i < num_chains; i++) {
     buf[0] = 0;
     buf[1] = 0;
-    if (fread(buf, chain_size, 1, f) != 1) {
-      fprintf(stderr, "Error while reading chain: %s (%d)\n", strerror(errno), errno);
-      ret = -7;
-      goto done;
-    }
+    memcpy(buf, chain_buf + (size_t)i * chain_size, chain_size);
 
     s = (buf[0] & s_mask) + uIndexSMin;
     e = uIndexEMin + (uIndexEInterval * i) + ((buf[0] >> uIndexSBits) | (buf[1] << (64 - uIndexSBits)));
-
-    /*printf("#%u: %"PRIu64" %"PRIu64"\n", i, buf[0], buf[1]);
-      printf("\t%"PRIu64" %"PRIu64"\n", s, e);*/
 
     uncompressed_table[table_ptr] = s;
     table_ptr++;
     uncompressed_table[table_ptr] = e;
     table_ptr++;
   }
+
+  free(chain_buf);
 
  done:
   if (f != NULL) {
