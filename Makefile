@@ -169,6 +169,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_markov.o \
 	$(OBJDIR)/test_misc.o \
 	$(OBJDIR)/test_sort.o \
+	$(OBJDIR)/test_decompress.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/parallel_sort.o \
