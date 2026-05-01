@@ -174,6 +174,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/parallel_sort.o \
 	$(OBJDIR)/rtc_decompress.o \
+	$(OBJDIR)/rti2_decompress.o \
 	$(OBJDIR)/sort_utils.o \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
