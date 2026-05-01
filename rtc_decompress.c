@@ -33,6 +33,7 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *
   unsigned int chain_size = 0, unused = 0, table_ptr = 0;
   int ret = 0;
   uint64_t *uncompressed_table = NULL;
+  uint8_t *chain_buf = NULL;
 
   unsigned int uVersion = 0;
   unsigned short uIndexSBits = 0;
@@ -122,7 +123,13 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *
   /* Bulk-read all chain bytes in a single I/O call.  Per-chain fread() is
    * dramatically slower than one bulk read followed by in-memory decode. */
   size_t chains_bytes = (size_t)num_chains * chain_size;
-  uint8_t *chain_buf = malloc(chains_bytes);
+  if (chain_size != 0 && chains_bytes / chain_size != num_chains) {
+    fprintf(stderr, "Error: chain byte count overflow (num_chains=%"PRIu64", chain_size=%u).\n",
+            num_chains, chain_size);
+    ret = -7;
+    goto done;
+  }
+  chain_buf = malloc(chains_bytes);
   if (chain_buf == NULL) {
     fprintf(stderr, "Error: could not allocate %zu bytes for chain buffer.\n", chains_bytes);
     ret = -7;
@@ -131,7 +138,6 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *
 
   if (fread(chain_buf, 1, chains_bytes, f) != chains_bytes) {
     fprintf(stderr, "Error while reading chains: %s (%d)\n", strerror(errno), errno);
-    free(chain_buf);
     ret = -7;
     goto done;
   }
@@ -150,12 +156,15 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *
     table_ptr++;
   }
 
-  free(chain_buf);
-
  done:
   if (f != NULL) {
     fclose(f);
     f = NULL;
+  }
+
+  if (chain_buf != NULL) {
+    free(chain_buf);
+    chain_buf = NULL;
   }
 
   /* On error, free the table.  Set the table pointer to NULL along with num_chains to
