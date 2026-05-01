@@ -159,7 +159,8 @@ static char *write_test_rti2(const char *path,
   FILE *f = fopen(path, "wb");
   if (!f) return NULL;
 
-  /* Fixed header (28 bytes packed). */
+  /* Fixed header (34 bytes packed: tag/minor/spb/epb/cpb/fileIndex/files/
+   * minimumStartPoint/chainLength/tableIndex/algorithm/reductionFunction). */
   uint32_t tag = 0x32495452;  /* "RTI2" */
   uint8_t  minor = 0;
   uint8_t  spb = (uint8_t)sp_bits;
@@ -272,8 +273,8 @@ static int test_rti2_basic(void) {
 
 
 static int test_rti2_large(void) {
-  /* 5000 chains, distributed across 4 buckets of 1250 each.
-   * Exercises bulk-read path on a non-trivial file. */
+  /* 800 chains, distributed across 4 buckets of 200 each (capped by
+   * uint8_t prefix_counts). Exercises bulk-read path on a non-trivial file. */
   uint64_t sp_min = 100;
   unsigned int sp_bits = 24;
   unsigned int ep_bits = 28;
