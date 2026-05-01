@@ -227,18 +227,18 @@ typedef struct {
   unsigned int use_filter;
 } preloading_thread_args;
 
-/* Bulk-loaded table array for pipelined lookup.  Supports concurrent
- * loading (background thread) and consumption (search thread). */
+/* Bulk-loaded table queue for pipelined lookup.  Loader thread(s) push
+ * completed tables to the tail; search thread pops from the head and
+ * frees each table after searching it. */
 typedef struct {
-  preloaded_table *tables;   /* Flat array of loaded tables */
-  unsigned int num_loaded;   /* Tables loaded so far (monotonically increasing) */
-  unsigned int num_consumed; /* Tables searched and freed (monotonically increasing) */
-  unsigned int capacity;     /* Allocated array size */
-  uint64_t ram_used;         /* Current RAM usage by live (loaded but not yet freed) tables */
-  uint64_t ram_budget;       /* Max RAM for tables */
-  int loading_complete;      /* Set to 1 when loader thread finishes */
+  preloaded_table *head;          /* Oldest ready table; NULL if queue empty */
+  preloaded_table *tail;          /* Newest ready table; NULL if queue empty */
+  unsigned int cumulative_loaded; /* Total tables ever pushed (for bulk_wait_for_tables) */
+  uint64_t ram_used;              /* Bytes held by tables currently in queue + checked out */
+  uint64_t ram_budget;            /* Max ram_used before loader blocks */
+  int loading_complete;           /* Set to 1 when loader finishes (single-threaded for now) */
   pthread_mutex_t mutex;
-  pthread_cond_t cond;       /* Signaled when tables loaded or freed */
+  pthread_cond_t cond;            /* Signaled when a table is pushed or freed */
 } bulk_table_array;
 
 typedef struct _config_group {
@@ -2340,9 +2340,10 @@ typedef struct {
   bulk_table_array *bta;
 } bulk_loader_args;
 
-/* Background table loader thread.  Loads tables into bta->tables[], respecting
- * the RAM budget.  When the budget is full, waits for tables to be freed by
- * the search thread before loading more.  Signals bta->cond after each load. */
+/* Background table loader thread.  Pushes loaded tables onto the bta queue,
+ * respecting the RAM budget.  When the budget is full, waits for tables to
+ * be freed by the search thread before loading more.  Broadcasts bta->cond
+ * after each push. */
 static void *bulk_loader_thread(void *ptr) {
   bulk_loader_args *args = (bulk_loader_args *)ptr;
   bulk_table_array *bta = args->bta;
@@ -2352,45 +2353,52 @@ static void *bulk_loader_thread(void *ptr) {
     parse_rt_params(&rp, args->all_paths[idx]);
     uint64_t table_bytes = rp.parsed ? rp.num_chains * sizeof(gpu_ulong) * 2 : (uint64_t)1024 * 1024 * 1024;
 
-    /* Wait for enough RAM to be freed by the search thread. */
+    /* Wait for budget room.  Guard: if ram_used == 0 nobody else will free,
+     * so proceed and overshoot rather than deadlock. */
     pthread_mutex_lock(&bta->mutex);
-    while (bta->ram_used + table_bytes > bta->ram_budget && bta->num_loaded > bta->num_consumed) {
+    while (bta->ram_used + table_bytes > bta->ram_budget && bta->ram_used > 0) {
       pthread_cond_wait(&bta->cond, &bta->mutex);
-    }
-
-    /* Grow the array if needed. */
-    if (bta->num_loaded >= bta->capacity) {
-      bta->capacity *= 2;
-      bta->tables = realloc(bta->tables, bta->capacity * sizeof(preloaded_table));
     }
     pthread_mutex_unlock(&bta->mutex);
 
-    preloaded_table *pt = &bta->tables[bta->num_loaded];
-    memset(pt, 0, sizeof(preloaded_table));
+    preloaded_table *pt = calloc(1, sizeof(preloaded_table));
+    if (pt == NULL) {
+      fprintf(stderr, "Warning: out of memory allocating table slot for: %s\n", args->all_paths[idx]);
+      continue;
+    }
 
     if (load_single_table(args->all_paths[idx], pt) != 0) {
       fprintf(stderr, "Warning: skipping unloadable table: %s\n", args->all_paths[idx]);
+      free(pt);
       continue;
     }
 
     uint64_t actual_bytes = pt->num_chains * sizeof(gpu_ulong) * 2;
+    pt->next = NULL;
 
     pthread_mutex_lock(&bta->mutex);
     bta->ram_used += actual_bytes;
-    bta->num_loaded++;
+    if (bta->tail == NULL) {
+      bta->head = pt;
+      bta->tail = pt;
+    } else {
+      bta->tail->next = pt;
+      bta->tail = pt;
+    }
+    bta->cumulative_loaded++;
     printf("  [%u/%u] Loaded %s (%'" PRIu64 " chains, %.1f MB, RAM: %.1f/%.1f GB)\n",
-           bta->num_loaded, args->total_paths, pt->filepath, pt->num_chains,
+           bta->cumulative_loaded, args->total_paths, pt->filepath, pt->num_chains,
            (double)(pt->num_chains * 16) / (1024.0 * 1024.0),
            (double)bta->ram_used / (1024.0 * 1024.0 * 1024.0),
            (double)bta->ram_budget / (1024.0 * 1024.0 * 1024.0));
     fflush(stdout);
-    pthread_cond_signal(&bta->cond);
+    pthread_cond_broadcast(&bta->cond);
     pthread_mutex_unlock(&bta->mutex);
   }
 
   pthread_mutex_lock(&bta->mutex);
   bta->loading_complete = 1;
-  pthread_cond_signal(&bta->cond);
+  pthread_cond_broadcast(&bta->cond);
   pthread_mutex_unlock(&bta->mutex);
 
   return NULL;
@@ -2400,10 +2408,9 @@ static void *bulk_loader_thread(void *ptr) {
 static void bulk_start_loading(char **all_paths, unsigned int total_paths,
                                bulk_table_array *bta, bulk_loader_args *loader_args,
                                pthread_t *loader_tid) {
-  bta->tables = calloc(256, sizeof(preloaded_table));
-  bta->num_loaded = 0;
-  bta->num_consumed = 0;
-  bta->capacity = 256;
+  bta->head = NULL;
+  bta->tail = NULL;
+  bta->cumulative_loaded = 0;
   bta->ram_used = 0;
   bta->ram_budget = get_ram_budget();
   bta->loading_complete = 0;
@@ -2421,58 +2428,66 @@ static void bulk_start_loading(char **all_paths, unsigned int total_paths,
   pthread_create(loader_tid, NULL, bulk_loader_thread, loader_args);
 }
 
-/* Waits until at least `count` tables are loaded (or loading is complete). */
+/* Waits until at least `count` tables have been loaded (or loading is complete). */
 static void bulk_wait_for_tables(bulk_table_array *bta, unsigned int count) {
   pthread_mutex_lock(&bta->mutex);
-  while (bta->num_loaded < count && !bta->loading_complete)
+  while (bta->cumulative_loaded < count && !bta->loading_complete)
     pthread_cond_wait(&bta->cond, &bta->mutex);
   pthread_mutex_unlock(&bta->mutex);
 }
 
-/* Returns the next loaded table for searching, or NULL if all consumed and
- * loading is complete.  Does NOT free the table — call bulk_release_table. */
+/* Returns the next loaded table for searching (popped from queue head),
+ * or NULL if the queue is empty and loading is complete.  Caller owns the
+ * returned pointer and must release it via bulk_release_table. */
 static preloaded_table *bulk_get_next_table(bulk_table_array *bta) {
   pthread_mutex_lock(&bta->mutex);
-  while (bta->num_consumed >= bta->num_loaded && !bta->loading_complete)
+  while (bta->head == NULL && !bta->loading_complete)
     pthread_cond_wait(&bta->cond, &bta->mutex);
 
-  preloaded_table *pt = NULL;
-  if (bta->num_consumed < bta->num_loaded)
-    pt = &bta->tables[bta->num_consumed];
+  preloaded_table *pt = bta->head;
+  if (pt != NULL) {
+    bta->head = pt->next;
+    if (bta->head == NULL) bta->tail = NULL;
+    pt->next = NULL;
+  }
 
   pthread_mutex_unlock(&bta->mutex);
   return pt;
 }
 
-/* Frees a consumed table's data and signals the loader that RAM is available. */
-static void bulk_release_table(bulk_table_array *bta) {
-  pthread_mutex_lock(&bta->mutex);
-  preloaded_table *pt = &bta->tables[bta->num_consumed];
+/* Frees a consumed table's data and signals the loader that RAM is available.
+ * Takes ownership of pt (frees the struct itself, not just its contents). */
+static void bulk_release_table(bulk_table_array *bta, preloaded_table *pt) {
+  if (pt == NULL) return;
+
   uint64_t freed = pt->num_chains * sizeof(gpu_ulong) * 2;
 
   FREE(pt->filepath);
   FREE(pt->rainbow_table);
   if (pt->bf != NULL) { bloom_free(pt->bf); pt->bf = NULL; }
-  pt->num_chains = 0;
 
+  pthread_mutex_lock(&bta->mutex);
   bta->ram_used -= freed;
-  bta->num_consumed++;
-  pthread_cond_signal(&bta->cond);  /* Wake loader — RAM freed. */
+  pthread_cond_broadcast(&bta->cond);  /* Wake loader — RAM freed. */
   pthread_mutex_unlock(&bta->mutex);
+
+  free(pt);
 }
 
-/* Cleanup: join loader thread and free remaining resources. */
+/* Cleanup: join loader thread and free remaining queued tables. */
 static void bulk_cleanup(bulk_table_array *bta, pthread_t loader_tid) {
   pthread_join(loader_tid, NULL);
-  /* Free any tables that were loaded but never consumed. */
-  while (bta->num_consumed < bta->num_loaded) {
-    preloaded_table *pt = &bta->tables[bta->num_consumed];
+  preloaded_table *pt = bta->head;
+  while (pt != NULL) {
+    preloaded_table *next = pt->next;
     FREE(pt->filepath);
     FREE(pt->rainbow_table);
-    if (pt->bf != NULL) { bloom_free(pt->bf); pt->bf = NULL; }
-    bta->num_consumed++;
+    if (pt->bf != NULL) bloom_free(pt->bf);
+    free(pt);
+    pt = next;
   }
-  FREE(bta->tables);
+  bta->head = NULL;
+  bta->tail = NULL;
   pthread_mutex_destroy(&bta->mutex);
   pthread_cond_destroy(&bta->cond);
 }
@@ -2755,7 +2770,7 @@ void pipelined_lookup(char *rt_dir, const rt_parameters *filter,
     num_tables_processed++;
 
     /* Free this table's data immediately — loader can reuse the RAM. */
-    bulk_release_table(&bta);
+    bulk_release_table(&bta, pt);
 
     harvest_false_alarm_results(&fa_state);
     launch_false_alarm_check(*ppi_head, args, &fa_state);
