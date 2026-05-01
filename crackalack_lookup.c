@@ -2088,7 +2088,12 @@ static void preload_collect_paths(const char *rt_dir, char ***paths,
 /* Loads, decompresses, and verifies a single table file, building its bloom
  * filter and appending it to preloaded_table_list.  Honors MAX_PRELOAD_NUM
  * throttling: blocks when too many tables are already queued for the main
- * thread.  Safe to call from multiple worker threads concurrently. */
+ * thread.  Safe to call from multiple worker threads concurrently.
+ *
+ * Note: `time_io +=` updates below are deliberately racy across workers --
+ * the value is display-only (printed once at end of run) and any inaccuracy
+ * is cosmetic.  Synchronizing it would add lock traffic for no functional
+ * benefit. */
 static void load_one_table(const char *filepath, const rt_parameters *filter) {
   gpu_ulong *rainbow_table = NULL;
   uint64_t num_chains = 0;
@@ -2102,7 +2107,6 @@ static void load_one_table(const char *filepath, const rt_parameters *filter) {
       fprintf(stderr, "Error while decompressing RTC table %s: %d\n", filepath, ret);
       exit(-1);
     }
-    /* time_io is racy under workers but only used for display; keep the add. */
     time_io += get_elapsed(&start_time_io);
   } else if (str_ends_with(filepath, ".rti2")) {
     int ret = 0;
@@ -2181,8 +2185,9 @@ static void load_one_table(const char *filepath, const rt_parameters *filter) {
   pt->rainbow_table = rainbow_table;
   pt->num_chains = num_chains;
 
-  /* Per-table bloom filter; bloom_insert is not thread-safe across threads
-   * but we only touch this single filter from one thread. */
+  /* Each worker builds its own table's bloom filter before publishing the
+   * table to the shared list, so no two threads ever touch the same filter
+   * (bloom_insert is not safe for concurrent inserts on a shared filter). */
   pt->bf = bloom_create(num_chains);
   if (pt->bf != NULL) {
     for (uint64_t c = 0; c < num_chains; c++)
@@ -2230,7 +2235,12 @@ static void *table_load_worker(void *ptr) {
 
 
 /* Determine number of worker threads for table loading.
- * Honors $RCRT_LOAD_THREADS if set, else uses min(8, online_cores). */
+ * Honors $RCRT_LOAD_THREADS if set, else uses min(8, online_cores).
+ *
+ * Note: effective load parallelism is bounded by min(this, MAX_PRELOAD_NUM).
+ * Workers block in load_one_table once num_preloaded_tables_available reaches
+ * MAX_PRELOAD_NUM, so increasing thread count beyond that only helps with
+ * overlapping decompress + bloom-build work before the throttle is hit. */
 static unsigned int compute_load_thread_count(void) {
   const char *env = getenv("RCRT_LOAD_THREADS");
   if (env != NULL && *env != '\0') {
@@ -2247,7 +2257,10 @@ static unsigned int compute_load_thread_count(void) {
 
 /* The thread which preloads tables in the background.  Collects all paths
  * up-front, then dispatches a worker pool that decompresses + builds blooms
- * concurrently. */
+ * concurrently.
+ *
+ * Lifetime contract: ta (preloading_thread_args) must remain valid until this
+ * thread joins -- workers read filter via &ta->filter for the entire run. */
 void *preloading_thread(void *ptr) {
   preloading_thread_args *ta = (preloading_thread_args *)ptr;
   char *xrt_dir = ta->rt_dir;
