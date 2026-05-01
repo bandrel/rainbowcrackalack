@@ -223,19 +223,6 @@ struct _preloaded_table {
 };
 typedef struct _preloaded_table preloaded_table;
 
-typedef struct {
-  char *rt_dir;
-  rt_parameters filter;   /* only load tables matching these params when use_filter=1 */
-  unsigned int use_filter;
-} preloading_thread_args;
-
-typedef struct {
-  char **paths;                     /* All discovered table file paths */
-  unsigned int num_paths;
-  unsigned int next_path_idx;       /* Next path for a worker to claim */
-  pthread_mutex_t idx_lock;
-  const rt_parameters *filter;      /* May be NULL */
-} table_load_pool;
 
 /* Bulk-loaded table array for pipelined lookup.  Supports concurrent
  * loading (background thread) and consumption (search thread). */
@@ -267,10 +254,6 @@ void ppi_reset_endpoints(precomputed_and_potential_indices *head);
 void setup_args_for_config(thread_args *args, unsigned int num_devices, const rt_parameters *params);
 void free_loaded_hashes(char **usernames, char **hashes);
 void *host_thread_false_alarm(void *ptr);
-void *preloading_thread(void *ptr);
-static void preload_collect_paths(const char *rt_dir, char ***paths, unsigned int *num_paths, unsigned int *cap);
-static void load_one_table(const char *filepath, const rt_parameters *filter);
-static void *table_load_worker(void *ptr);
 void print_eta_precompute();
 void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filter *bf, precomputed_and_potential_indices *ppi_head);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
@@ -2049,198 +2032,10 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
 }
 
 
-/* Recursively walks rt_dir and appends every .rt/.rtc/.rti2 filepath to *paths
- * (growing the array as needed).  *cap is the current capacity. */
-static void preload_collect_paths(const char *rt_dir, char ***paths,
-                                  unsigned int *num_paths, unsigned int *cap) {
-  DIR *dir = opendir(rt_dir);
-  if (dir == NULL)
-    return;
-
-  struct dirent *de;
-  struct stat st;
-  char filepath[512];
-
-  while ((de = readdir(dir)) != NULL) {
-    filepath_join(filepath, sizeof(filepath), rt_dir, de->d_name);
-
-    if ((strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0)
-        && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
-      preload_collect_paths(filepath, paths, num_paths, cap);
-    } else if (str_ends_with(de->d_name, ".rt") ||
-               str_ends_with(de->d_name, ".rtc") ||
-               str_ends_with(de->d_name, ".rti2")) {
-      if (*num_paths == *cap) {
-        *cap = (*cap == 0) ? 256 : (*cap * 2);
-        *paths = realloc(*paths, (*cap) * sizeof(char *));
-        if (*paths == NULL) {
-          fprintf(stderr, "Error: out of memory growing path list.\n");
-          exit(-1);
-        }
-      }
-      (*paths)[(*num_paths)++] = strdup(filepath);
-    }
-  }
-  closedir(dir);
-}
-
-
-/* Loads, decompresses, and verifies a single table file, building its bloom
- * filter and appending it to preloaded_table_list.  Honors MAX_PRELOAD_NUM
- * throttling: blocks when too many tables are already queued for the main
- * thread.  Safe to call from multiple worker threads concurrently.
- *
- * Note: `time_io +=` updates below are deliberately racy across workers --
- * the value is display-only (printed once at end of run) and any inaccuracy
- * is cosmetic.  Synchronizing it would add lock traffic for no functional
- * benefit. */
-static void load_one_table(const char *filepath, const rt_parameters *filter) {
-  gpu_ulong *rainbow_table = NULL;
-  uint64_t num_chains = 0;
-  unsigned int is_uncompressed_table = 0;
-  struct timespec start_time_io = {0};
-
-  if (str_ends_with(filepath, ".rtc")) {
-    int ret = 0;
-    start_timer(&start_time_io);
-    if ((ret = rtc_decompress((char *)filepath, &rainbow_table, &num_chains)) != 0) {
-      fprintf(stderr, "Error while decompressing RTC table %s: %d\n", filepath, ret);
-      exit(-1);
-    }
-    time_io += get_elapsed(&start_time_io);
-  } else if (str_ends_with(filepath, ".rti2")) {
-    int ret = 0;
-    start_timer(&start_time_io);
-    if ((ret = rti2_decompress((char *)filepath, &rainbow_table, &num_chains)) != 0) {
-      fprintf(stderr, "Error while decompressing RTI2 table %s: %d\n", filepath, ret);
-      exit(-1);
-    }
-    time_io += get_elapsed(&start_time_io);
-  } else {
-    FILE *f = NULL;
-    is_uncompressed_table = 1;
-    start_timer(&start_time_io);
-    f = fopen(filepath, "rb");
-    if (f != NULL) {
-      int64_t file_size = get_file_size(f);
-      if ((file_size % (sizeof(gpu_ulong) * 2) == 0) && (file_size > 0)) {
-        unsigned int num_longs = file_size / sizeof(gpu_ulong);
-        rainbow_table = calloc(num_longs, sizeof(gpu_ulong));
-        if (rainbow_table == NULL) {
-          fprintf(stderr, "Failed to allocate %"PRIu64" bytes for rainbow table!: %s\n",
-                  (uint64_t)(num_longs * sizeof(gpu_ulong)), filepath);
-          exit(-1);
-        }
-        if (fread(rainbow_table, sizeof(gpu_ulong), num_longs, f) != num_longs) {
-          fprintf(stderr, "Error while reading rainbow table: %s\n", strerror(errno));
-          exit(-1);
-        }
-        time_io += get_elapsed(&start_time_io);
-        num_chains = num_longs / 2;
-      } else {
-        fprintf(stderr, "Rainbow table size is not a multiple of %"PRIu64": %"PRId64"\n",
-                (uint64_t)(sizeof(gpu_ulong) * 2), file_size);
-      }
-      FCLOSE(f);
-    } else {
-      fprintf(stderr, "Could not open file for reading: %s", strerror(errno));
-    }
-  }
-
-  if (rainbow_table == NULL)
-    return;
-
-  unsigned int skip_table = 0;
-
-  rt_parameters pt_params = {0};
-  parse_rt_params(&pt_params, (char *)filepath);
-
-  if (filter != NULL) {
-    if (!pt_params.parsed || !configs_match(&pt_params, filter)) {
-      FREE(rainbow_table);
-      skip_table = 1;
-    }
-  }
-
-  if (!skip_table && is_uncompressed_table == 1) {
-    if (!verify_rainbowtable(rainbow_table, num_chains, VERIFY_TABLE_TYPE_LOOKUP, 0, 0, NULL)) {
-      fprintf(stderr,
-              "\nError: %s is not a valid table suitable for lookups!  (Hint: it may not be sorted.)  Skipping...\n\n",
-              filepath); fflush(stderr);
-      FREE(rainbow_table);
-      skip_table = 1;
-    }
-  }
-
-  if (skip_table)
-    return;
-
-  preloaded_table *pt = calloc(1, sizeof(preloaded_table));
-  if (pt == NULL) {
-    printf("Failed to allocate memory for preload_table.\n");
-    exit(-1);
-  }
-
-  pt->filepath = strdup(filepath);
-  pt->rainbow_table = rainbow_table;
-  pt->num_chains = num_chains;
-
-  /* Each worker builds its own table's bloom filter before publishing the
-   * table to the shared list, so no two threads ever touch the same filter
-   * (bloom_insert is not safe for concurrent inserts on a shared filter). */
-  pt->bf = bloom_create(num_chains);
-  if (pt->bf != NULL) {
-    for (uint64_t c = 0; c < num_chains; c++)
-      bloom_insert(pt->bf, rainbow_table[(c * 2) + 1]);
-  }
-
-  pthread_mutex_lock(&preloaded_tables_lock);
-
-  num_preloaded_tables_available++;
-
-  if (preloaded_table_list == NULL) {
-    preloaded_table_list = pt;
-  } else {
-    preloaded_table *ptr = preloaded_table_list;
-    while (ptr->next != NULL)
-      ptr = ptr->next;
-    ptr->next = pt;
-  }
-
-  pthread_cond_signal(&condition_wait_for_tables);
-
-  /* Throttle: if main thread hasn't consumed enough yet, wait. */
-  while (num_preloaded_tables_available >= MAX_PRELOAD_NUM)
-    pthread_cond_wait(&condition_continue_loading_tables, &preloaded_tables_lock);
-
-  pthread_mutex_unlock(&preloaded_tables_lock);
-}
-
-
-static void *table_load_worker(void *ptr) {
-  table_load_pool *pool = (table_load_pool *)ptr;
-
-  for (;;) {
-    pthread_mutex_lock(&pool->idx_lock);
-    if (pool->next_path_idx >= pool->num_paths) {
-      pthread_mutex_unlock(&pool->idx_lock);
-      return NULL;
-    }
-    unsigned int my_idx = pool->next_path_idx++;
-    pthread_mutex_unlock(&pool->idx_lock);
-
-    load_one_table(pool->paths[my_idx], pool->filter);
-  }
-}
-
-
-/* Determine number of worker threads for table loading.
- * Honors $RCRT_LOAD_THREADS if set, else uses min(8, online_cores).
- *
- * Note: effective load parallelism is bounded by min(this, MAX_PRELOAD_NUM).
- * Workers block in load_one_table once num_preloaded_tables_available reaches
- * MAX_PRELOAD_NUM, so increasing thread count beyond that only helps with
- * overlapping decompress + bloom-build work before the throttle is hit. */
+/* Determine number of worker threads for bulk table loading.
+ * Honors $RCRT_LOAD_THREADS (1-64) if set, else uses min(8, online_cores).
+ * Effective parallelism is also bounded by bta->ram_budget -- workers block
+ * once enough tables are in flight to fill the budget. */
 static unsigned int compute_load_thread_count(void) {
   const char *env = getenv("RCRT_LOAD_THREADS");
   if (env != NULL && *env != '\0') {
@@ -2252,86 +2047,6 @@ static unsigned int compute_load_thread_count(void) {
   if (ncores < 1) ncores = 1;
   if (ncores > 8) ncores = 8;
   return (unsigned int)ncores;
-}
-
-
-/* The thread which preloads tables in the background.  Collects all paths
- * up-front, then dispatches a worker pool that decompresses + builds blooms
- * concurrently.
- *
- * Lifetime contract: ta (preloading_thread_args) must remain valid until this
- * thread joins -- workers read filter via &ta->filter for the entire run. */
-void *preloading_thread(void *ptr) {
-  preloading_thread_args *ta = (preloading_thread_args *)ptr;
-  char *xrt_dir = ta->rt_dir;
-  char rt_dir[512];
-  const rt_parameters *filter = ta->use_filter ? &ta->filter : NULL;
-
-  /* Match the original ownership rules: copy heap rt_dir to local buffer, then
-   * free the heap allocation.  Workers receive const char * paths derived from
-   * preload_collect_paths, not from ta->rt_dir, so ta->rt_dir is no longer needed
-   * after the path scan. */
-  memset(rt_dir, 0, sizeof(rt_dir));
-  strncpy(rt_dir, xrt_dir, sizeof(rt_dir) - 1);
-  free(xrt_dir); ta->rt_dir = NULL;
-
-  /* Phase 1: collect all paths. */
-  char **paths = NULL;
-  unsigned int num_paths = 0, cap = 0;
-  preload_collect_paths(rt_dir, &paths, &num_paths, &cap);
-
-  /* Phase 2: dispatch worker pool. */
-  unsigned int num_workers = compute_load_thread_count();
-  if (num_workers > num_paths) num_workers = num_paths;
-  if (num_workers < 1) num_workers = 1;
-
-  if (num_paths == 0) {
-    /* Match existing behavior: signal "loading complete" so main thread doesn't deadlock. */
-    pthread_mutex_lock(&preloaded_tables_lock);
-    table_loading_complete = 1;
-    pthread_cond_broadcast(&condition_wait_for_tables);
-    pthread_mutex_unlock(&preloaded_tables_lock);
-    return NULL;
-  }
-
-  table_load_pool pool = {
-    .paths = paths,
-    .num_paths = num_paths,
-    .next_path_idx = 0,
-    .filter = filter,
-  };
-  pthread_mutex_init(&pool.idx_lock, NULL);
-
-  pthread_t *workers = calloc(num_workers, sizeof(pthread_t));
-  if (workers == NULL) {
-    fprintf(stderr, "Failed to allocate worker thread array.\n");
-    exit(-1);
-  }
-
-  for (unsigned int i = 0; i < num_workers; i++) {
-    if (pthread_create(&workers[i], NULL, table_load_worker, &pool) != 0) {
-      fprintf(stderr, "Failed to create table-load worker %u.\n", i);
-      exit(-1);
-    }
-  }
-
-  for (unsigned int i = 0; i < num_workers; i++)
-    pthread_join(workers[i], NULL);
-
-  free(workers);
-  pthread_mutex_destroy(&pool.idx_lock);
-
-  for (unsigned int i = 0; i < num_paths; i++)
-    free(paths[i]);
-  free(paths);
-
-  /* Signal completion so the main thread stops waiting. */
-  pthread_mutex_lock(&preloaded_tables_lock);
-  table_loading_complete = 1;
-  pthread_cond_broadcast(&condition_wait_for_tables);
-  pthread_mutex_unlock(&preloaded_tables_lock);
-
-  return NULL;
 }
 
 
@@ -2459,57 +2174,135 @@ typedef struct {
   bulk_table_array *bta;
 } bulk_loader_args;
 
-/* Background table loader thread.  Loads tables into bta->tables[], respecting
- * the RAM budget.  When the budget is full, waits for tables to be freed by
- * the search thread before loading more.  Signals bta->cond after each load. */
+/* Shared state for the parallel bulk-load worker pool.  Workers atomically pop
+ * the next path index, load that table outside the lock, then publish the
+ * resulting preloaded_table into bta->tables[] under bta->mutex. */
+typedef struct {
+  char **all_paths;
+  unsigned int total_paths;
+  unsigned int next_path_idx;
+  pthread_mutex_t idx_lock;
+  bulk_table_array *bta;
+} bulk_loader_pool;
+
+/* Worker for the bulk-load thread pool.  Pops paths off the shared queue,
+ * reserves the estimated bytes against the RAM budget, loads the table outside
+ * any lock, then publishes it into bta->tables[].  Adjusts the reservation
+ * to the table's actual size on success, or releases it on failure. */
+static void *bulk_load_worker(void *ptr) {
+  bulk_loader_pool *pool = (bulk_loader_pool *)ptr;
+  bulk_table_array *bta = pool->bta;
+
+  for (;;) {
+    /* Pop the next path index. */
+    pthread_mutex_lock(&pool->idx_lock);
+    if (pool->next_path_idx >= pool->total_paths) {
+      pthread_mutex_unlock(&pool->idx_lock);
+      return NULL;
+    }
+    unsigned int my_idx = pool->next_path_idx++;
+    pthread_mutex_unlock(&pool->idx_lock);
+
+    const char *path = pool->all_paths[my_idx];
+    rt_parameters rp = {0};
+    parse_rt_params(&rp, (char *)path);
+    uint64_t est_bytes = rp.parsed
+        ? rp.num_chains * sizeof(gpu_ulong) * 2
+        : (uint64_t)1024 * 1024 * 1024;
+
+    /* Reserve our estimated bytes against the budget before doing I/O.
+     * Yield if a load would push us past the budget while there are still
+     * unconsumed tables that may free RAM shortly. */
+    pthread_mutex_lock(&bta->mutex);
+    while (bta->ram_used + est_bytes > bta->ram_budget && bta->num_loaded > bta->num_consumed) {
+      pthread_cond_wait(&bta->cond, &bta->mutex);
+    }
+    bta->ram_used += est_bytes;
+    pthread_mutex_unlock(&bta->mutex);
+
+    /* Load outside the lock so multiple workers do I/O + decompression
+     * concurrently. */
+    preloaded_table tmp;
+    memset(&tmp, 0, sizeof(tmp));
+    int rc = load_single_table(path, &tmp);
+
+    pthread_mutex_lock(&bta->mutex);
+    if (rc != 0) {
+      bta->ram_used -= est_bytes;
+      fprintf(stderr, "Warning: skipping unloadable table: %s\n", path);
+      pthread_cond_broadcast(&bta->cond);
+      pthread_mutex_unlock(&bta->mutex);
+      continue;
+    }
+
+    uint64_t actual_bytes = tmp.num_chains * sizeof(gpu_ulong) * 2;
+    /* Replace the estimate with the true cost. */
+    bta->ram_used -= est_bytes;
+    bta->ram_used += actual_bytes;
+
+    /* bta->tables is preallocated to total_paths slots, so no realloc and
+     * no slot shortage.  Workers may publish in any order; consumers binary-
+     * search each table independently, so order doesn't affect correctness. */
+    bta->tables[bta->num_loaded] = tmp;
+    bta->num_loaded++;
+    printf("  [%u/%u] Loaded %s (%'" PRIu64 " chains, %.1f MB, RAM: %.1f/%.1f GB)\n",
+           bta->num_loaded, pool->total_paths, tmp.filepath, tmp.num_chains,
+           (double)(tmp.num_chains * 16) / (1024.0 * 1024.0),
+           (double)bta->ram_used / (1024.0 * 1024.0 * 1024.0),
+           (double)bta->ram_budget / (1024.0 * 1024.0 * 1024.0));
+    fflush(stdout);
+    pthread_cond_broadcast(&bta->cond);
+    pthread_mutex_unlock(&bta->mutex);
+  }
+}
+
+/* Background table loader thread.  Spawns a worker pool that loads tables
+ * into bta->tables[] in parallel, respecting the RAM budget.  When the budget
+ * is full, workers wait for the search thread to free tables before loading
+ * more.  Each successful publish broadcasts on bta->cond. */
 static void *bulk_loader_thread(void *ptr) {
   bulk_loader_args *args = (bulk_loader_args *)ptr;
   bulk_table_array *bta = args->bta;
 
-  for (unsigned int idx = 0; idx < args->total_paths; idx++) {
-    rt_parameters rp = {0};
-    parse_rt_params(&rp, args->all_paths[idx]);
-    uint64_t table_bytes = rp.parsed ? rp.num_chains * sizeof(gpu_ulong) * 2 : (uint64_t)1024 * 1024 * 1024;
-
-    /* Wait for enough RAM to be freed by the search thread. */
+  if (args->total_paths == 0) {
     pthread_mutex_lock(&bta->mutex);
-    while (bta->ram_used + table_bytes > bta->ram_budget && bta->num_loaded > bta->num_consumed) {
-      pthread_cond_wait(&bta->cond, &bta->mutex);
-    }
-
-    /* Grow the array if needed. */
-    if (bta->num_loaded >= bta->capacity) {
-      bta->capacity *= 2;
-      bta->tables = realloc(bta->tables, bta->capacity * sizeof(preloaded_table));
-    }
+    bta->loading_complete = 1;
+    pthread_cond_broadcast(&bta->cond);
     pthread_mutex_unlock(&bta->mutex);
-
-    preloaded_table *pt = &bta->tables[bta->num_loaded];
-    memset(pt, 0, sizeof(preloaded_table));
-
-    if (load_single_table(args->all_paths[idx], pt) != 0) {
-      fprintf(stderr, "Warning: skipping unloadable table: %s\n", args->all_paths[idx]);
-      continue;
-    }
-
-    uint64_t actual_bytes = pt->num_chains * sizeof(gpu_ulong) * 2;
-
-    pthread_mutex_lock(&bta->mutex);
-    bta->ram_used += actual_bytes;
-    bta->num_loaded++;
-    printf("  [%u/%u] Loaded %s (%'" PRIu64 " chains, %.1f MB, RAM: %.1f/%.1f GB)\n",
-           bta->num_loaded, args->total_paths, pt->filepath, pt->num_chains,
-           (double)(pt->num_chains * 16) / (1024.0 * 1024.0),
-           (double)bta->ram_used / (1024.0 * 1024.0 * 1024.0),
-           (double)bta->ram_budget / (1024.0 * 1024.0 * 1024.0));
-    fflush(stdout);
-    pthread_cond_signal(&bta->cond);
-    pthread_mutex_unlock(&bta->mutex);
+    return NULL;
   }
+
+  unsigned int num_workers = compute_load_thread_count();
+  if (num_workers > args->total_paths) num_workers = args->total_paths;
+  if (num_workers < 1) num_workers = 1;
+
+  bulk_loader_pool pool = {
+    .all_paths = args->all_paths,
+    .total_paths = args->total_paths,
+    .next_path_idx = 0,
+    .bta = bta,
+  };
+  pthread_mutex_init(&pool.idx_lock, NULL);
+
+  pthread_t *workers = calloc(num_workers, sizeof(pthread_t));
+  if (workers == NULL) {
+    fprintf(stderr, "Failed to allocate worker thread array.\n");
+    exit(-1);
+  }
+  for (unsigned int i = 0; i < num_workers; i++) {
+    if (pthread_create(&workers[i], NULL, bulk_load_worker, &pool) != 0) {
+      fprintf(stderr, "Failed to create bulk-load worker %u.\n", i);
+      exit(-1);
+    }
+  }
+  for (unsigned int i = 0; i < num_workers; i++)
+    pthread_join(workers[i], NULL);
+  free(workers);
+  pthread_mutex_destroy(&pool.idx_lock);
 
   pthread_mutex_lock(&bta->mutex);
   bta->loading_complete = 1;
-  pthread_cond_signal(&bta->cond);
+  pthread_cond_broadcast(&bta->cond);
   pthread_mutex_unlock(&bta->mutex);
 
   return NULL;
@@ -2519,10 +2312,13 @@ static void *bulk_loader_thread(void *ptr) {
 static void bulk_start_loading(char **all_paths, unsigned int total_paths,
                                bulk_table_array *bta, bulk_loader_args *loader_args,
                                pthread_t *loader_tid) {
-  bta->tables = calloc(256, sizeof(preloaded_table));
+  /* Preallocate exact number of slots so workers can publish without realloc.
+   * (A concurrent realloc would dangle pointers held by bulk_get_next_table.) */
+  unsigned int alloc_slots = total_paths > 0 ? total_paths : 1;
+  bta->tables = calloc(alloc_slots, sizeof(preloaded_table));
   bta->num_loaded = 0;
   bta->num_consumed = 0;
-  bta->capacity = 256;
+  bta->capacity = alloc_slots;
   bta->ram_used = 0;
   bta->ram_budget = get_ram_budget();
   bta->loading_complete = 0;
@@ -2576,7 +2372,7 @@ static void bulk_release_table(bulk_table_array *bta) {
 
   bta->ram_used -= freed;
   bta->num_consumed++;
-  pthread_cond_signal(&bta->cond);  /* Wake loader — RAM freed. */
+  pthread_cond_broadcast(&bta->cond);  /* Wake all loader workers — RAM freed. */
   pthread_mutex_unlock(&bta->mutex);
 }
 
@@ -3323,9 +3119,6 @@ int main(int ac, char **av) {
   gpu_uint num_platforms = 0, num_devices = 0;
 
   precomputed_and_potential_indices *ppi_head = NULL, *ppi_cur = NULL;
-
-  pthread_t preload_thread_id = {0};
-  preloading_thread_args preload_thread_args = {0};
 
 
   ENABLE_CONSOLE_COLOR();
