@@ -27,17 +27,24 @@
 #include <sys/sysinfo.h>
 #endif
 
+#include <assert.h>
 #include <dirent.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <locale.h>
 #include <pthread.h>
 #include "compat.h"
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
+
+/* Maximum loader threads cap.  Auto-detect picks min(nproc/2, this). */
+#define MAX_LOADER_THREADS 8
 
 #include "gpu_backend.h"
 
@@ -227,7 +234,7 @@ typedef struct {
   unsigned int use_filter;
 } preloading_thread_args;
 
-/* Bulk-loaded table queue for pipelined lookup.  Loader thread(s) push
+/* Bulk-loaded table queue for pipelined lookup.  Loader threads push
  * completed tables to the tail; search thread pops from the head and
  * frees each table after searching it. */
 typedef struct {
@@ -235,10 +242,17 @@ typedef struct {
   preloaded_table *tail;          /* Newest ready table; NULL if queue empty */
   unsigned int cumulative_loaded; /* Total tables ever pushed (for bulk_wait_for_tables) */
   uint64_t ram_used;              /* Bytes held by tables currently in queue + checked out */
-  uint64_t ram_budget;            /* Max ram_used before loader blocks */
-  int loading_complete;           /* Set to 1 when loader finishes (single-threaded for now) */
+  uint64_t ram_budget;            /* Max ram_used before workers block */
+  bool load_error;                /* Sticky: set by first failing worker */
   pthread_mutex_t mutex;
-  pthread_cond_t cond;            /* Signaled when a table is pushed or freed */
+  pthread_cond_t ram_avail_cv;    /* Workers wait here when over budget */
+  pthread_cond_t ready_cv;        /* Consumer waits here when queue empty */
+
+  /* Parallel loader state */
+  atomic_int next_idx;            /* Next path index to claim (atomic_fetch_add) */
+  atomic_int active_workers;      /* Workers still alive; 0 means no more tables coming */
+  int num_loader_threads;         /* Number of pthreads spawned */
+  pthread_t loaders[MAX_LOADER_THREADS];
 } bulk_table_array;
 
 typedef struct _config_group {
@@ -2340,44 +2354,89 @@ typedef struct {
   bulk_table_array *bta;
 } bulk_loader_args;
 
-/* Background table loader thread.  Pushes loaded tables onto the bta queue,
- * respecting the RAM budget.  When the budget is full, waits for tables to
- * be freed by the search thread before loading more.  Broadcasts bta->cond
- * after each push. */
+/* Reserve `bytes` from the RAM budget.  Blocks until budget allows OR
+ * ram_used == 0 (deadlock guard for single-table-exceeds-budget case).
+ * Caller must NOT hold bta->mutex. */
+static void bulk_reserve_ram(bulk_table_array *bta, uint64_t bytes) {
+  pthread_mutex_lock(&bta->mutex);
+  while (!bta->load_error
+         && bta->ram_used + bytes > bta->ram_budget
+         && bta->ram_used > 0) {
+    pthread_cond_wait(&bta->ram_avail_cv, &bta->mutex);
+  }
+  bta->ram_used += bytes;
+  /* If the deadlock-guard escape hatch did not fire, we must not exceed budget. */
+  assert(bta->ram_used <= bta->ram_budget || (bta->ram_used == bytes && bytes > bta->ram_budget));
+  pthread_mutex_unlock(&bta->mutex);
+}
+
+/* Hand `bytes` back to the RAM budget and wake any blocked workers. */
+static void bulk_release_ram(bulk_table_array *bta, uint64_t bytes) {
+  pthread_mutex_lock(&bta->mutex);
+  assert(bta->ram_used >= bytes);
+  bta->ram_used -= bytes;
+  pthread_cond_broadcast(&bta->ram_avail_cv);
+  pthread_mutex_unlock(&bta->mutex);
+}
+
+/* Background table loader worker.  Each thread claims the next path via an
+ * atomic counter and runs the full read+verify+bloom pipeline for one table
+ * before pushing it to the ready queue.  RAM budget is enforced via
+ * bulk_reserve_ram. */
 static void *bulk_loader_thread(void *ptr) {
   bulk_loader_args *args = (bulk_loader_args *)ptr;
   bulk_table_array *bta = args->bta;
 
-  for (unsigned int idx = 0; idx < args->total_paths; idx++) {
+  for (;;) {
+    /* Bail if any worker has flagged an error. */
+    pthread_mutex_lock(&bta->mutex);
+    bool err = bta->load_error;
+    pthread_mutex_unlock(&bta->mutex);
+    if (err) break;
+
+    /* Claim the next path. */
+    int idx = atomic_fetch_add(&bta->next_idx, 1);
+    if ((unsigned int)idx >= args->total_paths) break;
+
+    /* Compute the in-RAM footprint from the filename (no I/O). */
     rt_parameters rp = {0};
     parse_rt_params(&rp, args->all_paths[idx]);
     uint64_t table_bytes = rp.parsed ? rp.num_chains * sizeof(gpu_ulong) * 2 : (uint64_t)1024 * 1024 * 1024;
 
-    /* Wait for budget room.  Guard: if ram_used == 0 nobody else will free,
-     * so proceed and overshoot rather than deadlock. */
-    pthread_mutex_lock(&bta->mutex);
-    while (bta->ram_used + table_bytes > bta->ram_budget && bta->ram_used > 0) {
-      pthread_cond_wait(&bta->cond, &bta->mutex);
-    }
-    pthread_mutex_unlock(&bta->mutex);
+    /* Reserve budget (may block on ram_avail_cv). */
+    bulk_reserve_ram(bta, table_bytes);
 
+    /* Allocate, load + verify + bloom. */
     preloaded_table *pt = calloc(1, sizeof(preloaded_table));
-    if (pt == NULL) {
-      fprintf(stderr, "Warning: out of memory allocating table slot for: %s\n", args->all_paths[idx]);
-      continue;
-    }
-
-    if (load_single_table(args->all_paths[idx], pt) != 0) {
+    int load_failed = (pt == NULL);
+    if (!load_failed && load_single_table(args->all_paths[idx], pt) != 0) {
       fprintf(stderr, "Warning: skipping unloadable table: %s\n", args->all_paths[idx]);
       free(pt);
+      pt = NULL;
+      load_failed = 1;
+    }
+
+    if (load_failed) {
+      /* Hand the budget back; this is a soft skip, not a fatal error
+       * (matches the pre-parallel behavior). */
+      bulk_release_ram(bta, table_bytes);
       continue;
     }
 
     uint64_t actual_bytes = pt->num_chains * sizeof(gpu_ulong) * 2;
     pt->next = NULL;
 
+    /* Reconcile reservation with actual size (small skew possible if
+     * parse_rt_params disagrees with the file). */
+    if (actual_bytes != table_bytes) {
+      pthread_mutex_lock(&bta->mutex);
+      bta->ram_used += (int64_t)actual_bytes - (int64_t)table_bytes;
+      pthread_cond_broadcast(&bta->ram_avail_cv);
+      pthread_mutex_unlock(&bta->mutex);
+    }
+
+    /* Push to ready queue. */
     pthread_mutex_lock(&bta->mutex);
-    bta->ram_used += actual_bytes;
     if (bta->tail == NULL) {
       bta->head = pt;
       bta->tail = pt;
@@ -2392,57 +2451,97 @@ static void *bulk_loader_thread(void *ptr) {
            (double)bta->ram_used / (1024.0 * 1024.0 * 1024.0),
            (double)bta->ram_budget / (1024.0 * 1024.0 * 1024.0));
     fflush(stdout);
-    pthread_cond_broadcast(&bta->cond);
+    pthread_cond_broadcast(&bta->ready_cv);
     pthread_mutex_unlock(&bta->mutex);
   }
 
+  /* Worker exit: decrement liveness and wake the consumer. */
+  int remaining = atomic_fetch_sub(&bta->active_workers, 1) - 1;
+  assert(remaining >= 0);
   pthread_mutex_lock(&bta->mutex);
-  bta->loading_complete = 1;
-  pthread_cond_broadcast(&bta->cond);
+  pthread_cond_broadcast(&bta->ready_cv);
+  pthread_cond_broadcast(&bta->ram_avail_cv);
   pthread_mutex_unlock(&bta->mutex);
-
   return NULL;
 }
 
-/* Initializes a bulk_table_array and starts the background loader thread. */
+/* Returns the desired number of loader threads: min(nproc/2, MAX_LOADER_THREADS),
+ * further capped at total_paths.  Falls back to 8 if nproc detection fails. */
+static int compute_loader_thread_count(unsigned int total_paths) {
+  int nproc = 0;
+#if defined(_SC_NPROCESSORS_ONLN)
+  long n = sysconf(_SC_NPROCESSORS_ONLN);
+  if (n > 0) nproc = (int)n;
+#endif
+  if (nproc <= 0) nproc = 8;  /* sensible default if detection fails */
+
+  int threads = nproc / 2;
+  if (threads < 1) threads = 1;
+  if (threads > MAX_LOADER_THREADS) threads = MAX_LOADER_THREADS;
+  if ((unsigned int)threads > total_paths) threads = (int)total_paths;
+  if (threads < 1) threads = 1;
+  return threads;
+}
+
+/* Initializes a bulk_table_array and starts the N background loader threads.
+ * Note: the loader_tid argument is unused now (kept in signature for caller
+ * compatibility; threads live in bta->loaders[]). */
 static void bulk_start_loading(char **all_paths, unsigned int total_paths,
                                bulk_table_array *bta, bulk_loader_args *loader_args,
                                pthread_t *loader_tid) {
+  (void)loader_tid;
+
   bta->head = NULL;
   bta->tail = NULL;
   bta->cumulative_loaded = 0;
   bta->ram_used = 0;
   bta->ram_budget = get_ram_budget();
-  bta->loading_complete = 0;
+  bta->load_error = false;
   pthread_mutex_init(&bta->mutex, NULL);
-  pthread_cond_init(&bta->cond, NULL);
+  pthread_cond_init(&bta->ram_avail_cv, NULL);
+  pthread_cond_init(&bta->ready_cv, NULL);
 
-  printf("\nLoading tables into RAM (budget: %.1f GB, processing starts at 50%%)...\n",
-         (double)bta->ram_budget / (1024.0 * 1024.0 * 1024.0));
+  atomic_init(&bta->next_idx, 0);
+  bta->num_loader_threads = compute_loader_thread_count(total_paths);
+  atomic_init(&bta->active_workers, bta->num_loader_threads);
+
+  printf("\nLoading tables into RAM (budget: %.1f GB, %d loader threads, processing starts at 50%%)...\n",
+         (double)bta->ram_budget / (1024.0 * 1024.0 * 1024.0),
+         bta->num_loader_threads);
   fflush(stdout);
 
   loader_args->all_paths = all_paths;
   loader_args->total_paths = total_paths;
   loader_args->bta = bta;
 
-  pthread_create(loader_tid, NULL, bulk_loader_thread, loader_args);
+  for (int i = 0; i < bta->num_loader_threads; i++) {
+    if (pthread_create(&bta->loaders[i], NULL, bulk_loader_thread, loader_args) != 0) {
+      fprintf(stderr, "FATAL: pthread_create failed for loader %d\n", i);
+      exit(1);
+    }
+  }
 }
 
-/* Waits until at least `count` tables have been loaded (or loading is complete). */
+/* Waits until at least `count` tables have been pushed (or all loaders exited). */
 static void bulk_wait_for_tables(bulk_table_array *bta, unsigned int count) {
   pthread_mutex_lock(&bta->mutex);
-  while (bta->cumulative_loaded < count && !bta->loading_complete)
-    pthread_cond_wait(&bta->cond, &bta->mutex);
+  while (bta->cumulative_loaded < count
+         && atomic_load(&bta->active_workers) > 0
+         && !bta->load_error) {
+    pthread_cond_wait(&bta->ready_cv, &bta->mutex);
+  }
   pthread_mutex_unlock(&bta->mutex);
 }
 
 /* Returns the next loaded table for searching (popped from queue head),
- * or NULL if the queue is empty and loading is complete.  Caller owns the
- * returned pointer and must release it via bulk_release_table. */
+ * or NULL when the queue is empty AND all loaders have exited. */
 static preloaded_table *bulk_get_next_table(bulk_table_array *bta) {
   pthread_mutex_lock(&bta->mutex);
-  while (bta->head == NULL && !bta->loading_complete)
-    pthread_cond_wait(&bta->cond, &bta->mutex);
+  while (bta->head == NULL
+         && atomic_load(&bta->active_workers) > 0
+         && !bta->load_error) {
+    pthread_cond_wait(&bta->ready_cv, &bta->mutex);
+  }
 
   preloaded_table *pt = bta->head;
   if (pt != NULL) {
@@ -2466,17 +2565,19 @@ static void bulk_release_table(bulk_table_array *bta, preloaded_table *pt) {
   FREE(pt->rainbow_table);
   if (pt->bf != NULL) { bloom_free(pt->bf); pt->bf = NULL; }
 
-  pthread_mutex_lock(&bta->mutex);
-  bta->ram_used -= freed;
-  pthread_cond_broadcast(&bta->cond);  /* Wake loader — RAM freed. */
-  pthread_mutex_unlock(&bta->mutex);
+  bulk_release_ram(bta, freed);
 
   free(pt);
 }
 
-/* Cleanup: join loader thread and free remaining queued tables. */
+/* Cleanup: join all loader threads and free remaining queued tables.
+ * The loader_tid argument is unused (threads are tracked in bta->loaders[]). */
 static void bulk_cleanup(bulk_table_array *bta, pthread_t loader_tid) {
-  pthread_join(loader_tid, NULL);
+  (void)loader_tid;
+
+  for (int i = 0; i < bta->num_loader_threads; i++)
+    pthread_join(bta->loaders[i], NULL);
+
   preloaded_table *pt = bta->head;
   while (pt != NULL) {
     preloaded_table *next = pt->next;
@@ -2489,7 +2590,8 @@ static void bulk_cleanup(bulk_table_array *bta, pthread_t loader_tid) {
   bta->head = NULL;
   bta->tail = NULL;
   pthread_mutex_destroy(&bta->mutex);
-  pthread_cond_destroy(&bta->cond);
+  pthread_cond_destroy(&bta->ram_avail_cv);
+  pthread_cond_destroy(&bta->ready_cv);
 }
 
 
