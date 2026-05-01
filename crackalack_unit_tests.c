@@ -45,6 +45,7 @@
 #include "test_markov.h"
 #include "test_misc.h"
 #include "test_sort.h"
+#include "test_decompress.h"
 #include "version.h"
 
 
@@ -137,6 +138,16 @@ int main(int ac, char **av) {
   /* Sort utility tests (CPU-only, no kernel needed). */
   printf("Running sort utility tests... "); fflush(stdout);
   if (!test_sort()) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+
+  /* Decompression tests (CPU-only, no kernel needed). */
+  printf("Running decompress tests... "); fflush(stdout);
+  if (!test_decompress()) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
