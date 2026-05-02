@@ -79,6 +79,7 @@ int rti2_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t 
   int ret = 0;
   uint64_t *uncompressed_table = NULL;
   uint8_t *prefix_counts = NULL;
+  uint8_t *chain_buf = NULL;
 
   *ret_uncompressed_table = NULL;
   *ret_num_chains = 0;
@@ -180,21 +181,35 @@ int rti2_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t 
   uint64_t spMask = ((uint64_t)1 << hdr.startPointBits) - 1;
   uint32_t spShift = hdr.endPointBits;
 
+  /* Bulk-read all chain rows in a single I/O.  Avoids one fread() per chain. */
+  size_t chains_bytes = (size_t)num_chains * chainSizeBytes;
+  if (chainSizeBytes != 0 && chains_bytes / chainSizeBytes != num_chains) {
+    fprintf(stderr, "Error: RTI2 chain byte count overflow (num_chains=%"PRIu64", chainSizeBytes=%u).\n",
+            num_chains, chainSizeBytes);
+    ret = -13; goto done;
+  }
+
+  chain_buf = malloc(chains_bytes);
+  if (chain_buf == NULL) {
+    fprintf(stderr, "Error allocating %zu bytes for RTI2 chain buffer.\n", chains_bytes);
+    ret = -13; goto done;
+  }
+
+  if (fread(chain_buf, 1, chains_bytes, f) != chains_bytes) {
+    fprintf(stderr, "Error reading RTI2 chain data: %s\n", filename);
+    ret = -13; goto done;
+  }
+
   uint64_t table_idx = 0;
-  uint8_t buf[8] = {0};
+  size_t buf_off = 0;
 
   for (uint32_t p = 0; p < numPrefixIndexes; p++) {
     uint64_t epPrefix = (firstPrefix + p) << hdr.endPointBits;
 
     for (uint8_t c = 0; c < prefix_counts[p]; c++) {
-      memset(buf, 0, sizeof(buf));
-      if (fread(buf, chainSizeBytes, 1, f) != 1) {
-        fprintf(stderr, "Error reading chain data at chain %"PRIu64": %s\n", table_idx, filename);
-        ret = -13; goto done;
-      }
-
       uint64_t chainrow = 0;
-      memcpy(&chainrow, buf, chainSizeBytes);
+      memcpy(&chainrow, chain_buf + buf_off, chainSizeBytes);
+      buf_off += chainSizeBytes;
 
       uint64_t ep = epPrefix | (chainrow & epMask);
       uint64_t sp = ((chainrow >> spShift) & spMask) + hdr.minimumStartPoint;
@@ -208,6 +223,10 @@ int rti2_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t 
 done:
   if (prefix_counts != NULL)
     free(prefix_counts);
+  if (chain_buf != NULL) {
+    free(chain_buf);
+    chain_buf = NULL;
+  }
   if (f != NULL)
     fclose(f);
   if (ret != 0 && uncompressed_table != NULL) {
