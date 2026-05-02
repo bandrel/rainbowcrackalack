@@ -87,10 +87,10 @@ phase_prepare() {
     # Stage table subset: pick PARTS files from the two lowest-numbered subdirs.
     if [[ -z "$(ls -A "$BENCH_TABLES")" ]]; then
         log "staging $PARTS table parts from $TABLE_SOURCE"
-        local subdirs
-        subdirs=$(ls -1 "$TABLE_SOURCE" | sort -n | head -2)
+        local -a subdirs
+        mapfile -t subdirs < <(ls -1 "$TABLE_SOURCE" | sort -n | head -2)
         local count=0
-        for sd in $subdirs; do
+        for sd in "${subdirs[@]}"; do
             for f in "$TABLE_SOURCE/$sd"/*.rtc; do
                 [[ -f "$f" ]] || continue
                 ln -sf "$f" "$BENCH_TABLES/$(basename "$f")"
@@ -108,12 +108,14 @@ phase_prepare() {
     mkdir -p "$smoke_dir"
     ln -sf "$(readlink -f "$BENCH_TABLES"/*.rtc | head -1)" "$smoke_dir/" 2>/dev/null || \
         cp -l "$(ls "$BENCH_TABLES"/*.rtc | head -1)" "$smoke_dir/" 2>/dev/null || true
-    if ! timeout 30 "$BLURBDUST_DIR/crackalack_lookup" "$smoke_dir" \
-            "$BENCH_HASHES" >/dev/null 2>&1; then
-        local rc=$?
-        if [[ "$rc" -ne 124 && "$rc" -ne 0 ]]; then
-            log "WARN: blurbdust smoke test exited $rc — investigate before running full bench"
-        fi
+    if ! compgen -G "$smoke_dir/*.rtc" >/dev/null; then
+        log "ERROR: could not stage any .rtc file into smoke_dir"; exit 1
+    fi
+    local rc=0
+    timeout 30 "$BLURBDUST_DIR/crackalack_lookup" "$smoke_dir" \
+        "$BENCH_HASHES" >/dev/null 2>&1 || rc=$?
+    if [[ "$rc" -ne 0 && "$rc" -ne 124 ]]; then
+        log "WARN: blurbdust smoke test exited $rc — investigate before running full bench"
     fi
 
     log "PREPARE done."
@@ -196,7 +198,7 @@ phase_run() {
     done
 
     log "RUN done. Results at $results_dir"
-}       # filled in Task 4
+}
 phase_report() {
     local stamp
     stamp=$(cat "$BENCH_ROOT/bench_results/LATEST" 2>/dev/null || echo "")
@@ -209,10 +211,10 @@ phase_report() {
 
     # Build meta JSON from provenance.txt.
     local meta_json
-    meta_json=$("$BENCH_VENV/bin/python3" - <<EOF
+    meta_json=$(PROVENANCE_PATH="$results_dir/provenance.txt" "$BENCH_VENV/bin/python3" - <<'EOF'
 import json, os, sys
 meta = {}
-with open("$results_dir/provenance.txt") as f:
+with open(os.environ["PROVENANCE_PATH"]) as f:
     for line in f:
         line = line.strip()
         if not line or line.startswith("#"):
