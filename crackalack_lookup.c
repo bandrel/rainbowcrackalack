@@ -2368,7 +2368,7 @@ static void bulk_start_loading(char **all_paths, unsigned int total_paths,
   pthread_mutex_init(&bta->mutex, NULL);
   pthread_cond_init(&bta->cond, NULL);
 
-  printf("\nLoading tables into RAM (budget: %.1f GB, processing starts at 50%%)...\n",
+  printf("\nLoading tables into RAM (budget: %.1f GB)...\n",
          (double)bta->ram_budget / (1024.0 * 1024.0 * 1024.0));
   fflush(stdout);
 
@@ -2604,21 +2604,8 @@ void pipelined_lookup(char *rt_dir, const rt_parameters *filter,
   pthread_t loader_tid;
   bulk_start_loading(all_paths, total_paths, &bta, &loader_args, &loader_tid);
 
-  /* Wait until half the RAM budget is loaded (or loading finishes early). */
-  unsigned int half_budget_tables = 0;
-  {
-    /* Estimate tables that fit in half the budget. */
-    rt_parameters rp = {0};
-    parse_rt_params(&rp, all_paths[0]);
-    uint64_t est_table_bytes = rp.parsed ? rp.num_chains * sizeof(gpu_ulong) * 2 : (uint64_t)1024 * 1024 * 1024;
-    half_budget_tables = (unsigned int)(bta.ram_budget / 2 / est_table_bytes);
-    if (half_budget_tables > total_paths) half_budget_tables = total_paths;
-    if (half_budget_tables < 1) half_budget_tables = 1;
-  }
-
-  printf("Waiting for %u tables to load before starting precompute...\n", half_budget_tables);
-  fflush(stdout);
-  bulk_wait_for_tables(&bta, half_budget_tables);
+  /* Wait for at least one table to start precompute (pipeline overlap). */
+  bulk_wait_for_tables(&bta, 1);
 
   /* Collect uncracked hashes. */
   unsigned int num_uncracked = 0;
@@ -3020,7 +3007,7 @@ void gpu_binary_search(preloaded_table *pt, precomputed_and_potential_indices *p
     ppi_cur = ppi_cur->next;
   }
 
-  if (total_end_indices < 2) {
+  if (total_end_indices < 2 || pt->num_chains == 0) {
     rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
     return;
   }
@@ -3031,94 +3018,99 @@ void gpu_binary_search(preloaded_table *pt, precomputed_and_potential_indices *p
     gpu_program program = NULL;
     gpu_kernel kernel = NULL;
 
-    load_kernel(ctx, 1, &args[0].gpu.device, GPU_BINARY_SEARCH_KERNEL_PATH,
-                "gpu_binary_search", &program, &kernel,
-                (num_devices > 0) ? args[0].hash_type : HASH_NTLM);
-    if (program != NULL && kernel != NULL) {
-      gpu_queue q = (queue != NULL) ? queue : args[0].gpu.queue;
-      if (q != NULL) {
-        gpu_ulong *input_buf = malloc(total_end_indices * sizeof(gpu_ulong));
-        gpu_uint *h_counts = calloc(total_end_indices, sizeof(gpu_uint));
-        gpu_ulong *h_results = calloc(total_end_indices * 256, sizeof(gpu_ulong));
-        unsigned int input_offset = 0;
+    /* Guard: avoid GPU kernel divide-by-zero if bloom filter is empty. */
+    if (pt->bf_num_bits == 0 || pt->bf_mask == 0) {
+      /* Fall through to CPU fallback. */
+    } else {
+      load_kernel(ctx, 1, &args[0].gpu.device, GPU_BINARY_SEARCH_KERNEL_PATH,
+                  "gpu_binary_search", &program, &kernel,
+                  (num_devices > 0) ? args[0].hash_type : HASH_NTLM);
+      if (program != NULL && kernel != NULL) {
+        gpu_queue q = (queue != NULL) ? queue : args[0].gpu.queue;
+        if (q != NULL) {
+          gpu_ulong *input_buf = malloc(total_end_indices * sizeof(gpu_ulong));
+          gpu_uint *h_counts = calloc(total_end_indices, sizeof(gpu_uint));
+          gpu_ulong *h_results = calloc(total_end_indices * 256, sizeof(gpu_ulong));
+          unsigned int input_offset = 0;
 
-        if (input_buf && h_counts && h_results) {
-          /* Pack all end indices into a contiguous buffer. */
-          ppi_cur = ppi_head;
-          while (ppi_cur != NULL) {
-            if (ppi_cur->plaintext == NULL) {
-              memcpy(input_buf + input_offset,
-                     ppi_cur->precomputed_end_indices,
-                     ppi_cur->num_precomputed_end_indices * sizeof(gpu_ulong));
-              input_offset += ppi_cur->num_precomputed_end_indices;
-            }
-            ppi_cur = ppi_cur->next;
-          }
-
-          gpu_buffer input_gpu = rc_clCreateBuffer(ctx, GPU_RW,
-              total_end_indices * sizeof(gpu_ulong), NULL, &err);
-          gpu_buffer counts_gpu = rc_clCreateBuffer(ctx, GPU_RW,
-              total_end_indices * sizeof(gpu_uint), NULL, &err);
-          gpu_buffer results_gpu = rc_clCreateBuffer(ctx, GPU_RW,
-              total_end_indices * 256 * sizeof(gpu_ulong), NULL, &err);
-
-          if (input_gpu && counts_gpu && results_gpu && err == CL_SUCCESS) {
-            rc_clEnqueueWriteBuffer(q, input_gpu, CL_TRUE, 0,
-                total_end_indices * sizeof(gpu_ulong), input_buf, 0, NULL, NULL);
-
-            size_t gws = ((total_end_indices + 255) / 256) * 256;
-
-            gpu_ulong bf_num_bits_val = pt->bf_num_bits;
-            gpu_ulong bf_mask_val = pt->bf_mask;
-            gpu_uint num_end_indices_val = (gpu_uint)total_end_indices;
-
-            rc_clSetKernelArg(kernel, 0, sizeof(gpu_buffer), &pt->rainbow_table_gpu);
-            rc_clSetKernelArg(kernel, 1, sizeof(gpu_buffer), &pt->bf_bits_gpu);
-            rc_clSetKernelArg(kernel, 2, sizeof(gpu_ulong), &bf_num_bits_val);
-            rc_clSetKernelArg(kernel, 3, sizeof(gpu_ulong), &bf_mask_val);
-            rc_clSetKernelArg(kernel, 4, sizeof(gpu_buffer), &input_gpu);
-            rc_clSetKernelArg(kernel, 5, sizeof(gpu_uint), &num_end_indices_val);
-            rc_clSetKernelArg(kernel, 6, sizeof(gpu_buffer), &counts_gpu);
-            rc_clSetKernelArg(kernel, 7, sizeof(gpu_buffer), &results_gpu);
-
-            CLRUNKERNEL(q, kernel, &gws);
-            CLWAIT(q);
-
-            rc_clEnqueueReadBuffer(q, counts_gpu, CL_TRUE, 0,
-                total_end_indices * sizeof(gpu_uint), h_counts, 0, NULL, NULL);
-            rc_clEnqueueReadBuffer(q, results_gpu, CL_TRUE, 0,
-                total_end_indices * 256 * sizeof(gpu_ulong), h_results, 0, NULL, NULL);
-
-            input_offset = 0;
+          if (input_buf && h_counts && h_results) {
+            /* Pack all end indices into a contiguous buffer. */
             ppi_cur = ppi_head;
             while (ppi_cur != NULL) {
               if (ppi_cur->plaintext == NULL) {
-                for (unsigned int e = 0; e < ppi_cur->num_precomputed_end_indices; e++) {
-                  if (h_counts[input_offset + e] > 0) {
-                    unsigned int count = h_counts[input_offset + e];
-                    for (unsigned int m = 0; m < count && m < 256; m++) {
-                      gpu_ulong chain_idx = h_results[(input_offset + e) * 256 + m * 2 + 0];
-                      gpu_ulong start = pt->rainbow_table[chain_idx * 2];
-                      add_potential_start_index_and_position(ppi_cur, start, e);
-                    }
-                  }
-                }
+                memcpy(input_buf + input_offset,
+                       ppi_cur->precomputed_end_indices,
+                       ppi_cur->num_precomputed_end_indices * sizeof(gpu_ulong));
                 input_offset += ppi_cur->num_precomputed_end_indices;
               }
               ppi_cur = ppi_cur->next;
             }
+
+            gpu_buffer input_gpu = rc_clCreateBuffer(ctx, GPU_RW,
+                total_end_indices * sizeof(gpu_ulong), NULL, &err);
+            gpu_buffer counts_gpu = rc_clCreateBuffer(ctx, GPU_RW,
+                total_end_indices * sizeof(gpu_uint), NULL, &err);
+            gpu_buffer results_gpu = rc_clCreateBuffer(ctx, GPU_RW,
+                total_end_indices * 256 * sizeof(gpu_ulong), NULL, &err);
+
+            if (input_gpu && counts_gpu && results_gpu && err == CL_SUCCESS) {
+              rc_clEnqueueWriteBuffer(q, input_gpu, CL_TRUE, 0,
+                  total_end_indices * sizeof(gpu_ulong), input_buf, 0, NULL, NULL);
+
+              size_t gws = ((total_end_indices + 255) / 256) * 256;
+
+              gpu_ulong bf_num_bits_val = pt->bf_num_bits;
+              gpu_ulong bf_mask_val = pt->bf_mask;
+              gpu_uint num_end_indices_val = (gpu_uint)total_end_indices;
+
+              rc_clSetKernelArg(kernel, 0, sizeof(gpu_buffer), &pt->rainbow_table_gpu);
+              rc_clSetKernelArg(kernel, 1, sizeof(gpu_buffer), &pt->bf_bits_gpu);
+              rc_clSetKernelArg(kernel, 2, sizeof(gpu_ulong), &bf_num_bits_val);
+              rc_clSetKernelArg(kernel, 3, sizeof(gpu_ulong), &bf_mask_val);
+              rc_clSetKernelArg(kernel, 4, sizeof(gpu_buffer), &input_gpu);
+              rc_clSetKernelArg(kernel, 5, sizeof(gpu_uint), &num_end_indices_val);
+              rc_clSetKernelArg(kernel, 6, sizeof(gpu_buffer), &counts_gpu);
+              rc_clSetKernelArg(kernel, 7, sizeof(gpu_buffer), &results_gpu);
+
+              CLRUNKERNEL(q, kernel, &gws);
+              CLWAIT(q);
+
+              rc_clEnqueueReadBuffer(q, counts_gpu, CL_TRUE, 0,
+                  total_end_indices * sizeof(gpu_uint), h_counts, 0, NULL, NULL);
+              rc_clEnqueueReadBuffer(q, results_gpu, CL_TRUE, 0,
+                  total_end_indices * 256 * sizeof(gpu_ulong), h_results, 0, NULL, NULL);
+
+              input_offset = 0;
+              ppi_cur = ppi_head;
+              while (ppi_cur != NULL) {
+                if (ppi_cur->plaintext == NULL) {
+                  for (unsigned int e = 0; e < ppi_cur->num_precomputed_end_indices; e++) {
+                    if (h_counts[input_offset + e] > 0) {
+                      unsigned int count = h_counts[input_offset + e];
+                      for (unsigned int m = 0; m < count && m < 256; m++) {
+                        gpu_ulong chain_idx = h_results[(input_offset + e) * 256 + m * 2 + 0];
+                        gpu_ulong start = pt->rainbow_table[chain_idx * 2];
+                        add_potential_start_index_and_position(ppi_cur, start, e);
+                      }
+                    }
+                  }
+                  input_offset += ppi_cur->num_precomputed_end_indices;
+                }
+                ppi_cur = ppi_cur->next;
+              }
+            }
+            if (input_gpu != NULL) CLFREEBUFFER(input_gpu);
+            if (counts_gpu != NULL) CLFREEBUFFER(counts_gpu);
+            if (results_gpu != NULL) CLFREEBUFFER(results_gpu);
           }
-          if (input_gpu != NULL) CLFREEBUFFER(input_gpu);
-          if (counts_gpu != NULL) CLFREEBUFFER(counts_gpu);
-          if (results_gpu != NULL) CLFREEBUFFER(results_gpu);
+          free(input_buf);
+          free(h_counts);
+          free(h_results);
         }
-        free(input_buf);
-        free(h_counts);
-        free(h_results);
       }
+      if (program != NULL) CLRELEASEPROGRAM(program);
+      if (kernel != NULL) CLRELEASEKERNEL(kernel);
     }
-    if (program != NULL) CLRELEASEPROGRAM(program);
-    if (kernel != NULL) CLRELEASEKERNEL(kernel);
   }
 
   /* Fallback to CPU if GPU was not used or failed. */
