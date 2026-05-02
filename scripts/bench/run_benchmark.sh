@@ -197,7 +197,41 @@ phase_run() {
 
     log "RUN done. Results at $results_dir"
 }       # filled in Task 4
-phase_report() { :; }    # filled in Task 5
+phase_report() {
+    local stamp
+    stamp=$(cat "$BENCH_ROOT/bench_results/LATEST" 2>/dev/null || echo "")
+    if [[ -z "$stamp" ]]; then
+        log "ERROR: no LATEST run found — run '$0 run' first"
+        exit 1
+    fi
+    local results_dir="$BENCH_ROOT/bench_results/$stamp"
+    log "REPORT: parsing $results_dir"
+
+    # Build meta JSON from provenance.txt.
+    local meta_json
+    meta_json=$("$BENCH_VENV/bin/python3" - <<EOF
+import json, os, sys
+meta = {}
+with open("$results_dir/provenance.txt") as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        meta[k] = v
+print(json.dumps(meta))
+EOF
+)
+
+    "$BENCH_VENV/bin/python3" "$SCRIPT_DIR/parse_results.py" \
+        "$results_dir" --meta "$meta_json"
+
+    log "REPORT done."
+    echo
+    cat "$results_dir/summary.md"
+}
 
 main() {
     local cmd="${1:-all}"
