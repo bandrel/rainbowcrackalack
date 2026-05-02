@@ -2469,6 +2469,10 @@ static void gpu_load_vram_buffers(gpu_context ctx, preloaded_table *tables, unsi
         pt->has_gpu_bf = 1;
         pt->bf_num_bits = pt->bf->num_bits;
         pt->bf_mask = pt->bf->mask;
+      } else {
+        fprintf(stderr, "  VRAM bf_bits alloc failed: %" PRIu64 " bits, %zu bytes\n",
+                pt->bf->num_bits, bf_bytes);
+        fflush(stderr);
       }
     }
   }
@@ -3014,15 +3018,20 @@ void gpu_binary_search(preloaded_table *pt, precomputed_and_potential_indices *p
 
   /* If GPU VRAM buffers exist, try GPU path. */
   if (pt->has_gpu_tables && pt->has_gpu_bf) {
+    /* Guard: bloom filter too small — GPU kernel shift/index math breaks. */
+    if (pt->bf_num_bits == 0 || pt->bf_mask == 0 || pt->bf_num_bits < 128) {
+      fprintf(stderr, "  GPU binary search skipped: bloom filter too small (%" PRIu64
+              " bits, mask %" PRIu64 ")\n", pt->bf_num_bits, pt->bf_mask);
+      fflush(stderr);
+      rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+      return;
+    }
+
     int err = 0;
     gpu_program program = NULL;
     gpu_kernel kernel = NULL;
 
-    /* Guard: avoid GPU kernel divide-by-zero if bloom filter is empty. */
-    if (pt->bf_num_bits == 0 || pt->bf_mask == 0) {
-      /* Fall through to CPU fallback. */
-    } else {
-      load_kernel(ctx, 1, &args[0].gpu.device, GPU_BINARY_SEARCH_KERNEL_PATH,
+    load_kernel(ctx, 1, &args[0].gpu.device, GPU_BINARY_SEARCH_KERNEL_PATH,
                   "gpu_binary_search", &program, &kernel,
                   (num_devices > 0) ? args[0].hash_type : HASH_NTLM);
       if (program != NULL && kernel != NULL) {
