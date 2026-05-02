@@ -2151,6 +2151,7 @@ static gpu_buffer gpu_alloc_buffer(gpu_context ctx, int flags, size_t size, cons
 #ifdef USE_METAL
   buf = gpu_create_and_fill_buffer(ctx, flags, size, data);
 #else
+  int err;
   buf = rc_clCreateBuffer(ctx, flags, size, NULL, &err);
   if (buf != NULL && err == CL_SUCCESS && data != NULL) {
     /* Need a queue to write — create a temporary one. */
