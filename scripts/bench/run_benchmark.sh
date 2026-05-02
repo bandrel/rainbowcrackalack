@@ -119,7 +119,84 @@ phase_prepare() {
     log "PREPARE done."
 }
 
-phase_run() { :; }       # filled in Task 4
+phase_run() {
+    log "RUN: $TRIALS trials per branch, alternating"
+
+    # Verify prepare outputs exist.
+    if [[ ! -x "$BLURBDUST_DIR/crackalack_lookup" ]] \
+       || [[ ! -x "$FEATURE_DIR/crackalack_lookup" ]] \
+       || [[ ! -s "$BENCH_HASHES" ]] \
+       || [[ -z "$(ls -A "$BENCH_TABLES" 2>/dev/null)" ]]; then
+        log "ERROR: prepare outputs missing — run '$0 prepare' first"
+        exit 1
+    fi
+
+    # Sudo for cache drops — request once up front.
+    if ! sudo -n true 2>/dev/null; then
+        log "Need sudo to drop caches between trials. Prompting now..."
+        sudo true
+    fi
+
+    # Create a UTC-timestamped results dir.
+    local stamp
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    local results_dir="$BENCH_ROOT/bench_results/$stamp"
+    mkdir -p "$results_dir"
+    echo "$stamp" > "$BENCH_ROOT/bench_results/LATEST"
+    log "results dir: $results_dir"
+
+    # Capture provenance.
+    {
+        echo "# Provenance"
+        echo "blurbdust_sha=$(git -C "$BLURBDUST_DIR" rev-parse HEAD)"
+        echo "feature_sha=$(git -C "$FEATURE_DIR" rev-parse HEAD)"
+        echo "host=$(hostname)"
+        echo "uname=$(uname -a)"
+        echo "started_at=$stamp"
+        echo "parts=$PARTS"
+        echo "hash_count=$HASH_COUNT"
+        echo "hash_seed=$HASH_SEED"
+        echo "trials=$TRIALS"
+        echo "timeout_min=$TIMEOUT_MIN"
+        echo "table_source=$TABLE_SOURCE"
+        nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null \
+            | head -1 | sed 's/^/gpu=/'
+    } > "$results_dir/provenance.txt"
+
+    # Trial loop: alternating blurbdust, feature.
+    local n
+    for ((n=1; n<=TRIALS; n++)); do
+        for branch in blurbdust feature; do
+            local bin_dir
+            if [[ "$branch" == "blurbdust" ]]; then bin_dir="$BLURBDUST_DIR"; \
+                                              else bin_dir="$FEATURE_DIR"; fi
+
+            log "trial $n/$TRIALS branch=$branch — dropping cache"
+            sync
+            sudo sh -c "echo 3 > /proc/sys/vm/drop_caches"
+
+            local log_file="$results_dir/trial_$(printf '%02d' "$n")_${branch}.log"
+            local time_file="$results_dir/trial_$(printf '%02d' "$n")_${branch}.time"
+
+            # /usr/bin/time -v captures wall + RSS + exit. timeout caps the run.
+            # `cd $bin_dir` so that CL/ kernel dir is found alongside the binary.
+            log "trial $n/$TRIALS branch=$branch — running"
+            (
+                cd "$bin_dir"
+                /usr/bin/time -v -o "$time_file" \
+                    timeout "${TIMEOUT_MIN}m" \
+                    ./crackalack_lookup "$BENCH_TABLES" "$BENCH_HASHES" \
+                    > "$log_file" 2>&1
+            ) || true   # /usr/bin/time still writes the .time file on non-zero exit
+
+            local exit_status
+            exit_status=$(awk -F': ' '/Exit status/{print $2}' "$time_file" 2>/dev/null || echo "?")
+            log "trial $n/$TRIALS branch=$branch — exit=$exit_status"
+        done
+    done
+
+    log "RUN done. Results at $results_dir"
+}       # filled in Task 4
 phase_report() { :; }    # filled in Task 5
 
 main() {
