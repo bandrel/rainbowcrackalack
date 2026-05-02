@@ -102,6 +102,13 @@
 #define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.cl"
 #endif
 
+/* GPU binary search kernel path — OpenCL vs Metal variant. */
+#ifdef USE_METAL
+#define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.metal"
+#else
+#define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.cl"
+#endif
+
 #define HASH_FILE_FORMAT_PLAIN 1
 #define HASH_FILE_FORMAT_PWDUMP 2
 
@@ -219,6 +226,17 @@ struct _preloaded_table {
   gpu_ulong *rainbow_table;
   uint64_t num_chains;
   bloom_filter *bf;
+
+  /* GPU VRAM: preloaded endpoints and bloom filter for GPU binary search.
+   * Only valid when has_gpu_buffers is true; GPU buffers live until
+   * bulk_release_table frees them. */
+  gpu_buffer rainbow_table_gpu;
+  gpu_buffer bf_bits_gpu;
+  uint64_t bf_num_bits;
+  uint64_t bf_mask;
+  int has_gpu_tables;
+  int has_gpu_bf;
+
   struct _preloaded_table *next;
 };
 typedef struct _preloaded_table preloaded_table;
@@ -256,6 +274,8 @@ void free_loaded_hashes(char **usernames, char **hashes);
 void *host_thread_false_alarm(void *ptr);
 void print_eta_precompute();
 void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filter *bf, precomputed_and_potential_indices *ppi_head);
+/* GPU-accelerated binary search — falls back to CPU if VRAM unavailable. */
+void gpu_binary_search(preloaded_table *pt, precomputed_and_potential_indices *ppi_head, gpu_context ctx, gpu_queue queue, thread_args *args, unsigned int num_devices);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
 void launch_false_alarm_check(precomputed_and_potential_indices *ppi, thread_args *args, false_alarm_state *state);
 void harvest_false_alarm_results(false_alarm_state *state);
@@ -1414,8 +1434,8 @@ void *host_thread_precompute(void *ptr) {
   if (user_provided_gws > 0) {
     gws = user_provided_gws;
     printf("GPU #%u precompute using user-provided GWS: %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
-  } else if (get_optimal_gws(gpu->device) > 0) {
-    gws = get_optimal_gws(gpu->device);
+  } else if (get_optimal_gws(gpu->device, kernel_name) > 0) {
+    gws = get_optimal_gws(gpu->device, kernel_name);
     printf("GPU #%u precompute using optimized GWS: %"PRIu64"\n", gpu->device_number, (uint64_t)gws);
   } else {
     gws = gws * gpu->num_work_units;
@@ -2122,6 +2142,28 @@ static char **collect_table_paths(char *rt_dir, const rt_parameters *filter,
   return paths;
 }
 
+/* Allocate a GPU buffer and write data into it.  Works for both OpenCL and
+ * Metal backends via the gpu_backend.h macros.  Returns the buffer handle on
+ * success, NULL on failure (non-fatal — the caller should fall back to CPU). */
+static gpu_buffer gpu_alloc_buffer(gpu_context ctx, int flags, size_t size, const void *data) {
+  gpu_buffer buf = NULL;
+
+#ifdef USE_METAL
+  buf = gpu_create_and_fill_buffer(ctx, flags, size, data);
+#else
+  buf = rc_clCreateBuffer(ctx, flags, size, NULL, &err);
+  if (buf != NULL && err == CL_SUCCESS && data != NULL) {
+    /* Need a queue to write — create a temporary one. */
+    gpu_queue tmp_q = rc_clCreateCommandQueueWithProperties(ctx, 0, NULL, &err);
+    if (tmp_q != NULL) {
+      err = rc_clEnqueueWriteBuffer(tmp_q, buf, CL_TRUE, 0, size, data, 0, NULL, NULL);
+      rc_clReleaseCommandQueue(tmp_q);
+    }
+  }
+#endif
+  return buf;
+}
+
 
 /* Loads a single table file (any supported format) into a preloaded_table struct. */
 static int load_single_table(const char *filepath, preloaded_table *pt) {
@@ -2365,6 +2407,16 @@ static void bulk_release_table(bulk_table_array *bta) {
   preloaded_table *pt = &bta->tables[bta->num_consumed];
   uint64_t freed = pt->num_chains * sizeof(gpu_ulong) * 2;
 
+  /* Free GPU VRAM buffers if present. */
+  if (pt->has_gpu_tables) {
+    CLFREEBUFFER(pt->rainbow_table_gpu);
+    pt->has_gpu_tables = 0;
+  }
+  if (pt->has_gpu_bf) {
+    CLFREEBUFFER(pt->bf_bits_gpu);
+    pt->has_gpu_bf = 0;
+  }
+
   FREE(pt->filepath);
   FREE(pt->rainbow_table);
   if (pt->bf != NULL) { bloom_free(pt->bf); pt->bf = NULL; }
@@ -2382,6 +2434,8 @@ static void bulk_cleanup(bulk_table_array *bta, pthread_t loader_tid) {
   /* Free any tables that were loaded but never consumed. */
   while (bta->num_consumed < bta->num_loaded) {
     preloaded_table *pt = &bta->tables[bta->num_consumed];
+    if (pt->has_gpu_tables) CLFREEBUFFER(pt->rainbow_table_gpu);
+    if (pt->has_gpu_bf) CLFREEBUFFER(pt->bf_bits_gpu);
     FREE(pt->filepath);
     FREE(pt->rainbow_table);
     if (pt->bf != NULL) { bloom_free(pt->bf); pt->bf = NULL; }
@@ -2390,6 +2444,33 @@ static void bulk_cleanup(bulk_table_array *bta, pthread_t loader_tid) {
   FREE(bta->tables);
   pthread_mutex_destroy(&bta->mutex);
   pthread_cond_destroy(&bta->cond);
+}
+
+
+/* Load table data into GPU VRAM.  Called after precompute (when context is ready)
+ * and before the search loop.  Non-fatal on allocation failure — has_gpu_* stays 0. */
+static void gpu_load_vram_buffers(gpu_context ctx, preloaded_table *tables, unsigned int count) {
+  for (unsigned int i = 0; i < count; i++) {
+    preloaded_table *pt = &tables[i];
+    if (pt->num_chains == 0 || pt->rainbow_table == NULL) continue;
+
+    /* Allocate VRAM for endpoint array. */
+    size_t table_bytes = pt->num_chains * 2 * sizeof(gpu_ulong);
+    pt->rainbow_table_gpu = gpu_alloc_buffer(ctx, GPU_RO, table_bytes, pt->rainbow_table);
+    if (pt->rainbow_table_gpu != NULL)
+      pt->has_gpu_tables = 1;
+
+    /* Allocate VRAM for bloom filter bits. */
+    if (pt->bf != NULL) {
+      size_t bf_bytes = (pt->bf->num_bits + 63) / 64 * sizeof(gpu_ulong);
+      pt->bf_bits_gpu = gpu_alloc_buffer(ctx, GPU_RO, bf_bytes, pt->bf->bits);
+      if (pt->bf_bits_gpu != NULL) {
+        pt->has_gpu_bf = 1;
+        pt->bf_num_bits = pt->bf->num_bits;
+        pt->bf_mask = pt->bf->mask;
+      }
+    }
+  }
 }
 
 
@@ -2635,6 +2716,9 @@ void pipelined_lookup(char *rt_dir, const rt_parameters *filter,
   printf("  Precompute finished in %s.\n\n", precomp_time_str);
   fflush(stdout);
 
+  /* Load table data into GPU VRAM for binary search acceleration. */
+  gpu_load_vram_buffers(args[0].gpu.context, bta.tables, bta.num_loaded);
+
   /* === Search tables as they become available, freeing each after search
    *     so the loader can fill the freed RAM with new tables. === */
   false_alarm_state fa_state = {0};
@@ -2665,7 +2749,9 @@ void pipelined_lookup(char *rt_dir, const rt_parameters *filter,
     printf("  [%u/%u] Searching: %s\n", tables_searched, total_paths, pt->filepath);
     fflush(stdout);
 
-    rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, *ppi_head);
+    gpu_binary_search(pt, *ppi_head, args[0].gpu.context,
+                      (num_devices > 0) ? args[0].gpu.queue : NULL,
+                      args, num_devices);
     num_chains_processed += pt->num_chains;
     num_tables_processed++;
 
@@ -2907,6 +2993,137 @@ void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filte
   FREE(args);
   FREE(threads);
 }
+
+
+/* GPU-accelerated binary search (OpenCL backend).
+ * Reads table endpoints and bloom filter from VRAM, runs a parallel binary
+ * search on the GPU (one work-item per precomputed end index), and distributes
+ * matches back into the ppi list.  Falls back to CPU on Metal or failure. */
+#ifdef USE_METAL
+void gpu_binary_search(preloaded_table *pt, precomputed_and_potential_indices *ppi_head,
+                       gpu_context ctx, gpu_queue queue, thread_args *args, unsigned int num_devices) {
+  /* Metal backend: no OpenCL function pointers available.
+   * Fall through to CPU binary search. */
+  (void)pt; (void)ppi_head; (void)ctx; (void)queue; (void)args; (void)num_devices;
+  rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+}
+#else
+void gpu_binary_search(preloaded_table *pt, precomputed_and_potential_indices *ppi_head,
+                       gpu_context ctx, gpu_queue queue, thread_args *args, unsigned int num_devices) {
+  /* Count total uncracked end indices. */
+  unsigned int total_end_indices = 0;
+  precomputed_and_potential_indices *ppi_cur = ppi_head;
+  while (ppi_cur != NULL) {
+    if (ppi_cur->plaintext == NULL)
+      total_end_indices += ppi_cur->num_precomputed_end_indices;
+    ppi_cur = ppi_cur->next;
+  }
+
+  if (total_end_indices < 2) {
+    rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+    return;
+  }
+
+  /* If GPU VRAM buffers exist, try GPU path. */
+  if (pt->has_gpu_tables && pt->has_gpu_bf) {
+    int err = 0;
+    gpu_program program = NULL;
+    gpu_kernel kernel = NULL;
+
+    load_kernel(ctx, 1, &args[0].gpu.device, GPU_BINARY_SEARCH_KERNEL_PATH,
+                "gpu_binary_search", &program, &kernel,
+                (num_devices > 0) ? args[0].hash_type : HASH_NTLM);
+    if (program != NULL && kernel != NULL) {
+      gpu_queue q = (queue != NULL) ? queue : args[0].gpu.queue;
+      if (q != NULL) {
+        gpu_ulong *input_buf = malloc(total_end_indices * sizeof(gpu_ulong));
+        gpu_uint *h_counts = calloc(total_end_indices, sizeof(gpu_uint));
+        gpu_ulong *h_results = calloc(total_end_indices * 256, sizeof(gpu_ulong));
+        unsigned int input_offset = 0;
+
+        if (input_buf && h_counts && h_results) {
+          /* Pack all end indices into a contiguous buffer. */
+          ppi_cur = ppi_head;
+          while (ppi_cur != NULL) {
+            if (ppi_cur->plaintext == NULL) {
+              memcpy(input_buf + input_offset,
+                     ppi_cur->precomputed_end_indices,
+                     ppi_cur->num_precomputed_end_indices * sizeof(gpu_ulong));
+              input_offset += ppi_cur->num_precomputed_end_indices;
+            }
+            ppi_cur = ppi_cur->next;
+          }
+
+          gpu_buffer input_gpu = rc_clCreateBuffer(ctx, GPU_RW,
+              total_end_indices * sizeof(gpu_ulong), NULL, &err);
+          gpu_buffer counts_gpu = rc_clCreateBuffer(ctx, GPU_RW,
+              total_end_indices * sizeof(gpu_uint), NULL, &err);
+          gpu_buffer results_gpu = rc_clCreateBuffer(ctx, GPU_RW,
+              total_end_indices * 256 * sizeof(gpu_ulong), NULL, &err);
+
+          if (input_gpu && counts_gpu && results_gpu && err == CL_SUCCESS) {
+            rc_clEnqueueWriteBuffer(q, input_gpu, CL_TRUE, 0,
+                total_end_indices * sizeof(gpu_ulong), input_buf, 0, NULL, NULL);
+
+            size_t gws = ((total_end_indices + 255) / 256) * 256;
+
+            gpu_ulong bf_num_bits_val = pt->bf_num_bits;
+            gpu_ulong bf_mask_val = pt->bf_mask;
+            gpu_uint num_end_indices_val = (gpu_uint)total_end_indices;
+
+            rc_clSetKernelArg(kernel, 0, sizeof(gpu_buffer), &pt->rainbow_table_gpu);
+            rc_clSetKernelArg(kernel, 1, sizeof(gpu_buffer), &pt->bf_bits_gpu);
+            rc_clSetKernelArg(kernel, 2, sizeof(gpu_ulong), &bf_num_bits_val);
+            rc_clSetKernelArg(kernel, 3, sizeof(gpu_ulong), &bf_mask_val);
+            rc_clSetKernelArg(kernel, 4, sizeof(gpu_buffer), &input_gpu);
+            rc_clSetKernelArg(kernel, 5, sizeof(gpu_uint), &num_end_indices_val);
+            rc_clSetKernelArg(kernel, 6, sizeof(gpu_buffer), &counts_gpu);
+            rc_clSetKernelArg(kernel, 7, sizeof(gpu_buffer), &results_gpu);
+
+            CLRUNKERNEL(q, kernel, &gws);
+            CLWAIT(q);
+
+            rc_clEnqueueReadBuffer(q, counts_gpu, CL_TRUE, 0,
+                total_end_indices * sizeof(gpu_uint), h_counts, 0, NULL, NULL);
+            rc_clEnqueueReadBuffer(q, results_gpu, CL_TRUE, 0,
+                total_end_indices * 256 * sizeof(gpu_ulong), h_results, 0, NULL, NULL);
+
+            input_offset = 0;
+            ppi_cur = ppi_head;
+            while (ppi_cur != NULL) {
+              if (ppi_cur->plaintext == NULL) {
+                for (unsigned int e = 0; e < ppi_cur->num_precomputed_end_indices; e++) {
+                  if (h_counts[input_offset + e] > 0) {
+                    unsigned int count = h_counts[input_offset + e];
+                    for (unsigned int m = 0; m < count && m < 256; m++) {
+                      gpu_ulong chain_idx = h_results[(input_offset + e) * 256 + m * 2 + 0];
+                      gpu_ulong start = pt->rainbow_table[chain_idx * 2];
+                      add_potential_start_index_and_position(ppi_cur, start, e);
+                    }
+                  }
+                }
+                input_offset += ppi_cur->num_precomputed_end_indices;
+              }
+              ppi_cur = ppi_cur->next;
+            }
+          }
+          if (input_gpu != NULL) CLFREEBUFFER(input_gpu);
+          if (counts_gpu != NULL) CLFREEBUFFER(counts_gpu);
+          if (results_gpu != NULL) CLFREEBUFFER(results_gpu);
+        }
+        free(input_buf);
+        free(h_counts);
+        free(h_results);
+      }
+    }
+    if (program != NULL) CLRELEASEPROGRAM(program);
+    if (kernel != NULL) CLRELEASEKERNEL(kernel);
+  }
+
+  /* Fallback to CPU if GPU was not used or failed. */
+  rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+}
+#endif
 
 
 void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash_type) {
