@@ -86,6 +86,28 @@ class TestSummarize(unittest.TestCase):
         summary = summarize(trials)
         self.assertEqual(summary["blurbdust"]["status"], "INSUFFICIENT_DATA")
 
+    def test_summarize_works_with_arbitrary_branch_names(self):
+        trials = [
+            {"branch": "main",  "wall_seconds": 100.0, "peak_rss_kb": 1, "cracked": 5, "exit_status": 0},
+            {"branch": "main",  "wall_seconds": 110.0, "peak_rss_kb": 1, "cracked": 5, "exit_status": 0},
+            {"branch": "feat1", "wall_seconds": 50.0,  "peak_rss_kb": 1, "cracked": 5, "exit_status": 0},
+            {"branch": "feat1", "wall_seconds": 55.0,  "peak_rss_kb": 1, "cracked": 5, "exit_status": 0},
+        ]
+        summary = summarize(trials)
+        self.assertIn("main", summary)
+        self.assertIn("feat1", summary)
+        self.assertIn("speedup", summary)
+        # speedup numerator/denominator order is deterministic (alphabetical):
+        # feat1 (median 52.5) / main (median 105.0) — but which is which depends on
+        # implementation. Just assert the ratio is one of the two expected values.
+        expected_a = 105.0 / 52.5
+        expected_b = 52.5 / 105.0
+        self.assertTrue(
+            abs(summary["speedup"] - expected_a) < 1e-6 or
+            abs(summary["speedup"] - expected_b) < 1e-6,
+            f"speedup {summary['speedup']} matches neither {expected_a} nor {expected_b}",
+        )
+
 
 class TestWriteSummaryMd(unittest.TestCase):
     def test_writes_file_with_headline(self):

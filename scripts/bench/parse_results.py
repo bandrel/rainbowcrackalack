@@ -111,10 +111,13 @@ def summarize(trials: list) -> dict:
     if len(crack_sets) > 1:
         summary["divergence"] = True
 
-    bd = summary.get("blurbdust", {})
-    ft = summary.get("feature", {})
-    if bd.get("status") == "OK" and ft.get("status") == "OK" and ft["wall_median"] > 0:
-        summary["speedup"] = bd["wall_median"] / ft["wall_median"]
+    # Compute speedup using whatever two branches are present (if exactly two with OK status)
+    branch_keys = [k for k in sorted(by_branch.keys())]
+    if len(branch_keys) == 2:
+        branch_a = summary.get(branch_keys[0], {})
+        branch_b = summary.get(branch_keys[1], {})
+        if branch_a.get("status") == "OK" and branch_b.get("status") == "OK" and branch_b["wall_median"] > 0:
+            summary["speedup"] = branch_a["wall_median"] / branch_b["wall_median"]
     return summary
 
 
@@ -146,7 +149,8 @@ def write_summary_md(trials: list, summary: dict, meta: dict, out_path: str) -> 
     lines.append("")
     lines.append("| Branch     | Wall-clock | Peak RSS | Cracked | Status |")
     lines.append("|------------|-----------:|---------:|--------:|:-------|")
-    for branch in ("blurbdust", "feature"):
+    # Iterate over branches present in summary, skipping special keys
+    for branch in sorted(k for k in summary.keys() if k not in ("divergence", "speedup")):
         b = summary.get(branch, {})
         if b.get("status") == "OK":
             lines.append(
@@ -198,7 +202,11 @@ def main() -> int:
         return 1
 
     summary = summarize(trials)
-    meta = json.loads(args.meta)
+    try:
+        meta = json.loads(args.meta)
+    except json.JSONDecodeError as e:
+        print(f"Error parsing --meta JSON: {e}", file=sys.stderr)
+        return 1
 
     json_path = os.path.join(args.results_dir, "results.json")
     md_path = os.path.join(args.results_dir, "summary.md")
