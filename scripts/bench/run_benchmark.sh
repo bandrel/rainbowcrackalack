@@ -69,9 +69,13 @@ phase_prepare() {
         fi
     done
 
-    # Set up Python venv with pycryptodome.
-    if [[ ! -x "$BENCH_VENV/bin/python3" ]]; then
+    # Set up Python venv with pycryptodome.  Recreate from scratch if the venv
+    # is missing OR if pycryptodome can't be imported (a partial venv from a
+    # prior failed run would otherwise be silently reused).
+    if [[ ! -x "$BENCH_VENV/bin/python3" ]] \
+       || ! "$BENCH_VENV/bin/python3" -c "from Crypto.Cipher import DES" 2>/dev/null; then
         log "creating venv at $BENCH_VENV"
+        rm -rf "$BENCH_VENV"
         python3 -m venv "$BENCH_VENV"
         "$BENCH_VENV/bin/pip" install --quiet --upgrade pip
         "$BENCH_VENV/bin/pip" install --quiet pycryptodome
@@ -111,12 +115,17 @@ phase_prepare() {
     if ! compgen -G "$smoke_dir/*.rtc" >/dev/null; then
         log "ERROR: could not stage any .rtc file into smoke_dir"; exit 1
     fi
+    # Exit codes 0 (clean), 124 (timeout's own exit), 137 (SIGKILL = 128+9, used
+     # by `timeout --kill-after`), 143 (SIGTERM = 128+15, default timeout signal),
+     # and 255 (some binaries' ungraceful response to SIGTERM) are all expected
+     # ways for a 30s-capped run to end without a real crash.
     local rc=0
     timeout 30 "$BLURBDUST_DIR/crackalack_lookup" "$smoke_dir" \
         "$BENCH_HASHES" >/dev/null 2>&1 || rc=$?
-    if [[ "$rc" -ne 0 && "$rc" -ne 124 ]]; then
-        log "WARN: blurbdust smoke test exited $rc — investigate before running full bench"
-    fi
+    case "$rc" in
+        0|124|137|143|255) ;;
+        *) log "WARN: blurbdust smoke test exited $rc — investigate before running full bench" ;;
+    esac
 
     log "PREPARE done."
 }
