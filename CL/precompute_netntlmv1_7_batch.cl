@@ -4,8 +4,15 @@
  * Processes ALL hashes in a single kernel dispatch, called in
  * position-based chunks to avoid GPU watchdog timeouts.
  *
+ * The reduction function for NetNTLMv1-7 is `(hash + offset + pos) mod 2^56`,
+ * which has no exploitable algebraic structure across positions — every output
+ * position requires its own independent chain walk from a different reduced
+ * starting point.  Total work is therefore O(chain_len^2) per hash; the host
+ * keeps the GPU saturated by tuning chunk_size (positions per dispatch).
+ *
  * g_hashes:  all hashes concatenated (num_hashes * 16 bytes)
- * g_output:  flat array of num_hashes * total_positions entries
+ * g_output:  flat array of num_hashes * total_positions entries, pre-zeroed
+ *            by the host so positions whose walk would be empty already read 0
  *            layout: [hash0_pos0, hash0_pos1, ..., hash1_pos0, ...]
  *
  * Per-chunk dispatch:
@@ -50,8 +57,8 @@ __kernel void precompute_netntlmv1_7_batch(
   unsigned long chain_len = *g_chain_len;
   long target_chain_len = (long)chain_len - (long)absolute_pos - 1;
 
+  /* Output buffer is pre-zeroed by the host, so we can skip the write here. */
   if (target_chain_len < 1) {
-    g_output[(unsigned long)hash_idx * total_positions + absolute_pos] = 0;
     return;
   }
 

@@ -1815,9 +1815,29 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
 
   /* Dispatch in position-based sub-batches to stay within GPU watchdog limits.
    * Each sub-batch processes all hashes at a range of chain positions.
-   * Work items in each sub-batch have similar workloads (nearby positions),
-   * avoiding the massive load imbalance of a single giant dispatch. */
-  unsigned int chunk_size = 512;  /* positions per sub-batch — smaller = better GPU occupancy for heavy early chunks */
+   *
+   * Wall time scales roughly as chain_len^2 / (2 * chunk_size) when the
+   * dispatch has too few work-items to saturate the GPU.  On a 3080 Ti +
+   * 2 NetNTLMv1-7 hashes (chain_len 881689) we measured:
+   *
+   *     chunk_size  work-items/chunk  precompute  speedup vs 512
+   *            512             1024     63 min          1x
+   *           2048             4096     16 min       ~3.9x
+   *           4096             8192      8 min       ~7.6x
+   *           8192            16384      4 min        15x  <- new default
+   *
+   * 8192 saturates the SM slots even for very small hash counts.  At this
+   * size the slowest chunk takes ~5 sec, comfortably below NVIDIA's default
+   * 30 sec TDR.  Honor $RCRT_PRECOMP_CHUNK to retune per-GPU without
+   * recompiling (e.g. larger hash batches may benefit from a smaller chunk
+   * because the hash dimension already saturates the GPU). */
+  unsigned int chunk_size = 8192;
+  const char *cs_env = getenv("RCRT_PRECOMP_CHUNK");
+  if (cs_env != NULL && *cs_env != '\0') {
+    int n = atoi(cs_env);
+    if (n >= 32 && n <= 65536) chunk_size = (unsigned int)n;
+  }
+  if (chunk_size > positions_per_hash) chunk_size = positions_per_hash;
   unsigned int num_chunks = (positions_per_hash + chunk_size - 1) / chunk_size;
 
   printf("  Dispatching batch kernel: %u hashes in %u position chunks of %u...\n",
