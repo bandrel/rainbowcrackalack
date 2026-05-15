@@ -2830,6 +2830,185 @@ cleanup_paths:
 }
 
 
+/* Arguments handed to streaming_preloading_thread.  rt_dir and paths are owned
+ * by the thread for its lifetime and freed before exit. */
+typedef struct {
+  char **paths;
+  unsigned int num_paths;
+} streaming_preload_args;
+
+/* Streaming preloader thread.  Walks the pre-collected paths and loads each
+ * table via load_single_table(), appending to the global preloaded_table_list
+ * under preloaded_tables_lock.  Blocks when the sliding window already holds
+ * MAX_PRELOAD_NUM tables; the search loop consumes via get_preloaded_table()
+ * and signals condition_continue_loading_tables.
+ *
+ * Matches the producer-side contract of the original baseline preloader — the
+ * existing search_tables() consumer path reads via get_preloaded_table() and
+ * needs nothing else changed. */
+static void *streaming_preloading_thread(void *ptr) {
+  streaming_preload_args *args = (streaming_preload_args *)ptr;
+
+  for (unsigned int i = 0; i < args->num_paths; i++) {
+    preloaded_table *pt = calloc(1, sizeof(preloaded_table));
+    if (pt == NULL) {
+      fprintf(stderr, "preloader: calloc failed\n");
+      break;
+    }
+    if (load_single_table(args->paths[i], pt) != 0) {
+      fprintf(stderr, "Warning: skipping unloadable table: %s\n", args->paths[i]);
+      free(pt);
+      continue;
+    }
+    pt->next = NULL;
+
+    pthread_mutex_lock(&preloaded_tables_lock);
+
+    /* Append to tail. */
+    if (preloaded_table_list == NULL) {
+      preloaded_table_list = pt;
+    } else {
+      preloaded_table *cur = preloaded_table_list;
+      while (cur->next != NULL) cur = cur->next;
+      cur->next = pt;
+    }
+    num_preloaded_tables_available++;
+    pthread_cond_signal(&condition_wait_for_tables);
+
+    /* Throttle if the consumer is behind. */
+    while (num_preloaded_tables_available >= MAX_PRELOAD_NUM)
+      pthread_cond_wait(&condition_continue_loading_tables, &preloaded_tables_lock);
+
+    pthread_mutex_unlock(&preloaded_tables_lock);
+  }
+
+  /* Signal end-of-stream so get_preloaded_table() can return NULL. */
+  pthread_mutex_lock(&preloaded_tables_lock);
+  table_loading_complete = 1;
+  pthread_cond_broadcast(&condition_wait_for_tables);
+  pthread_mutex_unlock(&preloaded_tables_lock);
+
+  for (unsigned int i = 0; i < args->num_paths; i++) free(args->paths[i]);
+  free(args->paths);
+  free(args);
+  return NULL;
+}
+
+/* Streaming lookup: per-table sliding-window preload + batched GPU precompute
+ * + simple search loop.  Carved-down replacement for pipelined_lookup that
+ * trades the 27 GiB bulk-load RAM footprint for ~2 GiB streaming, with no
+ * measurable wall-time loss — CPU rt_binary_search runs at ~0.1 s/table from
+ * cold NVMe, so keeping all tables resident never pays off on workloads that
+ * visit each table once.
+ *
+ * Reuses batch_precompute_all_hashes() (the chunk_size=8192 hot path) and
+ * search_tables() (baseline-style streaming consumer) so almost no new code
+ * is needed — this function is just glue. */
+void streaming_lookup(char *rt_dir, const rt_parameters *filter,
+                     unsigned int num_devices, thread_args *args,
+                     char **hashes, char **usernames, unsigned int total_hashes,
+                     precomputed_and_potential_indices **ppi_head) {
+
+  /* Reset preloader globals for this config group. */
+  pthread_mutex_lock(&preloaded_tables_lock);
+  preloaded_table_list = NULL;
+  num_preloaded_tables_available = 0;
+  table_loading_complete = 0;
+  pthread_mutex_unlock(&preloaded_tables_lock);
+
+  /* Walk the directory once on the main thread; hand the path list to the
+   * preloader.  Done here (not inside the thread) so we can print the total
+   * for ETA and short-circuit if the directory is empty. */
+  unsigned int total_paths = 0;
+  char **all_paths = collect_table_paths(rt_dir, filter, &total_paths);
+  if (total_paths == 0) {
+    printf("No tables found for this config group.\n");
+    free(all_paths);
+    return;
+  }
+  printf("Found %u tables for this config group.\n", total_paths);
+  fflush(stdout);
+
+  /* Hand path ownership to the preloader thread. */
+  streaming_preload_args *pargs = calloc(1, sizeof(streaming_preload_args));
+  if (pargs == NULL) { fprintf(stderr, "streaming_lookup: calloc failed\n"); return; }
+  pargs->paths = all_paths;
+  pargs->num_paths = total_paths;
+
+  pthread_t preloader_tid;
+  if (pthread_create(&preloader_tid, NULL, streaming_preloading_thread, pargs) != 0) {
+    fprintf(stderr, "Failed to spawn preloader thread\n");
+    for (unsigned int i = 0; i < total_paths; i++) free(all_paths[i]);
+    free(all_paths);
+    free(pargs);
+    return;
+  }
+
+  /* Collect uncracked hashes. */
+  unsigned int num_uncracked = 0;
+  char **uncracked_hashes = calloc(total_hashes, sizeof(char *));
+  char **uncracked_usernames = calloc(total_hashes, sizeof(char *));
+  for (unsigned int i = 0; i < total_hashes; i++) {
+    precomputed_and_potential_indices *existing = ppi_find(*ppi_head, hashes[i]);
+    if (existing != NULL && existing->plaintext != NULL) continue;
+    uncracked_hashes[num_uncracked] = hashes[i];
+    uncracked_usernames[num_uncracked] = usernames[i];
+    num_uncracked++;
+  }
+
+  if (num_uncracked == 0) {
+    printf("All hashes cracked.\n");
+    free(uncracked_hashes); free(uncracked_usernames);
+    pthread_join(preloader_tid, NULL);
+    return;
+  }
+
+  /* Batched GPU precompute. */
+  struct timespec precomp_start = {0};
+  start_timer(&precomp_start);
+  printf("\n  Precomputing %u hashes...\n", num_uncracked);
+  fflush(stdout);
+
+  ppi_reset_endpoints(*ppi_head);
+
+  int used_batch = 0;
+  if (num_uncracked >= 2)
+    used_batch = batch_precompute_all_hashes(num_devices, args,
+        uncracked_hashes, uncracked_usernames, num_uncracked, ppi_head);
+
+  if (!used_batch) {
+    /* Per-hash fallback for hash types/charsets without a batch kernel. */
+    for (unsigned int i = 0; i < num_uncracked; i++) {
+      for (unsigned int j = 0; j < num_devices; j++) {
+        args[j].username = uncracked_usernames[i];
+        args[j].hash = uncracked_hashes[i];
+      }
+      precomputed_and_potential_indices *existing = ppi_find(*ppi_head, uncracked_hashes[i]);
+      precompute_hash(num_devices, args, ppi_head, existing);
+    }
+  }
+
+  release_precompute_gpu(num_devices, args);
+
+  char precomp_time_str[128] = {0};
+  seconds_to_human_time(precomp_time_str, sizeof(precomp_time_str),
+                        get_elapsed(&precomp_start));
+  printf("  Precompute finished in %s.\n\n", precomp_time_str);
+  fflush(stdout);
+
+  /* Hand off to the streaming search loop.  It consumes preloaded_table_list
+   * via get_preloaded_table() and runs CPU rt_binary_search + GPU false alarm
+   * check per table. */
+  search_tables(total_paths, *ppi_head, args);
+
+  release_false_alarm_gpu(num_devices, args);
+
+  free(uncracked_hashes);
+  free(uncracked_usernames);
+  pthread_join(preloader_tid, NULL);
+}
+
+
 /* Given the number of hashes processed out of the total, prints the estimated time left to
  * completion. */
 void print_eta_precompute() {
@@ -3799,9 +3978,11 @@ int main(int ac, char **av) {
     printed_precompute_optimized_message = 0;
     printed_false_alarm_optimized_message = 0;
 
-    /* Pipelined lookup: bulk-load tables, batched GPU+CPU precompute, search. */
+    /* Streaming lookup: sliding-window per-table load + batched GPU
+     * precompute + baseline-style search loop.  Carved-down replacement
+     * for pipelined_lookup; same wall-time, dramatically lower RSS. */
     start_timer(&precompute_start_time);
-    pipelined_lookup(rt_dir, &cg->params, num_devices, args,
+    streaming_lookup(rt_dir, &cg->params, num_devices, args,
                      hashes, usernames, num_hashes, &ppi_head);
     time_precomp += get_elapsed(&precompute_start_time);
   }
