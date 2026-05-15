@@ -1037,6 +1037,16 @@ void *host_thread_false_alarm(void *ptr) {
 
   num_start_indices = num_start_index_positions = num_hash_base_indices = num_plaintext_indices = args->num_potential_start_indices;
 
+  /* Defensive: if no start indices were supplied, there's nothing to check.
+   * Returning early prevents a divide-by-zero at `num_start_indices / gws`
+   * further down (gws is derived from num_start_indices). */
+  if (num_start_indices == 0) {
+    args->results = NULL;
+    args->num_results = 0;
+    pthread_exit(NULL);
+    return NULL;
+  }
+
   start_indices = args->potential_start_indices;
   start_index_positions = args->potential_start_index_positions;
   hash_base_indices = args->hash_base_indices;
@@ -2070,8 +2080,21 @@ static unsigned int compute_load_thread_count(void) {
 }
 
 
-/* Returns the available RAM in bytes, minus a 4GB reserve. */
+/* Returns the table-data RAM budget in bytes.
+ *
+ * Honors $RCRT_RAM_BUDGET_GB (integer GiB, 1-1024) if set.  Otherwise reserves
+ * 25% of RAM + 4 GiB for bloom filters, OpenCL host buffers, per-thread state,
+ * page cache, the OS, and glibc fragmentation — observed RSS on a 94 GiB host
+ * runs ~5-6 GiB above the table-data total, which on the previous 10%+2 GiB
+ * formula was enough to push the process into swap thrashing during precompute. */
 static uint64_t get_ram_budget(void) {
+  const char *env = getenv("RCRT_RAM_BUDGET_GB");
+  if (env != NULL && *env != '\0') {
+    long g = atol(env);
+    if (g >= 1 && g <= 1024)
+      return (uint64_t)g * 1024 * 1024 * 1024;
+  }
+
   uint64_t total = 0;
 #ifdef __APPLE__
   size_t len = sizeof(total);
@@ -2086,10 +2109,7 @@ static uint64_t get_ram_budget(void) {
   sysinfo(&si);
   total = (uint64_t)si.totalram * si.mem_unit;
 #endif
-  /* Reserve 10% of RAM + 2GB for bloom filters, page tables, process overhead.
-   * The OOM killer will strike if we're too aggressive — 87 x 1GB tables on
-   * 96GB RAM triggered OOM with only a 4GB reserve. */
-  uint64_t reserve = (total / 10) + (uint64_t)2 * 1024 * 1024 * 1024;
+  uint64_t reserve = (total / 4) + (uint64_t)4 * 1024 * 1024 * 1024;
   return (total > reserve) ? total - reserve : 0;
 }
 
@@ -2677,25 +2697,43 @@ void pipelined_lookup(char *rt_dir, const rt_parameters *filter,
         plaintext_space_up_to_index, plaintext_space_total, ppi_head);
   }
 
-  /* Auto-tune after first run. */
+  /* Auto-tune after first run.
+   *
+   * cpu_precompute_hash only supports NTLM/MD5 with a text charset; for
+   * NetNTLMv1-7 (byte charset) strlen(charset) is 0, plaintext_space_total
+   * is 0, and the inner hash_to_index divides by zero (SIGFPE).  Skip the
+   * CPU bench in that case and pin future runs to the GPU split. */
   if (!tuning_done && num_uncracked > 0) {
     double elapsed = get_elapsed(&precomp_start);
     gpu_time_per_hash = (gpu_count > 0) ? elapsed / gpu_count : 0;
-    struct timespec cpu_bench = {0};
-    start_timer(&cpu_bench);
-    precomputed_and_potential_indices *bench_ppi = cpu_precompute_hash(
-        args[0].hash_type, uncracked_hashes[0], uncracked_usernames[0],
-        args[0].charset, strlen(args[0].charset),
-        args[0].plaintext_len_min, args[0].plaintext_len_max,
-        args[0].reduction_offset, args[0].chain_len,
-        plaintext_space_up_to_index, plaintext_space_total);
-    cpu_time_per_hash = get_elapsed(&cpu_bench);
-    if (bench_ppi != NULL) {
-      FREE(bench_ppi->precomputed_end_indices);
-      FREE(bench_ppi);
+
+    int cpu_bench_supported = !is_netntlmv1_7(args[0].hash_type,
+        args[0].charset_name, args[0].plaintext_len_min,
+        args[0].plaintext_len_max, args[0].chain_len)
+        && plaintext_space_total > 0
+        && strlen(args[0].charset) > 0;
+
+    if (cpu_bench_supported) {
+      struct timespec cpu_bench = {0};
+      start_timer(&cpu_bench);
+      precomputed_and_potential_indices *bench_ppi = cpu_precompute_hash(
+          args[0].hash_type, uncracked_hashes[0], uncracked_usernames[0],
+          args[0].charset, strlen(args[0].charset),
+          args[0].plaintext_len_min, args[0].plaintext_len_max,
+          args[0].reduction_offset, args[0].chain_len,
+          plaintext_space_up_to_index, plaintext_space_total);
+      cpu_time_per_hash = get_elapsed(&cpu_bench);
+      if (bench_ppi != NULL) {
+        FREE(bench_ppi->precomputed_end_indices);
+        FREE(bench_ppi);
+      }
+      printf("  Auto-tune: GPU=%.3fs/hash, CPU=%.3fs/hash, %u CPU threads\n",
+             gpu_time_per_hash, cpu_time_per_hash, cpu_threads);
+    } else {
+      cpu_time_per_hash = 0;  /* leaves the split logic at GPU-only */
+      printf("  Auto-tune: GPU=%.3fs/hash, CPU bench skipped (unsupported for this charset/hash)\n",
+             gpu_time_per_hash);
     }
-    printf("  Auto-tune: GPU=%.3fs/hash, CPU=%.3fs/hash, %u CPU threads\n",
-           gpu_time_per_hash, cpu_time_per_hash, cpu_threads);
     fflush(stdout);
     tuning_done = 1;
   }
@@ -3016,6 +3054,11 @@ void gpu_binary_search(preloaded_table *pt, precomputed_and_potential_indices *p
     return;
   }
 
+  /* Set to 1 once the GPU search has run end-to-end successfully.  If it
+   * stays 0 (no VRAM buffers, kernel/queue/alloc failure, etc.) we fall
+   * back to rt_binary_search at the end of the function. */
+  int gpu_search_done = 0;
+
   /* If GPU VRAM buffers exist, try GPU path. */
   if (pt->has_gpu_tables && pt->has_gpu_bf) {
     /* Guard: bloom filter too small — GPU kernel shift/index math breaks. */
@@ -3107,6 +3150,7 @@ void gpu_binary_search(preloaded_table *pt, precomputed_and_potential_indices *p
                 }
                 ppi_cur = ppi_cur->next;
               }
+              gpu_search_done = 1;
             }
             if (input_gpu != NULL) CLFREEBUFFER(input_gpu);
             if (counts_gpu != NULL) CLFREEBUFFER(counts_gpu);
@@ -3122,7 +3166,8 @@ void gpu_binary_search(preloaded_table *pt, precomputed_and_potential_indices *p
     }
 
   /* Fallback to CPU if GPU was not used or failed. */
-  rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+  if (!gpu_search_done)
+    rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
 }
 #endif
 
