@@ -3120,7 +3120,6 @@ void gpu_binary_search(preloaded_table *pt, precomputed_and_potential_indices *p
       if (program != NULL) CLRELEASEPROGRAM(program);
       if (kernel != NULL) CLRELEASEKERNEL(kernel);
     }
-  }
 
   /* Fallback to CPU if GPU was not used or failed. */
   rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
