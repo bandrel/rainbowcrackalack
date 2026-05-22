@@ -2228,6 +2228,15 @@ void print_eta_precompute() {
 void print_eta_search(unsigned int num_tables_processed, unsigned int num_tables_total) {
   char eta_str[64] = {0};
 
+  /* Defensive: if the timer was never initialized, get_elapsed would
+   * return CLOCK_MONOTONIC's absolute value (uptime on Linux), which
+   * produces nonsense ETAs.  Bail out early in that case. */
+  if (search_start_time.tv_sec == 0 && search_start_time.tv_nsec == 0) {
+    printf("  Estimated time remaining (at most): Unknown\n");
+    fflush(stdout);
+    return;
+  }
+
   strncpy(eta_str, "Unknown", sizeof(eta_str) - 1);
   if ((num_tables_processed > 0) && (num_tables_total >= num_tables_processed)) {
     double seconds_per_table = (double)(get_elapsed(&search_start_time) / (double)num_tables_processed);
@@ -2519,6 +2528,8 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   }
   (void)charset_len;  /* used only via fill_* above; suppress unused-var warning */
 
+  start_timer(&search_start_time);
+
   while (1) {
 
     /* Count the number of uncracked hashes we have left.  Note: if a false
@@ -2573,7 +2584,21 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
      *     originals is safe.
      *   - harvest (which modifies ppi->plaintext and frees precomputed_end_indices
      *     for cracked hashes) runs AFTER binary search completes, inside the
-     *     flush block */
+     *     flush block
+     *
+     * KNOWN TIMING-BOUNDED RACE:  the worker thread spawned by
+     * launch_false_alarm_kernel performs its CLCREATEARG_ARRAY uploads
+     * (start_indices, start_index_positions, hash_base_indices — kernel
+     * arg indices 11/12/13) after pthread_create returns.  The next
+     * iteration's fa_batch_append mutates those same arrays.  In
+     * practice rt_binary_search is ~100ms while the upload is
+     * sub-millisecond, so the worker always finishes its uploads first
+     * — but there is no synchronization primitive enforcing it.  The
+     * harvest-time CPU verification (ntlm_hash + strcmp on the
+     * plaintext) catches any false positives the race could produce,
+     * so worst case is a missed crack, not a wrong one.  TODO: move
+     * those CLCREATEARG_ARRAY calls into launch_false_alarm_kernel on
+     * the main thread so the upload is synchronous. */
     rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi);
 
     num_chains_processed += pt->num_chains;
