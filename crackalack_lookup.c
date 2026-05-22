@@ -52,6 +52,7 @@
 #include "misc.h"
 #include "rtc_decompress.h"
 #include "rti2_decompress.h"
+#include "ppi.h"
 #include "shared.h"
 #include "test_shared.h"  /* TODO: move hex_to_bytes() elsewhere. */
 #include "verify.h"
@@ -106,22 +107,7 @@
 #define HASH_FILE_FORMAT_PWDUMP 2
 
 
-/* Struct to form a linked list of precomputed end indices, and potential start indices (which are usually false alarms). */
-struct _precomputed_and_potential_indices {
-  char *username;  /* Non-NULL if loaded file format is pwdump. */
-  char *hash;
-  gpu_ulong *precomputed_end_indices;
-  gpu_uint num_precomputed_end_indices;
-
-  gpu_ulong *potential_start_indices;
-  size_t num_potential_start_indices;
-  size_t potential_start_indices_size;
-  unsigned int *potential_start_index_positions; /* Buffer size is always num_potential_start_indices. */
-
-  char *plaintext;        /* Set if hash is cracked. */
-  struct _precomputed_and_potential_indices *next;
-};
-typedef struct _precomputed_and_potential_indices precomputed_and_potential_indices;
+/* precomputed_and_potential_indices definition lives in ppi.h. */
 
 
 /* Struct to represent one GPU device. */
