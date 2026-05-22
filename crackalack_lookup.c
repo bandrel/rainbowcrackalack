@@ -50,6 +50,7 @@
 #include "markov.h"
 #include "bloom.h"
 #include "misc.h"
+#include "fa_batch.h"
 #include "rtc_decompress.h"
 #include "rti2_decompress.h"
 #include "ppi.h"
@@ -229,7 +230,7 @@ void *host_thread_false_alarm(void *ptr);
 void print_eta_precompute();
 void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filter *bf, precomputed_and_potential_indices *ppi_head);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
-void launch_false_alarm_check(precomputed_and_potential_indices *ppi, thread_args *args, false_alarm_state *state);
+void launch_false_alarm_kernel(fa_batch_t *batch, thread_args *args, false_alarm_state *state);
 void harvest_false_alarm_results(false_alarm_state *state);
 void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash_type);
 
@@ -378,102 +379,42 @@ void add_potential_start_index_and_position(precomputed_and_potential_indices *p
 }
 
 
-/* Launch GPU false alarm check asynchronously.  Snapshots the potential start
- * indices from ppi into flat arrays and starts GPU threads.  The caller may
- * safely clear ppi->potential_start_indices after this returns.  Call
- * harvest_false_alarm_results() later to join threads and process results. */
-void launch_false_alarm_check(precomputed_and_potential_indices *ppi, thread_args *args, false_alarm_state *state) {
-  gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
-
-  unsigned int num_potential_start_indices = 0, i = 0, j = 0;
+/* Dispatch the false-alarm kernel for the candidates currently held in
+ * `batch`.  The batch takes ownership of arrays for the duration of the
+ * in-flight kernel; harvest_false_alarm_results joins the threads and
+ * fa_batch_reset() should be called by the caller after harvest. */
+void launch_false_alarm_kernel(fa_batch_t *batch, thread_args *args, false_alarm_state *state) {
   unsigned int total_devices = args[0].total_devices;
-  gpu_ulong plaintext_space_total = 0;
-
-  precomputed_and_potential_indices *ppi_cur = ppi;
-  gpu_ulong *potential_start_indices = NULL, *hash_base_indices = NULL;
-  unsigned int *potential_start_index_positions = NULL;
-  precomputed_and_potential_indices **ppi_refs = NULL;
 
   state->active = 0;
   state->total_devices = total_devices;
   state->args = args;
 
-  /* First count all the potential start indices. */
-  while(ppi_cur) {
-    num_potential_start_indices += ppi_cur->num_potential_start_indices;
-    ppi_cur = ppi_cur->next;
-  }
-
-  /* If no potential matches were found, there's nothing else to do. */
-  if (num_potential_start_indices == 0) {
-    printf("No matches found in table.\n");
+  if (batch->num_candidates == 0) {
+    printf("No matches found in batch.\n");
     return;
   }
-  printf("  Checking %u potential matches...\n", num_potential_start_indices);  fflush(stdout);
-  num_falsealarms += num_potential_start_indices;
+  printf("  Checking %u potential matches (across %u table%s)...\n",
+         batch->num_candidates, batch->tables_in_batch,
+         batch->tables_in_batch == 1 ? "" : "s");
+  fflush(stdout);
+  num_falsealarms += batch->num_candidates;
 
-  /* Allocate a buffer to hold them all. */
-  potential_start_indices = calloc(num_potential_start_indices, sizeof(gpu_ulong));
-  potential_start_index_positions = calloc(num_potential_start_indices, sizeof(unsigned int));
-  hash_base_indices = calloc(num_potential_start_indices, sizeof(gpu_ulong));
-  ppi_refs = calloc(num_potential_start_indices, sizeof(precomputed_and_potential_indices *));
-  if ((potential_start_indices == NULL) || (potential_start_index_positions == NULL) || (hash_base_indices == NULL) || (ppi_refs == NULL)) {
-    fprintf(stderr, "Error while creating buffer for potential start indices/positions/hash indices/ppi refs.\n");
-    exit(-1);
-  }
-  int charset_len = 0;
-  if (args->markov_keyspace > 0) {
-    charset_len = strlen(args->charset);
-    if (charset_len == 0) charset_len = 1;
-    plaintext_space_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, plaintext_space_up_to_index);
-  } else {
-    if (strcmp(args->charset_name, "byte") == 0) {
-      charset_len = 256;
-    } else {
-      charset_len = strlen(args->charset);
-    }
-    plaintext_space_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
-  }
+  /* Hand the batch arrays directly to the kernel via state.  These
+   * pointers stay valid until fa_batch_reset() / fa_batch_free(). */
+  state->potential_start_indices          = batch->start_indices;
+  state->potential_start_index_positions  = batch->start_index_positions;
+  state->hash_base_indices                = batch->hash_base_indices;
+  state->ppi_refs                         = batch->ppi_refs;
+  state->num_potential_start_indices      = batch->num_candidates;
 
-  /* Collate all the start indices into one buffer. */
-  ppi_cur = ppi;
-  while(ppi_cur) {
-    unsigned char hash[MAX_HASH_OUTPUT_LEN] = {0};
-    unsigned int hash_len = hex_to_bytes(ppi_cur->hash, sizeof(hash), hash);
-    gpu_ulong hash_base_index = hash_to_index(hash, hash_len, args->reduction_offset, plaintext_space_total, 0);  /* We always use position 0 here.  When the GPU code is comparing indices, it will add in the current position. */
-
-
-    if (ppi_cur->plaintext == NULL) {
-      for (i = 0; i < ppi_cur->num_potential_start_indices; i++, j++) {
-	potential_start_indices[j] = ppi_cur->potential_start_indices[i];
-	potential_start_index_positions[j] = ppi_cur->potential_start_index_positions[i];
-	hash_base_indices[j] = hash_base_index;
-
-	/* For this index, hold a reference to the ppi struct.  This later lets us find
-	 * the ppi, given a result index from the GPU. */
-	ppi_refs[j] = ppi_cur;
-      }
-    }
-
-    ppi_cur = ppi_cur->next;
-  }
-
-  /* Save snapshot into state so harvest can use it. */
-  state->potential_start_indices = potential_start_indices;
-  state->potential_start_index_positions = potential_start_index_positions;
-  state->hash_base_indices = hash_base_indices;
-  state->ppi_refs = ppi_refs;
-  state->num_potential_start_indices = num_potential_start_indices;
-
-  /* Start the timer for false alarm checking. */
   start_timer(&state->start_time);
 
-  /* Start one thread to control each GPU. */
-  for (i = 0; i < total_devices; i++) {
-    args[i].potential_start_indices = potential_start_indices;
-    args[i].num_potential_start_indices = num_potential_start_indices;
-    args[i].potential_start_index_positions = potential_start_index_positions;
-    args[i].hash_base_indices = hash_base_indices;
+  for (unsigned int i = 0; i < total_devices; i++) {
+    args[i].potential_start_indices         = batch->start_indices;
+    args[i].num_potential_start_indices     = batch->num_candidates;
+    args[i].potential_start_index_positions = batch->start_index_positions;
+    args[i].hash_base_indices               = batch->hash_base_indices;
 
     if (pthread_create(&(state->threads[i]), NULL, &host_thread_false_alarm, &(args[i]))) {
       perror("Failed to create thread");
@@ -482,12 +423,11 @@ void launch_false_alarm_check(precomputed_and_potential_indices *ppi, thread_arg
   }
 
   state->active = 1;
-  num_falsealarms += num_potential_start_indices;
 }
 
 
-/* Join GPU false alarm threads launched by launch_false_alarm_check(), process
- * results, and free snapshot buffers.  No-op if state->active is 0. */
+/* Join GPU false alarm threads launched by launch_false_alarm_kernel(), process
+ * results, and clear state pointers.  No-op if state->active is 0. */
 void harvest_false_alarm_results(false_alarm_state *state) {
   char time_str[128] = {0};
   unsigned int i = 0, j = 0;
@@ -614,10 +554,12 @@ void harvest_false_alarm_results(false_alarm_state *state) {
   seconds_to_human_time(time_str, sizeof(time_str), (unsigned int)time_delta);
   printf("  Completed false alarm checks in %s.\n", time_str);  fflush(stdout);
 
-  FREE(state->potential_start_indices);
-  FREE(state->potential_start_index_positions);
-  FREE(state->hash_base_indices);
-  FREE(state->ppi_refs);
+  /* Arrays belong to the batch (fa_batch_t); do NOT free them here.
+   * Clear the pointers so stale references can't escape. */
+  state->potential_start_indices         = NULL;
+  state->potential_start_index_positions = NULL;
+  state->hash_base_indices               = NULL;
+  state->ppi_refs                        = NULL;
   for (i = 0; i < state->total_devices; i++) {
     FREE(args[i].results);
     args[i].num_results = 0;
@@ -2547,6 +2489,35 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   preloaded_table *pt = NULL;
   false_alarm_state fa_state = {0};
 
+  fa_batch_t fa_batch = {0};
+  if (fa_batch_init(&fa_batch, 1, 0) != 0) {
+    fprintf(stderr, "fa_batch_init failed\n"); exit(-1);
+  }
+
+  /* Compute plaintext_space_total once per search_tables call (same logic
+   * as the old per-launch computation, now hoisted out of the dispatch path). */
+  /* plaintext_space_up_to_index is filled by fill_plaintext_space_* as a
+   * required output buffer.  The filled per-length table is not consumed
+   * here; only plaintext_space_total (the return value) is forwarded into
+   * fa_batch_append.  Kept because the fill_* helpers require the array. */
+  gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
+  uint64_t plaintext_space_total = 0;
+  int charset_len = 0;
+  if (args[0].markov_keyspace > 0) {
+    charset_len = strlen(args[0].charset);
+    if (charset_len == 0) charset_len = 1;
+    plaintext_space_total = fill_plaintext_space_markov_keyspace(
+        args[0].markov_keyspace, args[0].plaintext_len_max, plaintext_space_up_to_index);
+  } else {
+    if (strcmp(args[0].charset_name, "byte") == 0)
+      charset_len = 256;
+    else
+      charset_len = strlen(args[0].charset);
+    plaintext_space_total = fill_plaintext_space_table(
+        charset_len, args[0].plaintext_len_min, args[0].plaintext_len_max,
+        plaintext_space_up_to_index);
+  }
+  (void)charset_len;  /* used only via fill_* above; suppress unused-var warning */
 
   while (1) {
 
@@ -2566,7 +2537,12 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     /* If all the hashes were cracked, there's no need to continue processing
      * tables. */
     if (num_uncracked == 0) {
+      /* IMPORTANT: harvest must complete before fa_batch_reset.  GPU
+       * threads borrow batch arrays for the duration of the in-flight
+       * kernel; resetting (or freeing) before join would tear out memory
+       * those threads are still reading. */
       harvest_false_alarm_results(&fa_state);
+      fa_batch_reset(&fa_batch);
       printf("All hashes cracked.  Skipping rest of tables.\n");
       break;
     }
@@ -2574,7 +2550,12 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     /* Get the next preloaded table.  If NULL, we reached the end. */
     pt = get_preloaded_table();
     if (pt == NULL) {
+      /* IMPORTANT: harvest must complete before fa_batch_reset.  GPU
+       * threads borrow batch arrays for the duration of the in-flight
+       * kernel; resetting (or freeing) before join would tear out memory
+       * those threads are still reading. */
       harvest_false_alarm_results(&fa_state);
+      fa_batch_reset(&fa_batch);
       break;
     }
 
@@ -2606,21 +2587,45 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     /* Harvest results from the PREVIOUS table's false alarm check.  This
      * joins the GPU threads and processes cracked hashes.  Must happen after
      * binary search completes (since harvest may free precomputed_end_indices
-     * for cracked hashes). */
+     * for cracked hashes).  Reset the batch only after harvest — the GPU
+     * threads hold references into the batch's backing arrays until then.
+     * IMPORTANT: harvest must complete before fa_batch_reset.  GPU
+     * threads borrow batch arrays for the duration of the in-flight
+     * kernel; resetting (or freeing) before join would tear out memory
+     * those threads are still reading. */
     harvest_false_alarm_results(&fa_state);
+    fa_batch_reset(&fa_batch);
 
-    /* Launch false alarm check for THIS table.  Snapshots ppi potential
-     * start indices into flat arrays and starts GPU threads. */
-    launch_false_alarm_check(ppi, args, &fa_state);
-
-    /* Safe to clear now -- GPU has its own copy. */
+    /* Build a single-table batch for THIS table and immediately flush it
+     * (per-table cadence; Task 5 will switch to threshold-based flushing). */
+    if (fa_batch_append(&fa_batch, ppi, args[0].reduction_offset,
+                        plaintext_space_total) != 0) {
+      fprintf(stderr, "fa_batch_append failed\n"); exit(-1);
+    }
+    /* Safe to clear ppi now -- fa_batch_append has copied the indices. */
     clear_potential_start_indices(ppi);
+
+    if (fa_batch_should_flush(&fa_batch, /*force=*/1)) {
+      launch_false_alarm_kernel(&fa_batch, args, &fa_state);
+      /* harvest + reset happen at the top of the NEXT iteration so that GPU
+       * work for THIS table overlaps with binary search for the NEXT table. */
+    }
 
     printf("  Table processed in %.1f seconds.\n", get_elapsed(&start_time_table)); fflush(stdout);
     print_eta_search(num_tables_processed, total_tables);
     printf("  Cracked %u of %u hashes.\n\n", num_cracked, num_hashes);
 
   }
+
+  /* Drain any unfinished batch (matters once threshold-based flushing
+   * lands in Task 5; in per-table mode the batch is always empty here).
+   * Same harvest-before-reset rule applies here. */
+  if (fa_batch.num_candidates > 0) {
+    launch_false_alarm_kernel(&fa_batch, args, &fa_state);
+    harvest_false_alarm_results(&fa_state);
+    fa_batch_reset(&fa_batch);
+  }
+  fa_batch_free(&fa_batch);
 
   /* Free any remaining preloaded tables (i.e.: if we cracked all the hashes and quit early). */
   /* Note: technically, this may not be a complete solution, if this is reached while the preloading
