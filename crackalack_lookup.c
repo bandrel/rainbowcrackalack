@@ -285,6 +285,10 @@ unsigned int is_amd_gpu = 0;
 /* The global work size, as over-ridden by the user on the command line. */
 size_t user_provided_gws = 0;
 
+/* False-alarm batch flush threshold (candidate count).
+ * 1 disables batching (single-table-per-launch behavior). */
+unsigned int fa_batch_threshold = 16384;
+
 /* The platform number to disable (-1 to not disable any). */
 int disable_platform = -1;
 
@@ -2319,7 +2323,8 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
 
   fprintf(stderr, "%sUsage:%s %s rainbow_table_directory (single_hash | filename_with_many_hashes.txt) [-gws GWS] [-disable-platform N]\n\n", WHITEB, CLR, prog_name);
   fprintf(stderr, "    %s-gws GWS%s    (Optional) Sets the global work size for each GPU.  This can significantly affect the speed.  To tune this setting, start with multiplying the max compute units by the max work group size (both are reported on program start-up).  Then increase/decrease the value and time the results.  For example, if the max compute units is 20, and the max work group size is 1024, try using 20 x 1024 = 20480, then 20480 - 1024 = 19456, 20480 - 2048 = 18432, 2048 + 1024 = 21504, etc.  If you find a value that works better than the automatic setting, please report your findings at: https://github.com/jtesta/rainbowcrackalack/issues\n\n", WHITEB, CLR);
-  fprintf(stderr, "    %s-disable-platform N%s    (Optional) Disables a platform from being used (platform numbers are reported on program start-up).  Useful when experiencing strange problems on mixed-GPU systems.  Try disabling each platform one at a time and see if the program behaves normally.\n\n\n", WHITEB, CLR);
+  fprintf(stderr, "    %s-disable-platform N%s    (Optional) Disables a platform from being used (platform numbers are reported on program start-up).  Useful when experiencing strange problems on mixed-GPU systems.  Try disabling each platform one at a time and see if the program behaves normally.\n\n", WHITEB, CLR);
+  fprintf(stderr, "    %s--fa-batch N%s    (Optional) False-alarm batch flush threshold (default 16384; 1 disables batching).\n\n", WHITEB, CLR);
   fprintf(stderr, "%sExamples:%s\n    %s %s 64f12cddaa88057e06a81b54e73b949b\n    %s %s %shashes_one_per_line.txt\n    %s %s %spwdump.txt\n\n", WHITEB, CLR, prog_name, dir1, prog_name, dir1, dir2, prog_name, dir1, dir2);
   exit(exit_code);
 }
@@ -2683,6 +2688,10 @@ int main(int ac, char **av) {
     } else if ((strcmp(av[i], "--markov") == 0) && (i + 1 < (unsigned int)ac)) {
       use_markov = 1;
       strncpy(markov_path, av[++i], sizeof(markov_path) - 1);
+    } else if ((strcmp(av[i], "--fa-batch") == 0) && (i + 1 < (unsigned int)ac)) {
+      unsigned int v = parse_uint_arg(av[++i], "--fa-batch");
+      if (v == 0) v = 16384;       /* 0 means "use default" */
+      fa_batch_threshold = v;
     } else {
       /* Undocumented third arg: override pot filename (kept for backward compat). */
       if (i == 3 && av[i][0] != '-') {
