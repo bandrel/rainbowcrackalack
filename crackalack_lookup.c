@@ -2490,7 +2490,7 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   false_alarm_state fa_state = {0};
 
   fa_batch_t fa_batch = {0};
-  if (fa_batch_init(&fa_batch, 1, 0) != 0) {
+  if (fa_batch_init(&fa_batch, fa_batch_threshold, 0) != 0) {
     fprintf(stderr, "fa_batch_init failed\n"); exit(-1);
   }
 
@@ -2542,7 +2542,6 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
        * kernel; resetting (or freeing) before join would tear out memory
        * those threads are still reading. */
       harvest_false_alarm_results(&fa_state);
-      fa_batch_reset(&fa_batch);
       printf("All hashes cracked.  Skipping rest of tables.\n");
       break;
     }
@@ -2555,7 +2554,6 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
        * kernel; resetting (or freeing) before join would tear out memory
        * those threads are still reading. */
       harvest_false_alarm_results(&fa_state);
-      fa_batch_reset(&fa_batch);
       break;
     }
 
@@ -2564,13 +2562,18 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
 
     start_timer(&start_time_table);
 
-    /* CPU binary search for THIS table.  This runs concurrently with the
-     * GPU false alarm check from the PREVIOUS table (if any).  Safe because:
+    /* CPU binary search for THIS table.  This runs concurrently with any
+     * in-flight GPU false alarm kernel from the previous flush (if any).
+     * Safe because:
      *   - binary search reads ppi->precomputed_end_indices (not touched by GPU)
-     *   - binary search writes ppi->potential_start_indices (cleared below,
-     *     and GPU false alarm uses its own snapshot copy)
+     *   - binary search writes ppi->potential_start_indices.  fa_batch_append
+     *     copies them into the batch's flat arrays in the same iteration;
+     *     clear_potential_start_indices then frees the ppi-level originals.
+     *     The batch arrays are what the GPU reads, so clearing the ppi
+     *     originals is safe.
      *   - harvest (which modifies ppi->plaintext and frees precomputed_end_indices
-     *     for cracked hashes) runs AFTER binary search completes */
+     *     for cracked hashes) runs AFTER binary search completes, inside the
+     *     flush block */
     rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi);
 
     num_chains_processed += pt->num_chains;
@@ -2584,20 +2587,7 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     pt->num_chains = 0;
     FREE(pt);
 
-    /* Harvest results from the PREVIOUS table's false alarm check.  This
-     * joins the GPU threads and processes cracked hashes.  Must happen after
-     * binary search completes (since harvest may free precomputed_end_indices
-     * for cracked hashes).  Reset the batch only after harvest — the GPU
-     * threads hold references into the batch's backing arrays until then.
-     * IMPORTANT: harvest must complete before fa_batch_reset.  GPU
-     * threads borrow batch arrays for the duration of the in-flight
-     * kernel; resetting (or freeing) before join would tear out memory
-     * those threads are still reading. */
-    harvest_false_alarm_results(&fa_state);
-    fa_batch_reset(&fa_batch);
-
-    /* Build a single-table batch for THIS table and immediately flush it
-     * (per-table cadence; Task 5 will switch to threshold-based flushing). */
+    /* Append candidates from THIS table into the batch.  No GPU work yet. */
     if (fa_batch_append(&fa_batch, ppi, args[0].reduction_offset,
                         plaintext_space_total) != 0) {
       fprintf(stderr, "fa_batch_append failed\n"); exit(-1);
@@ -2605,10 +2595,14 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     /* Safe to clear ppi now -- fa_batch_append has copied the indices. */
     clear_potential_start_indices(ppi);
 
-    if (fa_batch_should_flush(&fa_batch, /*force=*/1)) {
+    if (fa_batch_should_flush(&fa_batch, /*force=*/0)) {
+      /* IMPORTANT: harvest must complete before fa_batch_reset.  GPU
+       * threads borrow batch arrays for the duration of the in-flight
+       * kernel; resetting (or freeing) before join would tear out memory
+       * those threads are still reading. */
+      harvest_false_alarm_results(&fa_state);
       launch_false_alarm_kernel(&fa_batch, args, &fa_state);
-      /* harvest + reset happen at the top of the NEXT iteration so that GPU
-       * work for THIS table overlaps with binary search for the NEXT table. */
+      fa_batch_reset(&fa_batch);
     }
 
     printf("  Table processed in %.1f seconds.\n", get_elapsed(&start_time_table)); fflush(stdout);
@@ -2617,9 +2611,9 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
 
   }
 
-  /* Drain any unfinished batch (matters once threshold-based flushing
-   * lands in Task 5; in per-table mode the batch is always empty here).
-   * Same harvest-before-reset rule applies here. */
+  /* Drain any candidates below the flush threshold that were never launched.
+   * With threshold-based flushing, up to (fa_batch_threshold - 1) candidates
+   * can accumulate after the last flush.  Same harvest-before-reset rule applies. */
   if (fa_batch.num_candidates > 0) {
     launch_false_alarm_kernel(&fa_batch, args, &fa_state);
     harvest_false_alarm_results(&fa_state);
