@@ -144,6 +144,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_unit_tests.o \
+	$(OBJDIR)/fa_batch.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
@@ -205,6 +206,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/clock.o \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_lookup.o \
+	$(OBJDIR)/fa_batch.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
