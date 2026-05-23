@@ -127,8 +127,10 @@ int gpu_set_kernel_threadgroup_mem(gpu_kernel kernel, unsigned int index, size_t
 
 
 /* --- Device info parameter constants --- */
-#ifdef USE_METAL
+#if defined(USE_METAL) || defined(USE_CUDA)
 
+/* Metal and CUDA have no CL/cl.h; define numeric constants that match
+ * the values used by the Metal branch (arbitrary but stable). */
 #define GPU_DEVICE_NAME                 1
 #define GPU_DEVICE_VERSION              2
 #define GPU_DEVICE_VENDOR               3
@@ -141,7 +143,8 @@ int gpu_set_kernel_threadgroup_mem(gpu_kernel kernel, unsigned int index, size_t
 #define GPU_KERNEL_WORK_GROUP_SIZE                       1
 #define GPU_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE    2
 
-/* Use GPU_* names in consumer code via macros. */
+/* Provide CL_ aliases so any consumer code that still uses CL_ names
+ * compiles cleanly under Metal and CUDA. */
 #define CL_DEVICE_NAME                GPU_DEVICE_NAME
 #define CL_DEVICE_VERSION             GPU_DEVICE_VERSION
 #define CL_DEVICE_VENDOR              GPU_DEVICE_VENDOR
