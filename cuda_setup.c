@@ -24,6 +24,13 @@
   exit(-1); \
 } while (0)
 
+/* Track which CUcontext to push.  Set once by main thread after
+ * gpu_create_context.  All worker threads push this. */
+static CUcontext g_default_context = NULL;
+
+/* Forward declaration — defined just before gpu_create_context. */
+static void cuda_remember_context(CUcontext c);
+
 /* CUDA has no equivalent context error callback.  Provide a no-op
  * definition so CLCREATECONTEXT call sites in consumer code (which
  * are still OpenCL-shaped at this point) don't fail to link. */
@@ -159,15 +166,90 @@ void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *de
   CUDA_TODO("load_kernel");
 }
 
-gpu_context gpu_create_context(gpu_device d) { (void)d; CUDA_TODO("gpu_create_context"); return NULL; }
-gpu_queue   gpu_create_queue(gpu_context c, gpu_device d) { (void)c; (void)d; CUDA_TODO("gpu_create_queue"); return NULL; }
-gpu_buffer  gpu_create_buffer(gpu_context c, int flags, size_t size) { (void)c; (void)flags; (void)size; CUDA_TODO("gpu_create_buffer"); return 0; }
-gpu_buffer  gpu_create_and_fill_buffer(gpu_context c, int flags, size_t size, const void *data) { (void)c; (void)flags; (void)size; (void)data; CUDA_TODO("gpu_create_and_fill_buffer"); return 0; }
-int gpu_write_buffer(gpu_queue q, gpu_buffer b, size_t n, const void *p) { (void)q; (void)b; (void)n; (void)p; CUDA_TODO("gpu_write_buffer"); return -1; }
-int gpu_read_buffer (gpu_queue q, gpu_buffer b, size_t n,       void *p) { (void)q; (void)b; (void)n; (void)p; CUDA_TODO("gpu_read_buffer");  return -1; }
-void gpu_release_buffer (gpu_buffer b)   { (void)b; CUDA_TODO("gpu_release_buffer"); }
-void gpu_release_queue  (gpu_queue q)    { (void)q; CUDA_TODO("gpu_release_queue"); }
-void gpu_release_context(gpu_context c)  { (void)c; CUDA_TODO("gpu_release_context"); }
+/* Called by gpu_create_context to record the context for worker threads. */
+static void cuda_remember_context(CUcontext c) {
+  g_default_context = c;
+}
+
+gpu_context gpu_create_context(gpu_device device) {
+  CUcontext ctx;
+  CUresult res = cuCtxCreate(&ctx, 0, device);
+  if (res != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(res, &err);
+    fprintf(stderr, "cuCtxCreate failed: %s\n", err ? err : "(unknown)");
+    return NULL;
+  }
+  cuda_remember_context(ctx);
+  return ctx;
+}
+
+gpu_queue gpu_create_queue(gpu_context context, gpu_device device) {
+  (void)device;
+  /* Make sure the requested context is current on this thread. */
+  CUresult res = cuCtxSetCurrent(context);
+  if (res != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(res, &err);
+    fprintf(stderr, "cuCtxSetCurrent failed: %s\n", err ? err : "(unknown)");
+    return NULL;
+  }
+  CUstream stream;
+  res = cuStreamCreate(&stream, CU_STREAM_DEFAULT);
+  if (res != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(res, &err);
+    fprintf(stderr, "cuStreamCreate failed: %s\n", err ? err : "(unknown)");
+    return NULL;
+  }
+  return stream;
+}
+
+gpu_buffer gpu_create_buffer(gpu_context context, int flags, size_t size) {
+  (void)context;  /* not needed; context is implicit on current thread */
+  (void)flags;    /* CUDA doesn't distinguish RO/WO/RW at allocation time */
+  CUdeviceptr dptr = 0;
+  CUresult res = cuMemAlloc(&dptr, size);
+  if (res != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(res, &err);
+    fprintf(stderr, "cuMemAlloc(%zu) failed: %s\n", size, err ? err : "(unknown)");
+    return 0;
+  }
+  return dptr;
+}
+
+gpu_buffer gpu_create_and_fill_buffer(gpu_context context, int flags, size_t size, const void *data) {
+  gpu_buffer buf = gpu_create_buffer(context, flags, size);
+  if (buf == 0) return 0;
+  if (data != NULL && size > 0) {
+    CUresult res = cuMemcpyHtoD(buf, data, size);
+    if (res != CUDA_SUCCESS) {
+      const char *err = NULL;
+      cuGetErrorString(res, &err);
+      fprintf(stderr, "cuMemcpyHtoD failed: %s\n", err ? err : "(unknown)");
+      cuMemFree(buf);
+      return 0;
+    }
+  }
+  return buf;
+}
+
+int gpu_write_buffer(gpu_queue queue, gpu_buffer buf, size_t size, const void *ptr) {
+  (void)queue;  /* default stream is synchronous enough; FA path uses one stream per device */
+  CUresult res = cuMemcpyHtoD(buf, ptr, size);
+  return (res == CUDA_SUCCESS) ? 0 : -1;
+}
+
+int gpu_read_buffer(gpu_queue queue, gpu_buffer buf, size_t size, void *ptr) {
+  (void)queue;
+  CUresult res = cuMemcpyDtoH(ptr, buf, size);
+  return (res == CUDA_SUCCESS) ? 0 : -1;
+}
+
+void gpu_release_buffer(gpu_buffer buf)  { if (buf != 0) cuMemFree(buf); }
+void gpu_release_queue(gpu_queue q)      { if (q) cuStreamDestroy(q); }
+void gpu_release_context(gpu_context c)  { if (c) cuCtxDestroy(c); }
 void gpu_release_kernel (gpu_kernel k)   { (void)k; /* CUfunction is owned by its module */ }
 void gpu_release_program(gpu_program p)  { (void)p; CUDA_TODO("gpu_release_program"); }
 
@@ -179,5 +261,18 @@ int gpu_get_kernel_work_group_info(gpu_kernel k, gpu_device d, unsigned int p, s
 
 /* Per-thread context lifecycle.  Worker threads call attach before any
  * CUDA call and detach after.  No-op on OpenCL/Metal backends. */
-void gpu_thread_attach(void) { CUDA_TODO("gpu_thread_attach"); }
-void gpu_thread_detach(void) { CUDA_TODO("gpu_thread_detach"); }
+void gpu_thread_attach(void) {
+  if (g_default_context == NULL) return;  /* called before any context exists */
+  CUresult res = cuCtxPushCurrent(g_default_context);
+  if (res != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(res, &err);
+    fprintf(stderr, "cuCtxPushCurrent failed in worker thread: %s\n", err ? err : "(unknown)");
+    exit(-1);
+  }
+}
+
+void gpu_thread_detach(void) {
+  CUcontext old;
+  cuCtxPopCurrent(&old);  /* ignore errors; if no context was pushed, this is a no-op */
+}
