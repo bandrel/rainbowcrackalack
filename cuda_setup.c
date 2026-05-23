@@ -28,6 +28,41 @@
  * gpu_create_context.  All worker threads push this. */
 static CUcontext g_default_context = NULL;
 
+/* Per-kernel arg table.  CUfunction is opaque; we key by pointer
+ * value into a small linear list.  Each kernel call site can have
+ * at most CUDA_MAX_KERNEL_ARGS args.  Keep slots indexed by the
+ * arg_index passed to gpu_set_kernel_arg. */
+#define CUDA_MAX_KERNEL_ARGS    32
+#define CUDA_MAX_TRACKED_KERNELS 64
+
+typedef struct {
+  CUfunction kernel;
+  /* Storage for arg VALUES (not the host buffer's address).
+   * For CUdeviceptr args, value is the CUdeviceptr itself, stored in
+   * cuda_arg_storage[slot].  kernelParams holds pointers INTO this
+   * storage array. */
+  CUdeviceptr storage[CUDA_MAX_KERNEL_ARGS];
+  void       *params [CUDA_MAX_KERNEL_ARGS];
+  unsigned int max_set_index;  /* highest arg_index set + 1 */
+} cuda_kernel_args;
+
+static cuda_kernel_args g_cuda_arg_tables[CUDA_MAX_TRACKED_KERNELS];
+static unsigned int     g_cuda_arg_tables_used = 0;
+
+static cuda_kernel_args *cuda_get_arg_table(CUfunction k) {
+  for (unsigned int i = 0; i < g_cuda_arg_tables_used; i++)
+    if (g_cuda_arg_tables[i].kernel == k) return &g_cuda_arg_tables[i];
+  if (g_cuda_arg_tables_used >= CUDA_MAX_TRACKED_KERNELS) {
+    fprintf(stderr, "cuda_setup: too many tracked kernels (max %d)\n",
+            CUDA_MAX_TRACKED_KERNELS);
+    exit(-1);
+  }
+  cuda_kernel_args *t = &g_cuda_arg_tables[g_cuda_arg_tables_used++];
+  memset(t, 0, sizeof(*t));
+  t->kernel = k;
+  return t;
+}
+
 /* Forward declaration — defined just before gpu_create_context. */
 static void cuda_remember_context(CUcontext c);
 
@@ -253,11 +288,90 @@ void gpu_release_context(gpu_context c)  { if (c) cuCtxDestroy(c); }
 void gpu_release_kernel (gpu_kernel k)   { (void)k; /* CUfunction is owned by its module */ }
 void gpu_release_program(gpu_program p)  { (void)p; CUDA_TODO("gpu_release_program"); }
 
-int gpu_set_kernel_arg(gpu_kernel k, unsigned int idx, size_t size, const void *value) { (void)k; (void)idx; (void)size; (void)value; CUDA_TODO("gpu_set_kernel_arg"); return -1; }
-int gpu_enqueue_kernel(gpu_queue q, gpu_kernel k, unsigned int dim, size_t *gws) { (void)q; (void)k; (void)dim; (void)gws; CUDA_TODO("gpu_enqueue_kernel"); return -1; }
-int gpu_flush (gpu_queue q) { (void)q; CUDA_TODO("gpu_flush");  return -1; }
-int gpu_finish(gpu_queue q) { (void)q; CUDA_TODO("gpu_finish"); return -1; }
-int gpu_get_kernel_work_group_info(gpu_kernel k, gpu_device d, unsigned int p, size_t sz, void *val) { (void)k; (void)d; (void)p; (void)sz; (void)val; CUDA_TODO("gpu_get_kernel_work_group_info"); return -1; }
+int gpu_set_kernel_arg(gpu_kernel k, unsigned int idx, size_t size, const void *value) {
+  if (idx >= CUDA_MAX_KERNEL_ARGS) {
+    fprintf(stderr, "gpu_set_kernel_arg: index %u exceeds max %d\n",
+            idx, CUDA_MAX_KERNEL_ARGS);
+    return -1;
+  }
+  cuda_kernel_args *t = cuda_get_arg_table(k);
+  /* All our args are pointer-sized (CUdeviceptr).  Store the value
+   * (which the caller hands us as &buffer) into storage[idx] and
+   * point params[idx] at that storage slot. */
+  if (size != sizeof(CUdeviceptr)) {
+    fprintf(stderr, "gpu_set_kernel_arg: unsupported arg size %zu (only ptr-sized supported)\n", size);
+    return -1;
+  }
+  t->storage[idx] = *(const CUdeviceptr *)value;
+  t->params[idx]  = &t->storage[idx];
+  if (idx + 1 > t->max_set_index) t->max_set_index = idx + 1;
+  return 0;
+}
+
+int gpu_enqueue_kernel(gpu_queue q, gpu_kernel k, unsigned int dim, size_t *gws) {
+  (void)dim;  /* always 1 in this codebase */
+  cuda_kernel_args *t = cuda_get_arg_table(k);
+
+  /* Block size choice: match OpenCL's CLRUNKERNEL local-work-size of 256.
+   * Grid size = ceil(gws / block_size). */
+  unsigned int block_size = 256;
+  unsigned int grid_size = (unsigned int)((gws[0] + block_size - 1) / block_size);
+  if (grid_size == 0) grid_size = 1;
+
+  CUresult res = cuLaunchKernel(k,
+                                grid_size, 1, 1,
+                                block_size, 1, 1,
+                                /*sharedMemBytes=*/ 0,
+                                q,
+                                t->params,
+                                NULL);
+  if (res != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(res, &err);
+    fprintf(stderr, "cuLaunchKernel failed: %s\n", err ? err : "(unknown)");
+    return -1;
+  }
+  return 0;
+}
+
+int gpu_flush(gpu_queue q) {
+  /* CUDA streams don't have an explicit flush; cuStreamSynchronize
+   * is the closest equivalent and matches the OpenCL CLFLUSH semantics
+   * used by callers (which then call CLWAIT immediately after). */
+  (void)q;
+  return 0;
+}
+
+int gpu_finish(gpu_queue q) {
+  CUresult res = cuStreamSynchronize(q);
+  return (res == CUDA_SUCCESS) ? 0 : -1;
+}
+
+int gpu_get_kernel_work_group_info(gpu_kernel k, gpu_device d, unsigned int param, size_t param_size, void *value) {
+  (void)d;
+  int v = 0;
+  CUresult res = CUDA_SUCCESS;
+  switch (param) {
+    case GPU_KERNEL_WORK_GROUP_SIZE:
+      res = cuFuncGetAttribute(&v, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, k);
+      break;
+    case GPU_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE:
+      /* CUDA's warp size = 32 on all current NVIDIA GPUs. */
+      v = 32;
+      break;
+    default:
+      v = 0;
+  }
+  if (res != CUDA_SUCCESS) return -1;
+  if (param_size == sizeof(size_t)) {
+    *(size_t *)value = (size_t)v;
+  } else if (param_size == sizeof(unsigned int)) {
+    *(unsigned int *)value = (unsigned int)v;
+  } else {
+    return -1;
+  }
+  return 0;
+}
 
 /* Per-thread context lifecycle.  Worker threads call attach before any
  * CUDA call and detach after.  No-op on OpenCL/Metal backends. */
