@@ -31,21 +31,124 @@ void context_callback(const char *errinfo, const void *private_info, size_t cb, 
   (void)errinfo; (void)private_info; (void)cb; (void)user_data;
 }
 
+/* CUDA has no platform concept.  We expose a single dummy platform
+ * (index 0) so the existing 2-arg consumer API works unchanged. */
 void get_platforms_and_devices(int disable_platform,
                                gpu_uint platforms_buffer_size, gpu_platform *platforms, gpu_uint *num_platforms,
                                gpu_uint devices_buffer_size,   gpu_device   *devices,   gpu_uint *num_devices,
                                unsigned int verbose) {
-  (void)disable_platform; (void)platforms_buffer_size; (void)platforms;
-  (void)num_platforms;    (void)devices_buffer_size;   (void)devices;
-  (void)num_devices;      (void)verbose;
-  CUDA_TODO("get_platforms_and_devices");
+  (void)disable_platform;  /* CUDA: only one "platform"; flag is a no-op */
+  (void)verbose;
+
+  CUresult res = cuInit(0);
+  if (res != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(res, &err);
+    fprintf(stderr, "cuInit failed: %s\n", err ? err : "(unknown)");
+    exit(-1);
+  }
+
+  int device_count = 0;
+  res = cuDeviceGetCount(&device_count);
+  if (res != CUDA_SUCCESS || device_count == 0) {
+    const char *err = NULL;
+    cuGetErrorString(res, &err);
+    fprintf(stderr, "cuDeviceGetCount failed or no devices: %s\n", err ? err : "(none)");
+    exit(-1);
+  }
+
+  if (platforms_buffer_size >= 1 && platforms != NULL)
+    platforms[0] = 0;
+  if (num_platforms != NULL)
+    *num_platforms = 1;
+
+  unsigned int n = (unsigned int)device_count;
+  if (n > devices_buffer_size) n = devices_buffer_size;
+  for (unsigned int i = 0; i < n; i++) {
+    CUdevice dev;
+    res = cuDeviceGet(&dev, (int)i);
+    if (res != CUDA_SUCCESS) {
+      const char *err = NULL;
+      cuGetErrorString(res, &err);
+      fprintf(stderr, "cuDeviceGet(%u) failed: %s\n", i, err ? err : "(unknown)");
+      exit(-1);
+    }
+    devices[i] = dev;
+  }
+  if (num_devices != NULL)
+    *num_devices = n;
 }
 
-void get_device_bool(gpu_device d, unsigned int p, gpu_bool *b)      { (void)d; (void)p; (void)b;  CUDA_TODO("get_device_bool"); }
-void get_device_str (gpu_device d, unsigned int p, char *buf, int n) { (void)d; (void)p; (void)buf; (void)n; CUDA_TODO("get_device_str"); }
-void get_device_uint(gpu_device d, unsigned int p, gpu_uint *u)      { (void)d; (void)p; (void)u;  CUDA_TODO("get_device_uint"); }
-void get_device_ulong(gpu_device d, unsigned int p, gpu_ulong *ul)   { (void)d; (void)p; (void)ul; CUDA_TODO("get_device_ulong"); }
-void print_device_info(gpu_device *devices, gpu_uint n)              { (void)devices; (void)n;     CUDA_TODO("print_device_info"); }
+void get_device_str(gpu_device device, unsigned int param, char *buf, int buf_len) {
+  switch (param) {
+    case GPU_DEVICE_NAME:
+      cuDeviceGetName(buf, buf_len, device);
+      break;
+    case GPU_DEVICE_VENDOR:
+      /* CUDA doesn't expose a vendor string; force "NVIDIA Corporation". */
+      snprintf(buf, buf_len, "NVIDIA Corporation");
+      break;
+    case GPU_DEVICE_VERSION:
+    case GPU_DRIVER_VERSION: {
+      int driver = 0;
+      cuDriverGetVersion(&driver);
+      snprintf(buf, buf_len, "CUDA %d.%d", driver / 1000, (driver % 100) / 10);
+      break;
+    }
+    default:
+      buf[0] = '\0';
+  }
+}
+
+void get_device_bool(gpu_device device, unsigned int param, gpu_bool *b) {
+  (void)device;
+  if (param == GPU_DEVICE_AVAILABLE) { *b = GPU_TRUE; return; }
+  *b = GPU_FALSE;
+}
+
+void get_device_uint(gpu_device device, unsigned int param, gpu_uint *u) {
+  int v = 0;
+  switch (param) {
+    case GPU_DEVICE_MAX_COMPUTE_UNITS:
+      cuDeviceGetAttribute(&v, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device);
+      break;
+    case GPU_DEVICE_MAX_WORK_GROUP_SIZE:
+      cuDeviceGetAttribute(&v, CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK, device);
+      break;
+    default:
+      v = 0;
+  }
+  *u = (gpu_uint)v;
+}
+
+void get_device_ulong(gpu_device device, unsigned int param, gpu_ulong *ul) {
+  size_t total = 0;
+  switch (param) {
+    case GPU_DEVICE_GLOBAL_MEM_SIZE:
+      cuDeviceTotalMem(&total, device);
+      break;
+    default:
+      total = 0;
+  }
+  *ul = (gpu_ulong)total;
+}
+
+void print_device_info(gpu_device *devices, gpu_uint num_devices) {
+  /* The lookup binary's existing startup banner prints platform/device
+   * info by calling get_device_str/uint/ulong directly.  This function
+   * is called from a few utility binaries that want a one-shot dump. */
+  for (gpu_uint i = 0; i < num_devices; i++) {
+    char buf[256] = {0};
+    gpu_uint cu = 0, max_wg = 0;
+    gpu_ulong mem = 0;
+    get_device_str(devices[i], GPU_DEVICE_NAME, buf, sizeof(buf));
+    get_device_uint(devices[i], GPU_DEVICE_MAX_COMPUTE_UNITS, &cu);
+    get_device_uint(devices[i], GPU_DEVICE_MAX_WORK_GROUP_SIZE, &max_wg);
+    get_device_ulong(devices[i], GPU_DEVICE_GLOBAL_MEM_SIZE, &mem);
+    printf("Device #%u: %s (SMs=%u, max-threads/block=%u, mem=%llu MB)\n",
+           i, buf, cu, max_wg, (unsigned long long)(mem / (1024ULL * 1024ULL)));
+  }
+}
 void gpu_release_device(gpu_device d)                                 { (void)d; /* no-op: CUDA does not require release */ }
 
 void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *devices,
