@@ -74,6 +74,14 @@
 #define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.metal"
 #define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "precompute_ntlm8_batch.metal"
 #define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH "precompute_netntlmv1_7_batch.metal"
+#elif defined(USE_CUDA)
+#define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
+#define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.cl"
+#define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.cl"
+#define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.cl"
+#define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.cl"
+#define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "precompute_ntlm8_batch.cl"
+#define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH "CUDA/precompute_netntlmv1_7_batch.cu"
 #else
 #define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
 #define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.cl"
@@ -90,8 +98,13 @@
 #define FALSE_ALARM_NTLM9_KERNEL_PATH "false_alarm_check_ntlm9.cl"
 #define FALSE_ALARM_MD5_8_KERNEL_PATH "false_alarm_check_md5_8.cl"
 #define FALSE_ALARM_MD5_9_KERNEL_PATH "false_alarm_check_md5_9.cl"
+#ifdef USE_CUDA
+#define PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH "CUDA/precompute_netntlmv1_7.cu"
+#define FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH "CUDA/false_alarm_check_netntlmv1_7.cu"
+#else
 #define PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH "precompute_netntlmv1_7.cl"
 #define FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH "false_alarm_check_netntlmv1_7.cl"
+#endif
 #ifdef USE_METAL
 #define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.metal"
 #define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.metal"
