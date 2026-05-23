@@ -324,6 +324,66 @@ void gpu_thread_detach(void);
 #define CLRELEASEPROGRAM(_program) \
   if (_program != NULL) { gpu_release_program(_program); _program = NULL; }
 
+#elif defined(USE_CUDA)
+
+/* The CUDA path matches Metal's pattern: gpu_create_and_fill_buffer
+ * does the alloc+upload in one call, and gpu_set_kernel_arg stores
+ * the buffer pointer in a per-kernel side table for the eventual
+ * cuLaunchKernel.  Macros are otherwise identical to the Metal branch
+ * except buffer NULL sentinel: CUdeviceptr is an integer, so compare
+ * with 0, not NULL. */
+#define _CLCREATEARG(_arg_index, _buffer, _flags, _arg_ptr, _arg_size) \
+  { _buffer = gpu_create_and_fill_buffer(context, _flags, _arg_size, _arg_ptr); \
+  if (_buffer == 0) { fprintf(stderr, "Error while creating buffer for \"%s\".\n", #_arg_ptr); exit(-1); } \
+  if (gpu_set_kernel_arg(kernel, _arg_index, sizeof(gpu_buffer), &_buffer) != 0) { fprintf(stderr, "Error setting kernel argument for %s at index %u.\n", #_arg_ptr, _arg_index); exit(-1); } }
+
+#define CLCREATEARG_ARRAY(_arg_index, _buffer, _flags, _arg, _len) \
+  _CLCREATEARG(_arg_index, _buffer, _flags, _arg, _len);
+
+#define CLCREATEARG(_arg_index, _buffer, _flags, _arg, _arg_size) \
+  _CLCREATEARG(_arg_index, _buffer, _flags, &_arg, _arg_size);
+
+#define CLCREATEARG_DEBUG(_arg_index, _debug_buffer, _debug_ptr) \
+  { _debug_ptr = calloc(DEBUG_LEN, sizeof(unsigned char)); \
+    CLCREATEARG_ARRAY(_arg_index, _debug_buffer, GPU_RW, _debug_ptr, DEBUG_LEN); }
+
+#define CLCREATECONTEXT(_context_callback, _device_ptr) \
+  gpu_create_context(*(_device_ptr))
+
+#define CLCREATEQUEUE(_context, _device) \
+  ((void)err, gpu_create_queue(_context, _device))
+
+#define CLRUNKERNEL(_queue, _kernel, _gws_ptr) \
+  { err = gpu_enqueue_kernel(_queue, _kernel, 1, _gws_ptr); if (err != 0) { fprintf(stderr, "gpu_enqueue_kernel failed: %d\n", err); exit(-1); } }
+
+#define CLFLUSH(_queue) \
+  { err = gpu_flush(_queue); if (err != 0) { fprintf(stderr, "gpu_flush failed: %d\n", err); exit(-1); } }
+
+#define CLWAIT(_queue) \
+  { err = gpu_finish(_queue); if (err != 0) { fprintf(stderr, "gpu_finish failed: %d\n", err); exit(-1); } }
+
+#define CLWRITEBUFFER(_buffer, _len, _ptr) \
+  { err = gpu_write_buffer(queue, _buffer, _len, _ptr); \
+  if (err != 0) { fprintf(stderr, "gpu_write_buffer failed: %d\n", err); exit(-1); } }
+
+#define CLREADBUFFER(_buffer, _len, _ptr) \
+  { err = gpu_read_buffer(queue, _buffer, _len, _ptr); if (err != 0) { fprintf(stderr, "gpu_read_buffer failed: %d\n", err); exit(-1); } }
+
+#define CLFREEBUFFER(_buffer) \
+  if (_buffer != 0) { gpu_release_buffer(_buffer); _buffer = 0; }
+
+#define CLRELEASEQUEUE(_queue) \
+  if (_queue != NULL) { gpu_release_queue(_queue); _queue = NULL; }
+
+#define CLRELEASECONTEXT(_context) \
+  if (_context != NULL) { gpu_release_context(_context); _context = NULL; }
+
+#define CLRELEASEKERNEL(_kernel) \
+  if (_kernel != NULL) { gpu_release_kernel(_kernel); _kernel = NULL; }
+
+#define CLRELEASEPROGRAM(_program) \
+  if (_program != NULL) { gpu_release_program(_program); _program = NULL; }
+
 #else /* OpenCL backend - original macros */
 
 #define _CLCREATEARG(_arg_index, _buffer, _flags, _arg_ptr, _arg_size) \
