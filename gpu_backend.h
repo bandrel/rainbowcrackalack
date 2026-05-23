@@ -35,6 +35,31 @@ typedef int      gpu_bool;
 
 #define DEFAULT_BUILD_OPTIONS "-I. -IMetal"
 
+#elif defined(USE_CUDA)
+
+#include <cuda.h>
+
+typedef CUdevice      gpu_device;
+typedef CUcontext     gpu_context;
+typedef CUstream      gpu_queue;
+typedef CUmodule      gpu_program;
+typedef CUfunction    gpu_kernel;
+typedef CUdeviceptr   gpu_buffer;  /* Integer type; CUDA-branch macros use 0, not NULL, as the sentinel value. */
+typedef uint32_t      gpu_uint;
+typedef uint64_t      gpu_ulong;
+typedef int           gpu_int;
+typedef int           gpu_bool;
+typedef int           gpu_platform;  /* CUDA has no platform concept; use int placeholder */
+
+#define GPU_RO  0x1
+#define GPU_WO  0x2
+#define GPU_RW  0x3
+
+#define GPU_TRUE  1
+#define GPU_FALSE 0
+
+#define GPU_SUCCESS 0
+
 #else /* OpenCL backend */
 
 #define CL_TARGET_OPENCL_VERSION 200
