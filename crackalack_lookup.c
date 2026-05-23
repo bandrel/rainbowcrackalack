@@ -400,6 +400,12 @@ void launch_false_alarm_kernel(fa_batch_t *batch, thread_args *args, false_alarm
   fflush(stdout);
   num_falsealarms += batch->num_candidates;
 
+  /* Sort by chain position so consecutive work items (which the kernel
+   * dispatches into the same warp) have similar walk lengths.  Reduces
+   * GPU warp divergence — each warp runs at the speed of its longest
+   * chain, so uniform-length warps are dramatically faster. */
+  fa_batch_sort_by_position(batch);
+
   /* Hand the batch arrays directly to the kernel via state.  These
    * pointers stay valid until fa_batch_reset() / fa_batch_free(). */
   state->potential_start_indices          = batch->start_indices;

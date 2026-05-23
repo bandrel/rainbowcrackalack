@@ -58,4 +58,10 @@ int  fa_batch_append(fa_batch_t *b,
  * Caller passes `force=1` at end-of-config-group / all-cracked. */
 int  fa_batch_should_flush(const fa_batch_t *b, int force);
 
+/* Sort the batch's parallel arrays in place by start_index_positions
+ * (ascending).  Reduces GPU warp divergence by clustering candidates
+ * with similar chain-walk lengths into the same warp.  Safe to call
+ * on an empty batch (no-op). */
+void fa_batch_sort_by_position(fa_batch_t *b);
+
 #endif /* _FA_BATCH_H */

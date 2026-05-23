@@ -110,3 +110,45 @@ int fa_batch_should_flush(const fa_batch_t *b, int force) {
   if (b->flush_threshold <= 1)        return b->num_candidates > 0;
   return b->num_candidates >= b->flush_threshold;
 }
+
+/* Packed entry for the sort.  Keeps the four parallel arrays aligned
+ * by reordering all four together. */
+typedef struct {
+  uint64_t      start_index;
+  unsigned int  position;
+  uint64_t      hash_base_index;
+  precomputed_and_potential_indices *ppi_ref;
+} fa_batch_entry;
+
+static int fa_batch_entry_cmp(const void *a, const void *b) {
+  unsigned int pa = ((const fa_batch_entry *)a)->position;
+  unsigned int pb = ((const fa_batch_entry *)b)->position;
+  if (pa < pb) return -1;
+  if (pa > pb) return  1;
+  return 0;
+}
+
+void fa_batch_sort_by_position(fa_batch_t *b) {
+  if (b->num_candidates < 2) return;
+
+  fa_batch_entry *tmp = malloc(b->num_candidates * sizeof(*tmp));
+  if (tmp == NULL) return;  /* skip sort on alloc failure; correctness unaffected */
+
+  for (unsigned int i = 0; i < b->num_candidates; i++) {
+    tmp[i].start_index     = b->start_indices[i];
+    tmp[i].position        = b->start_index_positions[i];
+    tmp[i].hash_base_index = b->hash_base_indices[i];
+    tmp[i].ppi_ref         = b->ppi_refs[i];
+  }
+
+  qsort(tmp, b->num_candidates, sizeof(*tmp), fa_batch_entry_cmp);
+
+  for (unsigned int i = 0; i < b->num_candidates; i++) {
+    b->start_indices[i]         = tmp[i].start_index;
+    b->start_index_positions[i] = tmp[i].position;
+    b->hash_base_indices[i]     = tmp[i].hash_base_index;
+    b->ppi_refs[i]              = tmp[i].ppi_ref;
+  }
+
+  free(tmp);
+}
