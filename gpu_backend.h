@@ -37,6 +37,8 @@ typedef int      gpu_bool;
 
 #elif defined(USE_CUDA)
 
+#define DEFAULT_BUILD_OPTIONS "-I. -ICUDA"
+
 #include <cuda.h>
 
 typedef CUdevice      gpu_device;
@@ -189,6 +191,25 @@ void gpu_release_context(gpu_context context);
 void gpu_release_kernel(gpu_kernel kernel);
 void gpu_release_program(gpu_program program);
 
+#elif defined(USE_CUDA)
+
+gpu_buffer  gpu_create_and_fill_buffer(gpu_context context, int flags, size_t size, const void *data);
+gpu_context gpu_create_context(gpu_device device);
+gpu_queue   gpu_create_queue(gpu_context context, gpu_device device);
+gpu_buffer  gpu_create_buffer(gpu_context context, int flags, size_t size);
+int gpu_write_buffer(gpu_queue queue, gpu_buffer buffer, size_t size, const void *ptr);
+int gpu_read_buffer(gpu_queue queue, gpu_buffer buffer, size_t size, void *ptr);
+int gpu_set_kernel_arg(gpu_kernel kernel, unsigned int arg_index, size_t arg_size, const void *arg_value);
+int gpu_enqueue_kernel(gpu_queue queue, gpu_kernel kernel, unsigned int work_dim, size_t *global_work_size);
+int gpu_flush(gpu_queue queue);
+int gpu_finish(gpu_queue queue);
+int gpu_get_kernel_work_group_info(gpu_kernel kernel, gpu_device device, unsigned int param, size_t param_size, void *param_value);
+void gpu_release_buffer(gpu_buffer buffer);
+void gpu_release_queue(gpu_queue queue);
+void gpu_release_context(gpu_context context);
+void gpu_release_kernel(gpu_kernel kernel);
+void gpu_release_program(gpu_program program);
+
 #else /* OpenCL backend - declare extern function pointers from opencl_setup.c */
 
 void *rc_dlopen(char *library_name);
@@ -222,6 +243,19 @@ extern cl_int (*rc_clReleaseProgram)(cl_program);
 extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 
 #endif /* USE_METAL */
+
+
+/* --- Per-thread context lifecycle --- */
+/* CUDA requires that each worker thread attach/detach from the context.
+ * OpenCL and Metal have no equivalent; the macros below make call sites
+ * backend-agnostic so the same host code compiles everywhere. */
+#ifdef USE_CUDA
+void gpu_thread_attach(void);
+void gpu_thread_detach(void);
+#else
+#define gpu_thread_attach() ((void)0)
+#define gpu_thread_detach() ((void)0)
+#endif
 
 
 /* --- Convenience macros (backward compatible) --- */
