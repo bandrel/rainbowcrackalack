@@ -397,6 +397,42 @@ static int group_j(void) {
   fa_batch_append(&b3, q, 0, 1000);
   if (!fa_batch_should_flush(&b3, 0))          { fprintf(stderr, "J-09 fa-batch=1 should flush\n"); ok = 0; }
 
+  /* J-10: sort orders all four parallel arrays by start_index_positions. */
+  fa_batch_t b4 = {0};
+  fa_batch_init(&b4, 16384, 0);
+  uint64_t   s4[5]  = { 0xA0, 0xB0, 0xC0, 0xD0, 0xE0 };
+  unsigned int p4[5] = {  500,  100,  300,  900,  200 };
+  precomputed_and_potential_indices *q4 =
+    mk_ppi("0123456789abcdef0123456789abcdef", s4, p4, 5, 0);
+  fa_batch_append(&b4, q4, 0, 1000);
+  fa_batch_sort_by_position(&b4);
+
+  if (b4.num_candidates != 5)                  { fprintf(stderr, "J-10a count wrong\n"); ok = 0; }
+  if (b4.start_index_positions[0] != 100 ||
+      b4.start_index_positions[1] != 200 ||
+      b4.start_index_positions[2] != 300 ||
+      b4.start_index_positions[3] != 500 ||
+      b4.start_index_positions[4] != 900)      { fprintf(stderr, "J-10b positions not sorted\n"); ok = 0; }
+  /* start_indices must move with positions: position 100 maps to start 0xB0, etc. */
+  if (b4.start_indices[0] != 0xB0 ||
+      b4.start_indices[1] != 0xE0 ||
+      b4.start_indices[2] != 0xC0 ||
+      b4.start_indices[3] != 0xA0 ||
+      b4.start_indices[4] != 0xD0)             { fprintf(stderr, "J-10c start_indices misaligned\n"); ok = 0; }
+  /* ppi_refs all point to the same q4 in this case. */
+  if (b4.ppi_refs[0] != q4 ||
+      b4.ppi_refs[4] != q4)                    { fprintf(stderr, "J-10d ppi_refs lost\n"); ok = 0; }
+
+  fa_batch_free(&b4);
+  free_ppi(q4);
+
+  /* J-11: sort on empty batch is a no-op (no crash). */
+  fa_batch_t b5 = {0};
+  fa_batch_init(&b5, 16384, 0);
+  fa_batch_sort_by_position(&b5);
+  if (b5.num_candidates != 0)                  { fprintf(stderr, "J-11 empty batch mutated\n"); ok = 0; }
+  fa_batch_free(&b5);
+
   fa_batch_free(&b);
   fa_batch_free(&b2);
   fa_batch_free(&b3);
