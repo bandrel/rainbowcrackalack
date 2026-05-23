@@ -2428,8 +2428,13 @@ void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filte
   }
 
   s_time = get_elapsed(&start_time_searching);
-  seconds_to_human_time(time_searching_str, sizeof(time_searching_str), s_time);
-  printf("  Table searched in %s.\n", time_searching_str);  fflush(stdout);
+  if (s_time < 1.0)
+    printf("  Table searched in %.1f ms.\n", s_time * 1000.0);
+  else {
+    seconds_to_human_time(time_searching_str, sizeof(time_searching_str), s_time);
+    printf("  Table searched in %s.\n", time_searching_str);
+  }
+  fflush(stdout);
 
   time_searching += s_time;
   FREE(args);
@@ -2636,7 +2641,14 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
       fa_batch_reset(&fa_batch);
     }
 
-    printf("  Table processed in %.1f seconds.\n", get_elapsed(&start_time_table)); fflush(stdout);
+    {
+      double t = get_elapsed(&start_time_table);
+      if (t < 1.0)
+        printf("  Table processed in %.1f ms.\n", t * 1000.0);
+      else
+        printf("  Table processed in %.1f seconds.\n", t);
+      fflush(stdout);
+    }
     print_eta_search(num_tables_processed, total_tables);
     printf("  Cracked %u of %u hashes.\n\n", num_cracked, num_hashes);
 
