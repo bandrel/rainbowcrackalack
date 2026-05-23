@@ -9,10 +9,12 @@
  * implementation lands in later tasks.
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <cuda.h>
 #include <nvrtc.h>
@@ -193,12 +195,176 @@ void print_device_info(gpu_device *devices, gpu_uint num_devices) {
 }
 void gpu_release_device(gpu_device d)                                 { (void)d; /* no-op: CUDA does not require release */ }
 
+/* Read entire file into a malloc'd, NUL-terminated buffer.  Returns NULL on error. */
+static char *cuda_read_file(const char *path) {
+  FILE *f = fopen(path, "rb");
+  if (!f) {
+    fprintf(stderr, "cuda_setup: failed to open '%s': %s\n", path, strerror(errno));
+    return NULL;
+  }
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (n < 0) { fclose(f); return NULL; }
+  char *buf = malloc((size_t)n + 1);
+  if (!buf) { fclose(f); return NULL; }
+  if (fread(buf, 1, (size_t)n, f) != (size_t)n) { free(buf); fclose(f); return NULL; }
+  buf[n] = '\0';
+  fclose(f);
+  return buf;
+}
+
+/* Recursively resolve #include "foo.cu" / "foo.cl" lines by inlining the
+ * referenced file's contents.  `dir` is the directory of the file being
+ * resolved (where included files are looked up).  Returns a malloc'd
+ * NUL-terminated buffer with all includes inlined. */
+static char *cuda_resolve_includes(const char *src, const char *dir) {
+  /* Quick-and-dirty: scan for lines starting with `#include "`, inline,
+   * repeat until no more includes remain.  Adequate for the project's
+   * small, well-formed kernel sources. */
+  size_t cap = strlen(src) + 1;
+  char *out = malloc(cap);
+  if (!out) return NULL;
+  memcpy(out, src, cap);
+
+  for (;;) {
+    char *inc = strstr(out, "#include \"");
+    if (!inc) break;
+    /* Find newline ending the directive. */
+    char *nl = strchr(inc, '\n');
+    if (!nl) { fprintf(stderr, "cuda_setup: malformed #include\n"); free(out); return NULL; }
+    /* Extract the quoted filename. */
+    char *q1 = inc + strlen("#include \"");
+    char *q2 = strchr(q1, '\"');
+    if (!q2 || q2 > nl) { fprintf(stderr, "cuda_setup: malformed #include\n"); free(out); return NULL; }
+    char inc_name[256];
+    size_t name_len = (size_t)(q2 - q1);
+    if (name_len >= sizeof(inc_name)) { fprintf(stderr, "cuda_setup: #include name too long\n"); free(out); return NULL; }
+    memcpy(inc_name, q1, name_len);
+    inc_name[name_len] = '\0';
+
+    char inc_path[512];
+    snprintf(inc_path, sizeof(inc_path), "%s/%s", dir, inc_name);
+    char *inc_src = cuda_read_file(inc_path);
+    if (!inc_src) { free(out); return NULL; }
+
+    /* Replace the #include line with the inlined source. */
+    size_t before_len = (size_t)(inc - out);
+    size_t after_len  = strlen(nl + 1);
+    size_t inc_len    = strlen(inc_src);
+    size_t new_size   = before_len + inc_len + 1 + after_len + 1;
+    char *new_out = malloc(new_size);
+    if (!new_out) { free(out); free(inc_src); return NULL; }
+    memcpy(new_out, out, before_len);
+    memcpy(new_out + before_len, inc_src, inc_len);
+    new_out[before_len + inc_len] = '\n';
+    memcpy(new_out + before_len + inc_len + 1, nl + 1, after_len + 1);
+
+    free(out);
+    free(inc_src);
+    out = new_out;
+  }
+
+  return out;
+}
+
+static const char *cuda_dirname(const char *path, char *buf, size_t buf_size) {
+  const char *slash = strrchr(path, '/');
+  if (!slash) { snprintf(buf, buf_size, "."); return buf; }
+  size_t n = (size_t)(slash - path);
+  if (n >= buf_size) n = buf_size - 1;
+  memcpy(buf, path, n);
+  buf[n] = '\0';
+  return buf;
+}
+
 void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *devices,
                  const char *path, const char *kernel_name,
                  gpu_program *program, gpu_kernel *kernel, unsigned int hash_type) {
-  (void)context; (void)num_devices; (void)devices; (void)path; (void)kernel_name;
-  (void)program; (void)kernel;      (void)hash_type;
-  CUDA_TODO("load_kernel");
+  (void)context; (void)num_devices; (void)hash_type;
+
+  /* Read kernel source and resolve includes. */
+  char *src = cuda_read_file(path);
+  if (!src) exit(-1);
+
+  char dir[512];
+  cuda_dirname(path, dir, sizeof(dir));
+  char *full = cuda_resolve_includes(src, dir);
+  free(src);
+  if (!full) exit(-1);
+
+  /* Query compute capability of the first device for arch targeting. */
+  int cc_major = 0, cc_minor = 0;
+  cuDeviceGetAttribute(&cc_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, devices[0]);
+  cuDeviceGetAttribute(&cc_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, devices[0]);
+  char arch_opt[64];
+  snprintf(arch_opt, sizeof(arch_opt), "--gpu-architecture=compute_%d%d", cc_major, cc_minor);
+
+  /* NVRTC compile. */
+  nvrtcProgram prog;
+  nvrtcResult nres = nvrtcCreateProgram(&prog, full, path, 0, NULL, NULL);
+  if (nres != NVRTC_SUCCESS) {
+    fprintf(stderr, "nvrtcCreateProgram failed: %s\n", nvrtcGetErrorString(nres));
+    free(full);
+    exit(-1);
+  }
+  const char *options[] = { arch_opt, "--use_fast_math" };
+  struct timespec t0, t1;
+  clock_gettime(CLOCK_MONOTONIC, &t0);
+  nres = nvrtcCompileProgram(prog, 2, options);
+  clock_gettime(CLOCK_MONOTONIC, &t1);
+  double compile_secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+
+  if (nres != NVRTC_SUCCESS) {
+    fprintf(stderr, "nvrtcCompileProgram failed: %s\n", nvrtcGetErrorString(nres));
+    size_t log_size = 0;
+    nvrtcGetProgramLogSize(prog, &log_size);
+    if (log_size > 0) {
+      char *log = malloc(log_size);
+      if (log) {
+        nvrtcGetProgramLog(prog, log);
+        fprintf(stderr, "NVRTC log:\n%s\n", log);
+        free(log);
+      }
+    }
+    nvrtcDestroyProgram(&prog);
+    free(full);
+    exit(-1);
+  }
+
+  /* Retrieve PTX. */
+  size_t ptx_size = 0;
+  nvrtcGetPTXSize(prog, &ptx_size);
+  char *ptx = malloc(ptx_size);
+  nvrtcGetPTX(prog, ptx);
+  fprintf(stderr, "  [cuda] %s: compiled in %.2fs, PTX size %zu bytes (arch=compute_%d%d)\n",
+          kernel_name, compile_secs, ptx_size, cc_major, cc_minor);
+  nvrtcDestroyProgram(&prog);
+  free(full);
+
+  /* Load PTX as a CUmodule and look up the entry function. */
+  CUmodule mod;
+  CUresult cres = cuModuleLoadData(&mod, ptx);
+  free(ptx);
+  if (cres != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(cres, &err);
+    fprintf(stderr, "cuModuleLoadData failed for %s: %s\n", kernel_name, err ? err : "(unknown)");
+    exit(-1);
+  }
+
+  CUfunction fn;
+  cres = cuModuleGetFunction(&fn, mod, kernel_name);
+  if (cres != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(cres, &err);
+    fprintf(stderr, "cuModuleGetFunction(%s) failed: %s\n", kernel_name, err ? err : "(unknown)");
+    cuModuleUnload(mod);
+    exit(-1);
+  }
+
+  *program = mod;
+  *kernel  = fn;
 }
 
 /* Called by gpu_create_context to record the context for worker threads. */
@@ -286,7 +452,7 @@ void gpu_release_buffer(gpu_buffer buf)  { if (buf != 0) cuMemFree(buf); }
 void gpu_release_queue(gpu_queue q)      { if (q) cuStreamDestroy(q); }
 void gpu_release_context(gpu_context c)  { if (c) cuCtxDestroy(c); }
 void gpu_release_kernel (gpu_kernel k)   { (void)k; /* CUfunction is owned by its module */ }
-void gpu_release_program(gpu_program p)  { (void)p; CUDA_TODO("gpu_release_program"); }
+void gpu_release_program(gpu_program p)  { if (p) cuModuleUnload(p); }
 
 int gpu_set_kernel_arg(gpu_kernel k, unsigned int idx, size_t size, const void *value) {
   if (idx >= CUDA_MAX_KERNEL_ARGS) {
