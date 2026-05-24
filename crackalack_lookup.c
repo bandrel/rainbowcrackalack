@@ -258,6 +258,15 @@ static int use_markov = 0;
 static char markov_path[1024] = {0};
 static markov_model g_markov = {0};
 
+/* Aggregate bloom-filter stats across all freed tables.  Updated
+ * inside the table-free paths and printed once at shutdown. */
+static struct {
+  uint64_t queries;
+  uint64_t passes;
+  uint64_t confirmed;
+  unsigned int tables;
+} g_bloom_agg = {0, 0, 0, 0};
+
 /* The number of seconds spent on precomputation, file I/O, searching, and false alarm
  * checking. */
 double time_precomp = 0, time_io = 0, time_searching = 0, time_falsealarms = 0;
@@ -2395,6 +2404,33 @@ void *rt_binary_search_thread(void *ptr) {
 }
 
 
+/* Print per-table bloom stats and update the global aggregate.  Safe
+ * to call with bf == NULL (no-op). */
+static void bloom_report_and_free(const char *filepath, bloom_filter *bf) {
+  if (bf == NULL) return;
+  uint64_t q = 0, p = 0, c = 0, nbits = 0;
+  unsigned int nhash = 0;
+  bloom_get_stats(bf, &q, &p, &c, &nbits, &nhash);
+
+  double obs_fpr = 0.0;
+  uint64_t denom = (q > c) ? (q - c) : 0;
+  uint64_t fp    = (p > c) ? (p - c) : 0;
+  if (denom > 0) obs_fpr = 100.0 * (double)fp / (double)denom;
+
+  fprintf(stderr, "[bloom] %s: queries=%llu passes=%llu confirmed=%llu observed_fpr=%.4f%% bits=%llu hashes=%u\n",
+          filepath ? filepath : "(unknown)",
+          (unsigned long long)q, (unsigned long long)p, (unsigned long long)c,
+          obs_fpr, (unsigned long long)nbits, nhash);
+
+  g_bloom_agg.queries   += q;
+  g_bloom_agg.passes    += p;
+  g_bloom_agg.confirmed += c;
+  g_bloom_agg.tables    += 1;
+
+  bloom_free(bf);
+}
+
+
 /* Rainbow table binary search.  Searches a table's end indices for any matches with
  * precomputed end indices.  If/when matches are found, the corresponding start indices
  * are added to the precomputed_and_potential_indices's potential_start_indices
@@ -2640,10 +2676,10 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     num_tables_processed++;
 
     /* Free the preloaded table -- binary search is done with it. */
+    bloom_report_and_free(pt->filepath, pt->bf);
+    pt->bf = NULL;
     FREE(pt->filepath);
     FREE(pt->rainbow_table);
-    bloom_free(pt->bf);
-    pt->bf = NULL;
     pt->num_chains = 0;
     FREE(pt);
 
@@ -2695,10 +2731,10 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   while (preloaded_table_list != NULL) {
     preloaded_table *pt_next = preloaded_table_list->next;
 
+    bloom_report_and_free(preloaded_table_list->filepath, preloaded_table_list->bf);
+    preloaded_table_list->bf = NULL;
     FREE(preloaded_table_list->filepath);
     FREE(preloaded_table_list->rainbow_table);
-    bloom_free(preloaded_table_list->bf);
-    preloaded_table_list->bf = NULL;
     preloaded_table_list->num_chains = 0;
     FREE(preloaded_table_list);
 
@@ -3175,6 +3211,21 @@ int main(int ac, char **av) {
   if (use_markov)
     markov_free(&g_markov);
   pthread_barrier_destroy(&barrier);
+
+  if (g_bloom_agg.tables > 0) {
+    uint64_t denom = (g_bloom_agg.queries > g_bloom_agg.confirmed)
+                     ? (g_bloom_agg.queries - g_bloom_agg.confirmed) : 0;
+    uint64_t fp    = (g_bloom_agg.passes > g_bloom_agg.confirmed)
+                     ? (g_bloom_agg.passes - g_bloom_agg.confirmed) : 0;
+    double agg_fpr = (denom > 0) ? (100.0 * (double)fp / (double)denom) : 0.0;
+    fprintf(stderr, "[bloom] (aggregate, %u tables) queries=%llu passes=%llu confirmed=%llu observed_fpr=%.4f%%\n",
+            g_bloom_agg.tables,
+            (unsigned long long)g_bloom_agg.queries,
+            (unsigned long long)g_bloom_agg.passes,
+            (unsigned long long)g_bloom_agg.confirmed,
+            agg_fpr);
+  }
+
   return 0;
 
  err:
