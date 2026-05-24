@@ -2028,7 +2028,7 @@ static int load_single_table(const char *filepath, preloaded_table *pt) {
   pt->filepath = strdup(filepath);
   pt->rainbow_table = rainbow_table;
   pt->num_chains = num_chains;
-  pt->bf = bloom_create(num_chains);
+  pt->bf = bloom_create(num_chains, 0.0001);
   for (uint64_t c = 0; c < num_chains; c++)
     bloom_insert(pt->bf, rainbow_table[(c * 2) + 1]);
   pt->next = NULL;
