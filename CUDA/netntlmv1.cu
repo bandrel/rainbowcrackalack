@@ -3013,7 +3013,7 @@ __const_a8 uint32_t RHs[16] = {
 
 #define SWAP(a,b) do { uint32_t t = a; a = b; b = t; } while (0)
 
-inline void des_ecb_setkey(uint32_t SK[32], const uchar key[DES_KEY_SIZE])
+__device__ inline void des_ecb_setkey(uint32_t SK[32], const uchar key[DES_KEY_SIZE])
 {
   int i;
   uint32_t X, Y, T;
@@ -3076,7 +3076,7 @@ inline void des_ecb_setkey(uint32_t SK[32], const uchar key[DES_KEY_SIZE])
   }
 }
 
-inline void des_ecb_setkey_56(uint32_t SK[32], unsigned char _key[DES_KEY_SIZE - 1]) {
+__device__ inline void des_ecb_setkey_56(uint32_t SK[32], unsigned char _key[DES_KEY_SIZE - 1]) {
   uchar key[DES_KEY_SIZE];
 
   
@@ -3102,7 +3102,7 @@ inline void des_ecb_setkey_56(uint32_t SK[32], unsigned char _key[DES_KEY_SIZE -
   des_ecb_setkey(SK, key);
 }
 
-inline void netntlmv1_hash(uint32_t SK[32], unsigned char *plaintext, unsigned char *output) {
+__device__ inline void netntlmv1_hash(uint32_t SK[32], unsigned char *plaintext, unsigned char *output) {
   int i;
   uint32_t X, Y, T;
 
