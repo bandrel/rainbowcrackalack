@@ -21,19 +21,24 @@
 #include <stdint.h>
 #include <stdatomic.h>
 
-#define BLOOM_NUM_HASHES 7
-
 typedef struct {
   uint8_t  *bits;
   uint64_t  num_bits;   /* Total bits (always power of 2) */
   uint64_t  mask;       /* num_bits - 1, for fast modulo */
+  unsigned int num_hashes;  /* k.  Computed in bloom_create from target FPR. */
   _Atomic uint64_t query_count;
   _Atomic uint64_t pass_count;
   _Atomic uint64_t confirmed_count;
 } bloom_filter;
 
-/* Allocate a bloom filter sized for num_elements with ~1% FPR. */
-bloom_filter *bloom_create(uint64_t num_elements);
+/* Allocate a bloom filter sized for num_elements to achieve approximately
+ * target_fpr false-positive rate (e.g. 0.0001 = 0.01%).  Bits round up
+ * to the next power of two; k is computed from the resulting m/n.
+ *
+ * Returns NULL if num_elements == 0, target_fpr <= 0, target_fpr >= 1,
+ * or if computed m would exceed 64 G bits (8 GB).  Callers should treat
+ * NULL as "bloom disabled" and skip queries. */
+bloom_filter *bloom_create(uint64_t num_elements, double target_fpr);
 
 /* Insert a 64-bit key. NOT thread-safe. */
 void bloom_insert(bloom_filter *bf, uint64_t key);
