@@ -2794,7 +2794,7 @@ int main(int ac, char **av) {
         fprintf(stderr, "Error: --bloom-fpr must be a valid floating-point number, got '%s'.\n", av[i]);
         print_usage_and_exit(av[0], -1);
       }
-      if (v < 0.0 || v >= 1.0) {
+      if (!(v >= 0.0 && v < 1.0)) {
         fprintf(stderr, "Error: --bloom-fpr must be in [0, 1), got %g.\n", v);
         print_usage_and_exit(av[0], -1);
       }
