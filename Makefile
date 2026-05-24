@@ -143,6 +143,7 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 $(OUTDIR)/$(UNITTEST_PROG): \
+	$(OBJDIR)/bloom.o \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_unit_tests.o \
@@ -150,6 +151,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
+	$(OBJDIR)/test_bloom.o \
 	$(OBJDIR)/test_chain.o \
 	$(OBJDIR)/test_chain_md5_8.o \
 	$(OBJDIR)/test_chain_md5_9.o \
