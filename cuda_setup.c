@@ -478,16 +478,12 @@ int gpu_enqueue_kernel(gpu_queue q, gpu_kernel k, unsigned int dim, size_t *gws)
   (void)dim;  /* always 1 in this codebase */
   cuda_kernel_args *t = cuda_get_arg_table(k);
 
-  /* Ask CUDA's occupancy calculator for the block size that maximizes
-   * occupancy for this specific kernel.  Different kernels in this
-   * codebase have different register footprints (FA check has ~36
-   * registers/thread and prefers small blocks; precompute is lighter
-   * and prefers larger blocks).  cuOccupancyMaxPotentialBlockSize
-   * picks the right one per kernel. */
-  int min_grid_size = 0, suggested_block = 256;
-  cuOccupancyMaxPotentialBlockSize(&min_grid_size, &suggested_block, k, NULL, 0, 0);
-  if (suggested_block <= 0) suggested_block = 256;
-  unsigned int block_size = (unsigned int)suggested_block;
+  /* Block size 256.  Empirical winner across the kernels in this codebase:
+   * cuOccupancyMaxPotentialBlockSize-based auto-tuning and a global 128
+   * were both tried and produced 4x and 1.4x slower precompute respectively.
+   * Per-kernel tuning is left for future work; future kernels with high
+   * register pressure may want a different fixed block size. */
+  unsigned int block_size = 256;
   unsigned int grid_size = (unsigned int)((gws[0] + block_size - 1) / block_size);
   if (grid_size == 0) grid_size = 1;
 
