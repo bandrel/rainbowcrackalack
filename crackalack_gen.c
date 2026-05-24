@@ -449,7 +449,7 @@ void *host_thread(void *ptr) {
     }
   }
 
-#ifdef USE_METAL
+#if defined(USE_METAL) || defined(USE_CUDA)
   kernel_work_group_size = 256;
   kernel_preferred_work_group_size_multiple = 32;
 #else
