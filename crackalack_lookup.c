@@ -918,6 +918,10 @@ unsigned int get_num_cpu_cores() {
 
 /* A host thread which controls each GPU for false alarm checks. */
 void *host_thread_false_alarm(void *ptr) {
+  /* Push the global CUDA context onto this thread before any CUDA call.
+   * On non-CUDA backends this expands to a no-op macro. */
+  gpu_thread_attach();
+
   thread_args *args = (thread_args *)ptr;
   gpu_dev *gpu = &(args->gpu);
   gpu_context context = NULL;
@@ -1205,6 +1209,7 @@ void *host_thread_false_alarm(void *ptr) {
   /* Context/program/kernel/queue are kept alive for reuse across tables.
    * They are released by release_false_alarm_gpu(). */
 
+  gpu_thread_detach();
   pthread_exit(NULL);
   return NULL;
 }
@@ -1226,6 +1231,10 @@ static void release_false_alarm_gpu(unsigned int num_devices, thread_args *args)
 
 /* A host thread which controls each GPU for hash pre-computation. */
 void *host_thread_precompute(void *ptr) {
+  /* Push the global CUDA context onto this thread before any CUDA call.
+   * On non-CUDA backends this expands to a no-op macro. */
+  gpu_thread_attach();
+
   thread_args *args = (thread_args *)ptr;
   gpu_dev *gpu = &(args->gpu);
   gpu_context context = NULL;
@@ -1502,6 +1511,7 @@ void *host_thread_precompute(void *ptr) {
   /* Context/program/kernel/queue are kept alive for reuse across hashes.
    * They are released by release_precompute_gpu(). */
 
+  gpu_thread_detach();
   pthread_exit(NULL);
   return NULL;
 }
