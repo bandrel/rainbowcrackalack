@@ -2371,6 +2371,7 @@ void *rt_binary_search_thread(void *ptr) {
 	if (args->bf != NULL && !bloom_query(args->bf, ppi_cur->precomputed_end_indices[i]))
 	  continue;
 	if (_rt_binary_search(args->rainbow_table, 0, args->num_chains, ppi_cur->precomputed_end_indices[i], &start)) {
+	  if (args->bf != NULL) bloom_record_confirmed(args->bf);
 	  if (args->num_local_results == args->local_results_capacity) {
 	    args->local_results_capacity *= 2;
 	    args->local_results = realloc(args->local_results, args->local_results_capacity * sizeof(search_result_entry));
