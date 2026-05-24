@@ -76,7 +76,9 @@ void bloom_insert(bloom_filter *bf, uint64_t key) {
 }
 
 
-int bloom_query(const bloom_filter *bf, uint64_t key) {
+int bloom_query(bloom_filter *bf, uint64_t key) {
+  atomic_fetch_add_explicit(&bf->query_count, 1, memory_order_relaxed);
+
   uint64_t mixed = mix64(key);
   uint32_t h1 = (uint32_t)mixed;
   uint32_t h2 = (uint32_t)(mixed >> 32) | 1;
@@ -86,7 +88,31 @@ int bloom_query(const bloom_filter *bf, uint64_t key) {
     if (!(bf->bits[pos >> 3] & (1 << (pos & 7))))
       return 0;
   }
+  atomic_fetch_add_explicit(&bf->pass_count, 1, memory_order_relaxed);
   return 1;
+}
+
+
+void bloom_record_confirmed(bloom_filter *bf) {
+  atomic_fetch_add_explicit(&bf->confirmed_count, 1, memory_order_relaxed);
+}
+
+
+void bloom_get_stats(const bloom_filter *bf,
+                     uint64_t *out_queries,
+                     uint64_t *out_passes,
+                     uint64_t *out_confirmed,
+                     uint64_t *out_num_bits,
+                     unsigned int *out_num_hashes) {
+  /* atomic_load on a const-cast pointer is well-defined for _Atomic
+   * fields; the cast is purely to satisfy the const declaration of
+   * the parameter. */
+  bloom_filter *mbf = (bloom_filter *)bf;
+  if (out_queries)   *out_queries   = atomic_load_explicit(&mbf->query_count,     memory_order_relaxed);
+  if (out_passes)    *out_passes    = atomic_load_explicit(&mbf->pass_count,      memory_order_relaxed);
+  if (out_confirmed) *out_confirmed = atomic_load_explicit(&mbf->confirmed_count, memory_order_relaxed);
+  if (out_num_bits)  *out_num_bits  = bf->num_bits;
+  if (out_num_hashes) *out_num_hashes = BLOOM_NUM_HASHES;
 }
 
 
