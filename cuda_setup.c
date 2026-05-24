@@ -478,13 +478,16 @@ int gpu_enqueue_kernel(gpu_queue q, gpu_kernel k, unsigned int dim, size_t *gws)
   (void)dim;  /* always 1 in this codebase */
   cuda_kernel_args *t = cuda_get_arg_table(k);
 
-  /* Block size 128.  Empirical ncu profiling on the NetNTLMv1-7 FA kernel
-   * showed it is launch-undersize-bound: register pressure caps ~6 blocks
-   * per SM at 256 threads/block, and the chain-walk dependency chain
-   * leaves ~43% of scheduler cycles with no eligible warp.  Halving the
-   * block size lets ~2x more blocks fit per SM (better latency hiding)
-   * while keeping per-block setup costs (shared-mem SBOX load) modest. */
-  unsigned int block_size = 128;
+  /* Ask CUDA's occupancy calculator for the block size that maximizes
+   * occupancy for this specific kernel.  Different kernels in this
+   * codebase have different register footprints (FA check has ~36
+   * registers/thread and prefers small blocks; precompute is lighter
+   * and prefers larger blocks).  cuOccupancyMaxPotentialBlockSize
+   * picks the right one per kernel. */
+  int min_grid_size = 0, suggested_block = 256;
+  cuOccupancyMaxPotentialBlockSize(&min_grid_size, &suggested_block, k, NULL, 0, 0);
+  if (suggested_block <= 0) suggested_block = 256;
+  unsigned int block_size = (unsigned int)suggested_block;
   unsigned int grid_size = (unsigned int)((gws[0] + block_size - 1) / block_size);
   if (grid_size == 0) grid_size = 1;
 
