@@ -308,10 +308,15 @@ void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *de
     free(full);
     exit(-1);
   }
-  const char *options[] = { arch_opt, "--use_fast_math" };
+  /* --default-device tells NVRTC to treat functions without
+   * __host__/__device__/__global__ annotations as __device__.  This is
+   * essential for our ported OpenCL kernels: the .cl source uses plain
+   * `inline` functions throughout (no explicit address space), and we
+   * don't want to manually annotate every one. */
+  const char *options[] = { arch_opt, "--use_fast_math", "--default-device" };
   struct timespec t0, t1;
   clock_gettime(CLOCK_MONOTONIC, &t0);
-  nres = nvrtcCompileProgram(prog, 2, options);
+  nres = nvrtcCompileProgram(prog, 3, options);
   clock_gettime(CLOCK_MONOTONIC, &t1);
   double compile_secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
 

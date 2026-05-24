@@ -36,10 +36,10 @@ __device__ inline void netntlmv1_hash_fast(
     uint32_t SK[32],
     unsigned char *plaintext,
     unsigned char *output,
-    __shared__ uint32_t *l_SB1, __shared__ uint32_t *l_SB2,
-    __shared__ uint32_t *l_SB3, __shared__ uint32_t *l_SB4,
-    __shared__ uint32_t *l_SB5, __shared__ uint32_t *l_SB6,
-    __shared__ uint32_t *l_SB7, __shared__ uint32_t *l_SB8)
+    uint32_t *l_SB1, uint32_t *l_SB2,
+    uint32_t *l_SB3, uint32_t *l_SB4,
+    uint32_t *l_SB5, uint32_t *l_SB6,
+    uint32_t *l_SB7, uint32_t *l_SB8)
 {
   uint32_t X, Y, T;
 
