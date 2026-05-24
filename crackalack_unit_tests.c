@@ -73,7 +73,7 @@ int main(int ac, char **av) {
 #endif
   get_platforms_and_devices(-1, MAX_NUM_PLATFORMS, platforms, &num_platforms, MAX_NUM_DEVICES, devices, &num_devices, 1);
 
-#ifdef USE_METAL
+#if defined(USE_METAL) || defined(USE_CUDA)
   context = gpu_create_context(devices[0]);
   if (context == NULL) {
     fprintf(stderr, "Failed to create context\n");

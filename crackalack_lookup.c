@@ -1064,7 +1064,7 @@ void *host_thread_false_alarm(void *ptr) {
   queue = gpu->queue;
   kernel = gpu->kernel;
 
-#ifdef USE_METAL
+#if defined(USE_METAL) || defined(USE_CUDA)
   if ((gpu_get_kernel_work_group_info(kernel, gpu->device, GPU_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &kernel_work_group_size) != GPU_SUCCESS) || \
       (gpu_get_kernel_work_group_info(kernel, gpu->device, GPU_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(size_t), &kernel_preferred_work_group_size_multiple) != GPU_SUCCESS)) {
 #else
@@ -1344,7 +1344,7 @@ void *host_thread_precompute(void *ptr) {
   queue = gpu->queue;
   kernel = gpu->kernel;
 
-#ifdef USE_METAL
+#if defined(USE_METAL) || defined(USE_CUDA)
   if (gpu_get_kernel_work_group_info(kernel, gpu->device, GPU_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &gws) != GPU_SUCCESS) {
 #else
   if (rc_clGetKernelWorkGroupInfo(kernel, gpu->device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &gws, NULL) != CL_SUCCESS) {
