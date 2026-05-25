@@ -258,6 +258,15 @@ static int use_markov = 0;
 static char markov_path[1024] = {0};
 static markov_model g_markov = {0};
 
+/* Aggregate bloom-filter stats across all freed tables.  Updated
+ * inside the table-free paths and printed once at shutdown. */
+static struct {
+  uint64_t queries;
+  uint64_t passes;
+  uint64_t confirmed;
+  unsigned int tables;
+} g_bloom_agg = {0, 0, 0, 0};
+
 /* The number of seconds spent on precomputation, file I/O, searching, and false alarm
  * checking. */
 double time_precomp = 0, time_io = 0, time_searching = 0, time_falsealarms = 0;
@@ -288,6 +297,17 @@ size_t user_provided_gws = 0;
 /* False-alarm batch flush threshold (candidate count).
  * 1 disables batching (single-table-per-launch behavior). */
 unsigned int fa_batch_threshold = 16384;
+
+/* Target false-positive rate for the bloom filter, set by --bloom-fpr.
+ * 0 disables the bloom (bloom_create returns NULL, which the query
+ * path treats as "no filter").  Default 0.01 (1%) — the entire band
+ * [0.01, 0.0005] lands at m = 512 M bits / k = 11 for our typical
+ * num_chains, which is twice the legacy bloom efficiency without
+ * extra memory.  Tighter targets (e.g. 0.0001) land in a bigger
+ * pow2 bucket and pay more in bloom-query work than they save in
+ * binary-search work on this workload.  See
+ * docs/superpowers/specs/2026-05-24-bloom-filter-tightening-design.md. */
+double bloom_target_fpr = 0.01;
 
 /* The platform number to disable (-1 to not disable any). */
 int disable_platform = -1;
@@ -2019,9 +2039,11 @@ static int load_single_table(const char *filepath, preloaded_table *pt) {
   pt->filepath = strdup(filepath);
   pt->rainbow_table = rainbow_table;
   pt->num_chains = num_chains;
-  pt->bf = bloom_create(num_chains);
-  for (uint64_t c = 0; c < num_chains; c++)
-    bloom_insert(pt->bf, rainbow_table[(c * 2) + 1]);
+  pt->bf = bloom_create(num_chains, bloom_target_fpr);
+  if (pt->bf != NULL) {
+    for (uint64_t c = 0; c < num_chains; c++)
+      bloom_insert(pt->bf, rainbow_table[(c * 2) + 1]);
+  }
   pt->next = NULL;
   return 0;
 }
@@ -2291,6 +2313,7 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
   fprintf(stderr, "    %s-gws GWS%s    (Optional) Sets the global work size for each GPU.  This can significantly affect the speed.  To tune this setting, start with multiplying the max compute units by the max work group size (both are reported on program start-up).  Then increase/decrease the value and time the results.  For example, if the max compute units is 20, and the max work group size is 1024, try using 20 x 1024 = 20480, then 20480 - 1024 = 19456, 20480 - 2048 = 18432, 2048 + 1024 = 21504, etc.  If you find a value that works better than the automatic setting, please report your findings at: https://github.com/jtesta/rainbowcrackalack/issues\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s-disable-platform N%s    (Optional) Disables a platform from being used (platform numbers are reported on program start-up).  Useful when experiencing strange problems on mixed-GPU systems.  Try disabling each platform one at a time and see if the program behaves normally.\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--fa-batch N%s    (Optional) False-alarm batch flush threshold (default 16384; 1 disables batching).\n\n", WHITEB, CLR);
+  fprintf(stderr, "    %s--bloom-fpr X%s    (Optional) Bloom filter target false-positive rate (default 0.01; 0 disables).\n\n", WHITEB, CLR);
   fprintf(stderr, "%sExamples:%s\n    %s %s 64f12cddaa88057e06a81b54e73b949b\n    %s %s %shashes_one_per_line.txt\n    %s %s %spwdump.txt\n\n", WHITEB, CLR, prog_name, dir1, prog_name, dir1, dir2, prog_name, dir1, dir2);
   exit(exit_code);
 }
@@ -2371,6 +2394,7 @@ void *rt_binary_search_thread(void *ptr) {
 	if (args->bf != NULL && !bloom_query(args->bf, ppi_cur->precomputed_end_indices[i]))
 	  continue;
 	if (_rt_binary_search(args->rainbow_table, 0, args->num_chains, ppi_cur->precomputed_end_indices[i], &start)) {
+	  if (args->bf != NULL) bloom_record_confirmed(args->bf);
 	  if (args->num_local_results == args->local_results_capacity) {
 	    args->local_results_capacity *= 2;
 	    args->local_results = realloc(args->local_results, args->local_results_capacity * sizeof(search_result_entry));
@@ -2391,6 +2415,33 @@ void *rt_binary_search_thread(void *ptr) {
 
   pthread_exit(NULL);
   return NULL;
+}
+
+
+/* Print per-table bloom stats and update the global aggregate.  Safe
+ * to call with bf == NULL (no-op). */
+static void bloom_report_and_free(const char *filepath, bloom_filter *bf) {
+  if (bf == NULL) return;
+  uint64_t q = 0, p = 0, c = 0, nbits = 0;
+  unsigned int nhash = 0;
+  bloom_get_stats(bf, &q, &p, &c, &nbits, &nhash);
+
+  double obs_fpr = 0.0;
+  uint64_t denom = (q > c) ? (q - c) : 0;
+  uint64_t fp    = (p > c) ? (p - c) : 0;
+  if (denom > 0) obs_fpr = 100.0 * (double)fp / (double)denom;
+
+  fprintf(stderr, "[bloom] %s: queries=%llu passes=%llu confirmed=%llu observed_fpr=%.4f%% bits=%llu hashes=%u\n",
+          filepath ? filepath : "(unknown)",
+          (unsigned long long)q, (unsigned long long)p, (unsigned long long)c,
+          obs_fpr, (unsigned long long)nbits, nhash);
+
+  g_bloom_agg.queries   += q;
+  g_bloom_agg.passes    += p;
+  g_bloom_agg.confirmed += c;
+  g_bloom_agg.tables    += 1;
+
+  bloom_free(bf);
 }
 
 
@@ -2639,10 +2690,10 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     num_tables_processed++;
 
     /* Free the preloaded table -- binary search is done with it. */
+    bloom_report_and_free(pt->filepath, pt->bf);
+    pt->bf = NULL;
     FREE(pt->filepath);
     FREE(pt->rainbow_table);
-    bloom_free(pt->bf);
-    pt->bf = NULL;
     pt->num_chains = 0;
     FREE(pt);
 
@@ -2694,10 +2745,10 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   while (preloaded_table_list != NULL) {
     preloaded_table *pt_next = preloaded_table_list->next;
 
+    bloom_report_and_free(preloaded_table_list->filepath, preloaded_table_list->bf);
+    preloaded_table_list->bf = NULL;
     FREE(preloaded_table_list->filepath);
     FREE(preloaded_table_list->rainbow_table);
-    bloom_free(preloaded_table_list->bf);
-    preloaded_table_list->bf = NULL;
     preloaded_table_list->num_chains = 0;
     FREE(preloaded_table_list);
 
@@ -2743,6 +2794,19 @@ int main(int ac, char **av) {
       unsigned int v = parse_uint_arg(av[++i], "--fa-batch");
       if (v == 0) v = 16384;       /* 0 means "use default" */
       fa_batch_threshold = v;
+    } else if ((strcmp(av[i], "--bloom-fpr") == 0) && (i + 1 < (unsigned int)ac)) {
+      char *end = NULL;
+      errno = 0;
+      double v = strtod(av[++i], &end);
+      if (errno != 0 || end == av[i] || *end != '\0') {
+        fprintf(stderr, "Error: --bloom-fpr must be a valid floating-point number, got '%s'.\n", av[i]);
+        print_usage_and_exit(av[0], -1);
+      }
+      if (!(v >= 0.0 && v < 1.0)) {
+        fprintf(stderr, "Error: --bloom-fpr must be in [0, 1), got %g.\n", v);
+        print_usage_and_exit(av[0], -1);
+      }
+      bloom_target_fpr = v;
     } else {
       /* Undocumented third arg: override pot filename (kept for backward compat). */
       if (i == 3 && av[i][0] != '-') {
@@ -3174,6 +3238,21 @@ int main(int ac, char **av) {
   if (use_markov)
     markov_free(&g_markov);
   pthread_barrier_destroy(&barrier);
+
+  if (g_bloom_agg.tables > 0) {
+    uint64_t denom = (g_bloom_agg.queries > g_bloom_agg.confirmed)
+                     ? (g_bloom_agg.queries - g_bloom_agg.confirmed) : 0;
+    uint64_t fp    = (g_bloom_agg.passes > g_bloom_agg.confirmed)
+                     ? (g_bloom_agg.passes - g_bloom_agg.confirmed) : 0;
+    double agg_fpr = (denom > 0) ? (100.0 * (double)fp / (double)denom) : 0.0;
+    fprintf(stderr, "[bloom] (aggregate, %u tables) queries=%llu passes=%llu confirmed=%llu observed_fpr=%.4f%%\n",
+            g_bloom_agg.tables,
+            (unsigned long long)g_bloom_agg.queries,
+            (unsigned long long)g_bloom_agg.passes,
+            (unsigned long long)g_bloom_agg.confirmed,
+            agg_fpr);
+  }
+
   return 0;
 
  err:
