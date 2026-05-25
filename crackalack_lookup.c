@@ -300,8 +300,14 @@ unsigned int fa_batch_threshold = 16384;
 
 /* Target false-positive rate for the bloom filter, set by --bloom-fpr.
  * 0 disables the bloom (bloom_create returns NULL, which the query
- * path treats as "no filter").  Default 0.0001 (0.01%). */
-double bloom_target_fpr = 0.0001;
+ * path treats as "no filter").  Default 0.01 (1%) — the entire band
+ * [0.01, 0.0005] lands at m = 512 M bits / k = 11 for our typical
+ * num_chains, which is twice the legacy bloom efficiency without
+ * extra memory.  Tighter targets (e.g. 0.0001) land in a bigger
+ * pow2 bucket and pay more in bloom-query work than they save in
+ * binary-search work on this workload.  See
+ * docs/superpowers/specs/2026-05-24-bloom-filter-tightening-design.md. */
+double bloom_target_fpr = 0.01;
 
 /* The platform number to disable (-1 to not disable any). */
 int disable_platform = -1;
@@ -2307,7 +2313,7 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
   fprintf(stderr, "    %s-gws GWS%s    (Optional) Sets the global work size for each GPU.  This can significantly affect the speed.  To tune this setting, start with multiplying the max compute units by the max work group size (both are reported on program start-up).  Then increase/decrease the value and time the results.  For example, if the max compute units is 20, and the max work group size is 1024, try using 20 x 1024 = 20480, then 20480 - 1024 = 19456, 20480 - 2048 = 18432, 2048 + 1024 = 21504, etc.  If you find a value that works better than the automatic setting, please report your findings at: https://github.com/jtesta/rainbowcrackalack/issues\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s-disable-platform N%s    (Optional) Disables a platform from being used (platform numbers are reported on program start-up).  Useful when experiencing strange problems on mixed-GPU systems.  Try disabling each platform one at a time and see if the program behaves normally.\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--fa-batch N%s    (Optional) False-alarm batch flush threshold (default 16384; 1 disables batching).\n\n", WHITEB, CLR);
-  fprintf(stderr, "    %s--bloom-fpr X%s    (Optional) Bloom filter target false-positive rate (default 0.0001; 0 disables).\n\n", WHITEB, CLR);
+  fprintf(stderr, "    %s--bloom-fpr X%s    (Optional) Bloom filter target false-positive rate (default 0.01; 0 disables).\n\n", WHITEB, CLR);
   fprintf(stderr, "%sExamples:%s\n    %s %s 64f12cddaa88057e06a81b54e73b949b\n    %s %s %shashes_one_per_line.txt\n    %s %s %spwdump.txt\n\n", WHITEB, CLR, prog_name, dir1, prog_name, dir1, dir2, prog_name, dir1, dir2);
   exit(exit_code);
 }
