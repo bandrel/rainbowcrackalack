@@ -48,7 +48,11 @@
 #include "version.h"
 
 #define CRACKALACK_KERNEL_PATH "crackalack.cl"
+#ifdef USE_CUDA
+#define CRACKALACK_NTLM8_KERNEL_PATH "CUDA/crackalack_ntlm8.cu"
+#else
 #define CRACKALACK_NTLM8_KERNEL_PATH "crackalack_ntlm8.cl"
+#endif
 #define CRACKALACK_NTLM9_KERNEL_PATH "crackalack_ntlm9.cl"
 #define CRACKALACK_NTLM10_KERNEL_PATH "crackalack_ntlm10.cl"
 #define CRACKALACK_MD5_8_KERNEL_PATH "crackalack_md5_8.cl"
