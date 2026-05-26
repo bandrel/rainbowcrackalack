@@ -58,7 +58,11 @@
 #else
 #define CRACKALACK_NTLM9_KERNEL_PATH "crackalack_ntlm9.cl"
 #endif
+#ifdef USE_CUDA
+#define CRACKALACK_NTLM10_KERNEL_PATH "CUDA/crackalack_ntlm10.cu"
+#else
 #define CRACKALACK_NTLM10_KERNEL_PATH "crackalack_ntlm10.cl"
+#endif
 #define CRACKALACK_MD5_8_KERNEL_PATH "crackalack_md5_8.cl"
 #define CRACKALACK_MD5_9_KERNEL_PATH "crackalack_md5_9.cl"
 #ifdef USE_CUDA
