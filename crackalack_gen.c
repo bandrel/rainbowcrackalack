@@ -85,7 +85,7 @@
 #elif defined(USE_CUDA)
 #define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "CUDA/crackalack_markov_ntlm8.cu"
 #define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "CUDA/crackalack_markov_ntlm9.cu"
-#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "crackalack_markov_ntlm10.cl"
+#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "CUDA/crackalack_markov_ntlm10.cu"
 #else
 #define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.cl"
 #define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.cl"
