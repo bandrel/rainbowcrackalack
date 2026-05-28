@@ -58,15 +58,26 @@ uint64_t fill_plaintext_space_markov_keyspace(uint64_t markov_keyspace, unsigned
 uint64_t fill_plaintext_space_table(unsigned int charset_len, unsigned int plaintext_len_min, unsigned int plaintext_len_max, uint64_t *plaintext_space_up_to_index) {
   uint64_t n = 1;
   int i;
+  int overflowed = 0;
 
 
   plaintext_space_up_to_index[0] = 0;
   for (i = 1; i <= plaintext_len_max; i++) {
-    n = n * charset_len;
-    if (i < plaintext_len_min)
+    if (!overflowed) {
+      uint64_t next = n * charset_len;
+      /* Detect overflow: if next / charset_len != n, multiplication overflowed. */
+      if (charset_len != 0 && next / charset_len != n) {
+        overflowed = 1;
+        n = UINT64_MAX;
+      } else {
+        n = next;
+      }
+    }
+    if (i < (int)plaintext_len_min)
       plaintext_space_up_to_index[i] = 0;
     else
-      plaintext_space_up_to_index[i] = plaintext_space_up_to_index[i - 1] + n;
+      plaintext_space_up_to_index[i] = overflowed ? UINT64_MAX :
+          plaintext_space_up_to_index[i - 1] + n;
   }
   return plaintext_space_up_to_index[plaintext_len_max];
 }
