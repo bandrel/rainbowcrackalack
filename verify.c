@@ -62,8 +62,10 @@ int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned in
 	return VERIFY_ERR_CORRUPTED;
       }
 
-      /* The indices must not be equal or greater than the plaintext space total. */
-      if ((plaintext_space_total > 0) && \
+      /* The indices must not be equal or greater than the plaintext space total.
+       * Skip the check when plaintext_space_total == UINT64_MAX (sentinel for
+       * keyspaces > 2^64, e.g. 95^10): every 64-bit index is valid by definition. */
+      if ((plaintext_space_total > 0) && (plaintext_space_total != UINT64_MAX) && \
 	  ((start >= plaintext_space_total) || (end >= plaintext_space_total))) {
 	fprintf(stderr, "Start and/or end indices are greater or equal to the plaintext space total!\n\n\tStart index: %"PRIu64"\n\tEnd index:   %"PRIu64"\nPlaintext space total: %"PRIu64"\n\n", start, end, plaintext_space_total);
 	*error_chain_num = i;
@@ -112,8 +114,9 @@ int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned in
 	return VERIFY_ERR_CORRUPTED;
       }
 
-      /* The indices must not be equal or greater than the plaintext space total. */
-      if ((plaintext_space_total > 0) && \
+      /* The indices must not be equal or greater than the plaintext space total.
+       * Skip when plaintext_space_total == UINT64_MAX (sentinel for >2^64 keyspaces). */
+      if ((plaintext_space_total > 0) && (plaintext_space_total != UINT64_MAX) && \
 	  ((start >= plaintext_space_total) || (end >= plaintext_space_total))) {
 	fprintf(stderr, "Start and/or end indices are greater or equal to the plaintext space total!\n\n\tStart index: %"PRIu64"\n\tEnd index:   %"PRIu64"\nPlaintext space total: %"PRIu64"\n\n", start, end, plaintext_space_total);
 	return VERIFY_ERR_CORRUPTED;
