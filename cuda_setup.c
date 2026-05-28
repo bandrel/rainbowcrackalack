@@ -214,6 +214,24 @@ static char *cuda_read_file(const char *path) {
   return buf;
 }
 
+/* Silent variant: same as cuda_read_file but returns NULL without printing
+ * on missing file.  Used for speculative first-probe lookups where a
+ * fallback path will be tried next. */
+static char *cuda_read_file_silent(const char *path) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return NULL;
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (n < 0) { fclose(f); return NULL; }
+  char *buf = malloc((size_t)n + 1);
+  if (!buf) { fclose(f); return NULL; }
+  if (fread(buf, 1, (size_t)n, f) != (size_t)n) { free(buf); fclose(f); return NULL; }
+  buf[n] = '\0';
+  fclose(f);
+  return buf;
+}
+
 /* Recursively resolve #include "foo.cu" / "foo.cl" lines by inlining the
  * referenced file's contents.  `dir` is the directory of the file being
  * resolved (where included files are looked up).  Returns a malloc'd
@@ -245,10 +263,10 @@ static char *cuda_resolve_includes(const char *src, const char *dir) {
 
     char inc_path[512];
     snprintf(inc_path, sizeof(inc_path), "%s/%s", dir, inc_name);
-    char *inc_src = cuda_read_file(inc_path);
+    char *inc_src = cuda_read_file_silent(inc_path);
     if (!inc_src) {
       /* Fall back to project root (for shared.h and other host-shared headers). */
-      char *inc_src_root = cuda_read_file(inc_name);
+      char *inc_src_root = cuda_read_file_silent(inc_name);
       if (!inc_src_root) {
         fprintf(stderr, "cuda_setup: cannot resolve #include \"%s\" (tried %s and %s)\n",
                 inc_name, inc_path, inc_name);
@@ -293,11 +311,16 @@ static const char *cuda_dirname(const char *path, char *buf, size_t buf_size) {
  * Mirrors metal_setup.m's .cl -> Metal/<base>.metal rewrite. */
 static void cuda_rewrite_cl_path(const char *in, char *out, size_t out_size) {
   const char *dot = strrchr(in, '.');
+  int written;
   if (dot != NULL && strcmp(dot, ".cl") == 0) {
     size_t base_len = (size_t)(dot - in);
-    snprintf(out, out_size, "CUDA/%.*s.cu", (int)base_len, in);
+    written = snprintf(out, out_size, "CUDA/%.*s.cu", (int)base_len, in);
   } else {
-    snprintf(out, out_size, "%s", in);
+    written = snprintf(out, out_size, "%s", in);
+  }
+  if (written < 0 || (size_t)written >= out_size) {
+    fprintf(stderr, "cuda_setup: kernel path too long: %s\n", in);
+    if (out_size > 0) out[0] = '\0';
   }
 }
 
