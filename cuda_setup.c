@@ -246,7 +246,17 @@ static char *cuda_resolve_includes(const char *src, const char *dir) {
     char inc_path[512];
     snprintf(inc_path, sizeof(inc_path), "%s/%s", dir, inc_name);
     char *inc_src = cuda_read_file(inc_path);
-    if (!inc_src) { free(out); return NULL; }
+    if (!inc_src) {
+      /* Fall back to project root (for shared.h and other host-shared headers). */
+      char *inc_src_root = cuda_read_file(inc_name);
+      if (!inc_src_root) {
+        fprintf(stderr, "cuda_setup: cannot resolve #include \"%s\" (tried %s and %s)\n",
+                inc_name, inc_path, inc_name);
+        free(out);
+        return NULL;
+      }
+      inc_src = inc_src_root;
+    }
 
     /* Replace the #include line with the inlined source. */
     size_t before_len = (size_t)(inc - out);
@@ -278,17 +288,34 @@ static const char *cuda_dirname(const char *path, char *buf, size_t buf_size) {
   return buf;
 }
 
+/* If `in` ends in ".cl", rewrite to "CUDA/<base>.cu" in `out`.
+ * Otherwise copy `in` verbatim to `out`.
+ * Mirrors metal_setup.m's .cl -> Metal/<base>.metal rewrite. */
+static void cuda_rewrite_cl_path(const char *in, char *out, size_t out_size) {
+  const char *dot = strrchr(in, '.');
+  if (dot != NULL && strcmp(dot, ".cl") == 0) {
+    size_t base_len = (size_t)(dot - in);
+    snprintf(out, out_size, "CUDA/%.*s.cu", (int)base_len, in);
+  } else {
+    snprintf(out, out_size, "%s", in);
+  }
+}
+
 void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *devices,
                  const char *path, const char *kernel_name,
                  gpu_program *program, gpu_kernel *kernel, unsigned int hash_type) {
-  (void)context; (void)num_devices; (void)hash_type;
+  (void)context; (void)num_devices;
+
+  /* Mirror metal_setup.m: if caller passed "foo.cl", look up "CUDA/foo.cu". */
+  char resolved_path[512];
+  cuda_rewrite_cl_path(path, resolved_path, sizeof(resolved_path));
 
   /* Read kernel source and resolve includes. */
-  char *src = cuda_read_file(path);
+  char *src = cuda_read_file(resolved_path);
   if (!src) exit(-1);
 
   char dir[512];
-  cuda_dirname(path, dir, sizeof(dir));
+  cuda_dirname(resolved_path, dir, sizeof(dir));
   char *full = cuda_resolve_includes(src, dir);
   free(src);
   if (!full) exit(-1);
@@ -302,16 +329,18 @@ void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *de
 
   /* NVRTC compile. */
   nvrtcProgram prog;
-  nvrtcResult nres = nvrtcCreateProgram(&prog, full, path, 0, NULL, NULL);
+  nvrtcResult nres = nvrtcCreateProgram(&prog, full, resolved_path, 0, NULL, NULL);
   if (nres != NVRTC_SUCCESS) {
     fprintf(stderr, "nvrtcCreateProgram failed: %s\n", nvrtcGetErrorString(nres));
     free(full);
     exit(-1);
   }
-  const char *options[] = { arch_opt, "--use_fast_math" };
+  char hash_type_opt[64];
+  snprintf(hash_type_opt, sizeof(hash_type_opt), "-DHASH_TYPE=%u", hash_type);
+  const char *options[] = { arch_opt, "--use_fast_math", hash_type_opt };
   struct timespec t0, t1;
   clock_gettime(CLOCK_MONOTONIC, &t0);
-  nres = nvrtcCompileProgram(prog, 2, options);
+  nres = nvrtcCompileProgram(prog, 3, options);
   clock_gettime(CLOCK_MONOTONIC, &t1);
   double compile_secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
 
