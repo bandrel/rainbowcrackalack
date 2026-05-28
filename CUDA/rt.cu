@@ -3,13 +3,12 @@
 #include "netntlmv1.cu"
 #include "md5.cu"
 
-/*
-#ifdef USE_DES_BITSLICE
-#include "des_bs.cu"
-#else
-#include "des.cu"
-#endif
-*/
+/* DES (HASH_LM) is out of scope; the OpenCL source's commented-out #include
+ * block for des_bs.cl/des.cl is intentionally omitted here.  cuda_setup.c's
+ * include resolver is strstr-based and doesn't respect comment boundaries,
+ * so leaving commented-out #include lines would cause spurious resolution
+ * attempts at NVRTC compile time. */
+
 __device__ inline void index_to_plaintext(unsigned long long index, char *charset, unsigned int charset_len, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned long long *plaintext_space_up_to_index, unsigned char *plaintext, unsigned int *plaintext_len) {
 
   for (int i = plaintext_len_max - 1; i >= (int)plaintext_len_min - 1; i--) {
