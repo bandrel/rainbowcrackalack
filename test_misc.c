@@ -302,6 +302,146 @@ static int group_i(void)
 }
 
 
+#include "fa_batch.h"
+
+/* Construct a minimal ppi node for testing.  Caller frees. */
+static precomputed_and_potential_indices *mk_ppi(const char *hash_hex,
+                                                 const uint64_t *starts,
+                                                 const unsigned int *positions,
+                                                 unsigned int n,
+                                                 int cracked) {
+  precomputed_and_potential_indices *p = calloc(1, sizeof(*p));
+  p->hash = strdup(hash_hex);
+  if (n > 0) {
+    p->potential_start_indices          = calloc(n, sizeof(uint64_t));
+    p->potential_start_index_positions  = calloc(n, sizeof(unsigned int));
+    memcpy(p->potential_start_indices,         starts,    n * sizeof(uint64_t));
+    memcpy(p->potential_start_index_positions, positions, n * sizeof(unsigned int));
+    p->num_potential_start_indices      = n;
+    p->potential_start_indices_size     = n;
+  }
+  if (cracked) p->plaintext = strdup("CRACKED");
+  return p;
+}
+
+static void free_ppi(precomputed_and_potential_indices *p) {
+  free(p->hash);
+  free(p->username);
+  free(p->precomputed_end_indices);
+  free(p->potential_start_indices);
+  free(p->potential_start_index_positions);
+  free(p->plaintext);
+  free(p);
+}
+
+static int group_j(void) {
+  int ok = 1;
+  fa_batch_t b = {0};
+
+  /* J-01: init/free is safe and idempotent. */
+  if (fa_batch_init(&b, 0, 0) != 0)        { fprintf(stderr, "J-01a init failed\n"); ok = 0; }
+  if (b.flush_threshold != 16384)          { fprintf(stderr, "J-01b default threshold wrong\n"); ok = 0; }
+  fa_batch_free(&b);
+  fa_batch_free(&b);  /* second free should be a no-op */
+
+  /* J-02: explicit threshold honored. */
+  fa_batch_init(&b, 100, 0);
+  if (b.flush_threshold != 100)            { fprintf(stderr, "J-02 explicit threshold wrong\n"); ok = 0; }
+
+  /* J-03: empty batch does not flush even with force. */
+  if (fa_batch_should_flush(&b, 0))        { fprintf(stderr, "J-03a empty flushed (no force)\n"); ok = 0; }
+  if (fa_batch_should_flush(&b, 1))        { fprintf(stderr, "J-03b empty flushed (force)\n"); ok = 0; }
+
+  /* J-04: append a single table's candidates. */
+  uint64_t s[3]     = { 11, 22, 33 };
+  unsigned int p[3] = {  1,  2,  3 };
+  precomputed_and_potential_indices *q =
+    mk_ppi("0123456789abcdef0123456789abcdef", s, p, 3, 0);
+
+  if (fa_batch_append(&b, q, 0, 1000) != 0)    { fprintf(stderr, "J-04a append failed\n"); ok = 0; }
+  if (b.num_candidates != 3)                   { fprintf(stderr, "J-04b count=%u expected 3\n", b.num_candidates); ok = 0; }
+  if (b.tables_in_batch != 1)                  { fprintf(stderr, "J-04c tables=%u expected 1\n", b.tables_in_batch); ok = 0; }
+  if (b.start_indices[0] != 11 ||
+      b.start_indices[1] != 22 ||
+      b.start_indices[2] != 33)                { fprintf(stderr, "J-04d start_indices mismatch\n"); ok = 0; }
+  if (b.start_index_positions[1] != 2)         { fprintf(stderr, "J-04e position mismatch\n"); ok = 0; }
+  if (b.ppi_refs[0] != q)                      { fprintf(stderr, "J-04f ppi_ref mismatch\n"); ok = 0; }
+
+  /* J-05: should_flush is false until threshold reached. */
+  if (fa_batch_should_flush(&b, 0))            { fprintf(stderr, "J-05a flushed below threshold\n"); ok = 0; }
+  if (!fa_batch_should_flush(&b, 1))           { fprintf(stderr, "J-05b force did not flush\n"); ok = 0; }
+
+  /* J-06: reset keeps capacity, zeroes count. */
+  unsigned int cap_before = b.capacity;
+  fa_batch_reset(&b);
+  if (b.num_candidates != 0)                   { fprintf(stderr, "J-06a num_candidates not zero\n"); ok = 0; }
+  if (b.tables_in_batch != 0)                  { fprintf(stderr, "J-06b tables_in_batch not zero\n"); ok = 0; }
+  if (b.capacity != cap_before)                { fprintf(stderr, "J-06c capacity changed\n"); ok = 0; }
+
+  /* J-07: cracked ppi is skipped on append. */
+  precomputed_and_potential_indices *cracked =
+    mk_ppi("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", s, p, 3, 1);
+  fa_batch_append(&b, cracked, 0, 1000);
+  if (b.num_candidates != 0)                   { fprintf(stderr, "J-07a cracked counted (%u)\n", b.num_candidates); ok = 0; }
+  if (b.tables_in_batch != 1)                  { fprintf(stderr, "J-07b tables_in_batch not 1\n"); ok = 0; }
+
+  /* J-08: threshold flush triggers on the right side of equality. */
+  fa_batch_t b2 = {0};
+  fa_batch_init(&b2, 3, 0);
+  fa_batch_append(&b2, q, 0, 1000);            /* contributes 3 */
+  if (!fa_batch_should_flush(&b2, 0))          { fprintf(stderr, "J-08 should flush at threshold\n"); ok = 0; }
+
+  /* J-09: --fa-batch=1 (threshold 1) flushes on any non-empty batch. */
+  fa_batch_t b3 = {0};
+  fa_batch_init(&b3, 1, 0);
+  fa_batch_append(&b3, q, 0, 1000);
+  if (!fa_batch_should_flush(&b3, 0))          { fprintf(stderr, "J-09 fa-batch=1 should flush\n"); ok = 0; }
+
+  /* J-10: sort orders all four parallel arrays by start_index_positions. */
+  fa_batch_t b4 = {0};
+  fa_batch_init(&b4, 16384, 0);
+  uint64_t   s4[5]  = { 0xA0, 0xB0, 0xC0, 0xD0, 0xE0 };
+  unsigned int p4[5] = {  500,  100,  300,  900,  200 };
+  precomputed_and_potential_indices *q4 =
+    mk_ppi("0123456789abcdef0123456789abcdef", s4, p4, 5, 0);
+  fa_batch_append(&b4, q4, 0, 1000);
+  fa_batch_sort_by_position(&b4);
+
+  if (b4.num_candidates != 5)                  { fprintf(stderr, "J-10a count wrong\n"); ok = 0; }
+  if (b4.start_index_positions[0] != 100 ||
+      b4.start_index_positions[1] != 200 ||
+      b4.start_index_positions[2] != 300 ||
+      b4.start_index_positions[3] != 500 ||
+      b4.start_index_positions[4] != 900)      { fprintf(stderr, "J-10b positions not sorted\n"); ok = 0; }
+  /* start_indices must move with positions: position 100 maps to start 0xB0, etc. */
+  if (b4.start_indices[0] != 0xB0 ||
+      b4.start_indices[1] != 0xE0 ||
+      b4.start_indices[2] != 0xC0 ||
+      b4.start_indices[3] != 0xA0 ||
+      b4.start_indices[4] != 0xD0)             { fprintf(stderr, "J-10c start_indices misaligned\n"); ok = 0; }
+  /* ppi_refs all point to the same q4 in this case. */
+  if (b4.ppi_refs[0] != q4 ||
+      b4.ppi_refs[4] != q4)                    { fprintf(stderr, "J-10d ppi_refs lost\n"); ok = 0; }
+
+  fa_batch_free(&b4);
+  free_ppi(q4);
+
+  /* J-11: sort on empty batch is a no-op (no crash). */
+  fa_batch_t b5 = {0};
+  fa_batch_init(&b5, 16384, 0);
+  fa_batch_sort_by_position(&b5);
+  if (b5.num_candidates != 0)                  { fprintf(stderr, "J-11 empty batch mutated\n"); ok = 0; }
+  fa_batch_free(&b5);
+
+  fa_batch_free(&b);
+  fa_batch_free(&b2);
+  fa_batch_free(&b3);
+  free_ppi(q);
+  free_ppi(cracked);
+  return ok;
+}
+
+
 int test_misc(void)
 {
     int ok = 1;
@@ -315,6 +455,7 @@ int test_misc(void)
     ok &= group_g();
     ok &= group_h();
     ok &= group_i();
+    ok &= group_j();
 
     return ok;
 }

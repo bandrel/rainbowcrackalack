@@ -24,10 +24,12 @@ PREP := prep_none
 ifeq ($(BUILD),linux)
   CC := $(CC_linux)
   EXE :=
-  CPPFLAGS := $(CPPFLAGS_common)
+  CUDA_PATH ?= /usr/local/cuda
+  CPPFLAGS := $(CPPFLAGS_common) -DUSE_CUDA -I$(CUDA_PATH)/include
   CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
-  LDFLAGS  := $(LDFLAGS_common) -flto=auto
-  LIBS     := -lpthread -ldl -lgcrypt -lOpenCL
+  LDFLAGS  := $(LDFLAGS_common) -flto=auto -L$(CUDA_PATH)/lib64 -Wl,-rpath,$(CUDA_PATH)/lib64
+  LIBS     := -lpthread -ldl -lgcrypt -lcuda -lnvrtc -lm
+  GPU_BACKEND_OBJ := $(OBJDIR)/cuda_setup.o
 endif
 
 ifeq ($(BUILD),macos)
@@ -36,7 +38,7 @@ ifeq ($(BUILD),macos)
   CPPFLAGS := $(CPPFLAGS_common) -DUSE_METAL -I/opt/homebrew/include
   CFLAGS   := $(CFLAGS_common) -march=native -flto
   LDFLAGS  := $(LDFLAGS_common) -L/opt/homebrew/lib -flto
-  LIBS     := -lpthread -lgcrypt -framework Metal -framework Foundation
+  LIBS     := -lpthread -lgcrypt -lm -framework Metal -framework Foundation
   GPU_BACKEND_OBJ := $(OBJDIR)/metal_setup.o
 endif
 
@@ -141,12 +143,15 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 $(OUTDIR)/$(UNITTEST_PROG): \
+	$(OBJDIR)/bloom.o \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_unit_tests.o \
+	$(OBJDIR)/fa_batch.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
+	$(OBJDIR)/test_bloom.o \
 	$(OBJDIR)/test_chain.o \
 	$(OBJDIR)/test_chain_md5_8.o \
 	$(OBJDIR)/test_chain_md5_9.o \
@@ -205,6 +210,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/clock.o \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_lookup.o \
+	$(OBJDIR)/fa_batch.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
