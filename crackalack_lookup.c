@@ -2331,13 +2331,25 @@ typedef struct {
 
 /* Shared state for the worker pool spawned by streaming_preloading_thread.
  * pool_lock guards next_path_idx only; the preloaded_table_list append and
- * throttle still go through preloaded_tables_lock as before. */
+ * throttle still go through preloaded_tables_lock as before.  The abort flag
+ * is set by search_tables under preloaded_tables_lock when the consumer gives
+ * up early (all hashes cracked) so workers can drop their in-flight pt
+ * instead of publishing it into a drained, soon-to-be-NULLed list. */
 typedef struct {
   char **paths;
   unsigned int num_paths;
   unsigned int next_path_idx;
   pthread_mutex_t pool_lock;
+  volatile int abort;
 } table_load_pool;
+
+/* Module-level pointer to the currently active loader pool, published by
+ * streaming_preloading_thread before spawning workers and cleared before it
+ * returns.  Matches the existing one-active-config-at-a-time invariant of
+ * preloaded_table_list / num_preloaded_tables_available — there is never more
+ * than one streaming_lookup() in flight.  Read by search_tables under
+ * preloaded_tables_lock to flip the abort flag during early-exit drain. */
+static volatile table_load_pool *active_load_pool = NULL;
 
 /* Return the number of worker threads to use for parallel table loading.
  * Defaults to min(8, online CPUs); $RCRT_LOAD_THREADS overrides in [1, 64]. */
@@ -2371,6 +2383,12 @@ static void *table_load_worker(void *arg) {
   while (1) {
     unsigned int idx;
     pthread_mutex_lock(&pool->pool_lock);
+    /* Bail before claiming another path if the consumer aborted; avoids one
+     * wasted load_single_table() per worker after early exit. */
+    if (pool->abort) {
+      pthread_mutex_unlock(&pool->pool_lock);
+      return NULL;
+    }
     if (pool->next_path_idx >= pool->num_paths) {
       pthread_mutex_unlock(&pool->pool_lock);
       return NULL;
@@ -2396,6 +2414,21 @@ static void *table_load_worker(void *arg) {
      * stays at MAX_PRELOAD_NUM, not MAX_PRELOAD_NUM + (n_workers - 1). */
     while (num_preloaded_tables_available >= MAX_PRELOAD_NUM)
       pthread_cond_wait(&condition_continue_loading_tables, &preloaded_tables_lock);
+
+    /* After waking from the throttle (or finding it open) the consumer may
+     * have aborted: search_tables drains the list, zeroes the counter, sets
+     * abort, then broadcasts.  Publishing pt now would leak it, since the
+     * drained list is about to be NULLed without a follow-up free.  Drop it. */
+    if (pool->abort) {
+      pthread_mutex_unlock(&preloaded_tables_lock);
+      bloom_free(pt->bf);
+      pt->bf = NULL;
+      FREE(pt->filepath);
+      FREE(pt->rainbow_table);
+      pt->num_chains = 0;
+      FREE(pt);
+      return NULL;
+    }
 
     /* Append to tail. */
     if (preloaded_table_list == NULL) {
@@ -2432,7 +2465,12 @@ static void *streaming_preloading_thread(void *ptr) {
   pool.paths = args->paths;
   pool.num_paths = args->num_paths;
   pool.next_path_idx = 0;
+  pool.abort = 0;
   pthread_mutex_init(&pool.pool_lock, NULL);
+
+  /* Publish the pool so search_tables() can flip the abort flag on early exit.
+   * Safe because only one streaming_lookup() is ever in flight. */
+  active_load_pool = &pool;
 
   unsigned int n_workers = compute_load_thread_count();
   if (n_workers > args->num_paths) n_workers = args->num_paths;
@@ -2454,6 +2492,9 @@ static void *streaming_preloading_thread(void *ptr) {
       pthread_join(worker_tids[i], NULL);
     free(worker_tids);
   }
+
+  /* Workers have all exited; safe to unpublish before we destroy the lock. */
+  active_load_pool = NULL;
 
   pthread_mutex_destroy(&pool.pool_lock);
 
@@ -3171,8 +3212,15 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     preloaded_table_list = pt_next;
   }
   /* With N parallel workers any number of them may be parked on the throttle;
-   * reset the counter and broadcast so all of them wake and finish/exit. */
+   * reset the counter and broadcast so all of them wake and finish/exit.
+   * Set the abort flag (under the same lock as the broadcast, ordered before
+   * it) so workers that wake holding an in-flight pt drop it instead of
+   * publishing into the now-drained list — otherwise streaming_lookup's
+   * preloaded_table_list = NULL reset would leak those entries' rainbow
+   * table and bloom allocations. */
   num_preloaded_tables_available = 0;
+  if (active_load_pool != NULL)
+    active_load_pool->abort = 1;
   pthread_cond_broadcast(&condition_continue_loading_tables);
   pthread_mutex_unlock(&preloaded_tables_lock);
 }
