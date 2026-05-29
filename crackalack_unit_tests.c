@@ -44,6 +44,7 @@
 #include "test_chain_markov_ntlm9.h"
 #include "test_markov.h"
 #include "test_misc.h"
+#include "test_bloom.h"
 #include "test_sort.h"
 #include "test_decompress.h"
 #include "version.h"
@@ -73,7 +74,7 @@ int main(int ac, char **av) {
 #endif
   get_platforms_and_devices(-1, MAX_NUM_PLATFORMS, platforms, &num_platforms, MAX_NUM_DEVICES, devices, &num_devices, 1);
 
-#ifdef USE_METAL
+#if defined(USE_METAL) || defined(USE_CUDA)
   context = gpu_create_context(devices[0]);
   if (context == NULL) {
     fprintf(stderr, "Failed to create context\n");
@@ -127,6 +128,16 @@ int main(int ac, char **av) {
   /* Misc tests (CPU-only, no kernel needed). */
   printf("Running misc tests... "); fflush(stdout);
   if (!test_misc()) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+
+  /* Bloom tests (CPU-only, no kernel needed). */
+  printf("Running bloom tests... "); fflush(stdout);
+  if (!test_bloom()) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();

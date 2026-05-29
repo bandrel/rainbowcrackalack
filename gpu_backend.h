@@ -35,6 +35,33 @@ typedef int      gpu_bool;
 
 #define DEFAULT_BUILD_OPTIONS "-I. -IMetal"
 
+#elif defined(USE_CUDA)
+
+#define DEFAULT_BUILD_OPTIONS "-I. -ICUDA"
+
+#include <cuda.h>
+
+typedef CUdevice      gpu_device;
+typedef CUcontext     gpu_context;
+typedef CUstream      gpu_queue;
+typedef CUmodule      gpu_program;
+typedef CUfunction    gpu_kernel;
+typedef CUdeviceptr   gpu_buffer;  /* Integer type; CUDA-branch macros use 0, not NULL, as the sentinel value. */
+typedef uint32_t      gpu_uint;
+typedef uint64_t      gpu_ulong;
+typedef int           gpu_int;
+typedef int           gpu_bool;
+typedef int           gpu_platform;  /* CUDA has no platform concept; use int placeholder */
+
+#define GPU_RO  0x1
+#define GPU_WO  0x2
+#define GPU_RW  0x3
+
+#define GPU_TRUE  1
+#define GPU_FALSE 0
+
+#define GPU_SUCCESS 0
+
 #else /* OpenCL backend */
 
 #define CL_TARGET_OPENCL_VERSION 200
@@ -100,8 +127,10 @@ int gpu_set_kernel_threadgroup_mem(gpu_kernel kernel, unsigned int index, size_t
 
 
 /* --- Device info parameter constants --- */
-#ifdef USE_METAL
+#if defined(USE_METAL) || defined(USE_CUDA)
 
+/* Metal and CUDA have no CL/cl.h; define numeric constants that match
+ * the values used by the Metal branch (arbitrary but stable). */
 #define GPU_DEVICE_NAME                 1
 #define GPU_DEVICE_VERSION              2
 #define GPU_DEVICE_VENDOR               3
@@ -114,7 +143,8 @@ int gpu_set_kernel_threadgroup_mem(gpu_kernel kernel, unsigned int index, size_t
 #define GPU_KERNEL_WORK_GROUP_SIZE                       1
 #define GPU_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE    2
 
-/* Use GPU_* names in consumer code via macros. */
+/* Provide CL_ aliases so any consumer code that still uses CL_ names
+ * compiles cleanly under Metal and CUDA. */
 #define CL_DEVICE_NAME                GPU_DEVICE_NAME
 #define CL_DEVICE_VERSION             GPU_DEVICE_VERSION
 #define CL_DEVICE_VENDOR              GPU_DEVICE_VENDOR
@@ -164,6 +194,25 @@ void gpu_release_context(gpu_context context);
 void gpu_release_kernel(gpu_kernel kernel);
 void gpu_release_program(gpu_program program);
 
+#elif defined(USE_CUDA)
+
+gpu_buffer  gpu_create_and_fill_buffer(gpu_context context, int flags, size_t size, const void *data);
+gpu_context gpu_create_context(gpu_device device);
+gpu_queue   gpu_create_queue(gpu_context context, gpu_device device);
+gpu_buffer  gpu_create_buffer(gpu_context context, int flags, size_t size);
+int gpu_write_buffer(gpu_queue queue, gpu_buffer buffer, size_t size, const void *ptr);
+int gpu_read_buffer(gpu_queue queue, gpu_buffer buffer, size_t size, void *ptr);
+int gpu_set_kernel_arg(gpu_kernel kernel, unsigned int arg_index, size_t arg_size, const void *arg_value);
+int gpu_enqueue_kernel(gpu_queue queue, gpu_kernel kernel, unsigned int work_dim, size_t *global_work_size);
+int gpu_flush(gpu_queue queue);
+int gpu_finish(gpu_queue queue);
+int gpu_get_kernel_work_group_info(gpu_kernel kernel, gpu_device device, unsigned int param, size_t param_size, void *param_value);
+void gpu_release_buffer(gpu_buffer buffer);
+void gpu_release_queue(gpu_queue queue);
+void gpu_release_context(gpu_context context);
+void gpu_release_kernel(gpu_kernel kernel);
+void gpu_release_program(gpu_program program);
+
 #else /* OpenCL backend - declare extern function pointers from opencl_setup.c */
 
 void *rc_dlopen(char *library_name);
@@ -197,6 +246,19 @@ extern cl_int (*rc_clReleaseProgram)(cl_program);
 extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 
 #endif /* USE_METAL */
+
+
+/* --- Per-thread context lifecycle --- */
+/* CUDA requires that each worker thread attach/detach from the context.
+ * OpenCL and Metal have no equivalent; the macros below make call sites
+ * backend-agnostic so the same host code compiles everywhere. */
+#ifdef USE_CUDA
+void gpu_thread_attach(void);
+void gpu_thread_detach(void);
+#else
+#define gpu_thread_attach() ((void)0)
+#define gpu_thread_detach() ((void)0)
+#endif
 
 
 /* --- Convenience macros (backward compatible) --- */
@@ -252,6 +314,66 @@ extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 
 #define CLFREEBUFFER(_buffer) \
   if (_buffer != NULL) { gpu_release_buffer(_buffer); _buffer = NULL; }
+
+#define CLRELEASEQUEUE(_queue) \
+  if (_queue != NULL) { gpu_release_queue(_queue); _queue = NULL; }
+
+#define CLRELEASECONTEXT(_context) \
+  if (_context != NULL) { gpu_release_context(_context); _context = NULL; }
+
+#define CLRELEASEKERNEL(_kernel) \
+  if (_kernel != NULL) { gpu_release_kernel(_kernel); _kernel = NULL; }
+
+#define CLRELEASEPROGRAM(_program) \
+  if (_program != NULL) { gpu_release_program(_program); _program = NULL; }
+
+#elif defined(USE_CUDA)
+
+/* The CUDA path matches Metal's pattern: gpu_create_and_fill_buffer
+ * does the alloc+upload in one call, and gpu_set_kernel_arg stores
+ * the buffer pointer in a per-kernel side table for the eventual
+ * cuLaunchKernel.  Macros are otherwise identical to the Metal branch
+ * except buffer NULL sentinel: CUdeviceptr is an integer, so compare
+ * with 0, not NULL. */
+#define _CLCREATEARG(_arg_index, _buffer, _flags, _arg_ptr, _arg_size) \
+  { _buffer = gpu_create_and_fill_buffer(context, _flags, _arg_size, _arg_ptr); \
+  if (_buffer == 0) { fprintf(stderr, "Error while creating buffer for \"%s\".\n", #_arg_ptr); exit(-1); } \
+  if (gpu_set_kernel_arg(kernel, _arg_index, sizeof(gpu_buffer), &_buffer) != 0) { fprintf(stderr, "Error setting kernel argument for %s at index %u.\n", #_arg_ptr, _arg_index); exit(-1); } }
+
+#define CLCREATEARG_ARRAY(_arg_index, _buffer, _flags, _arg, _len) \
+  _CLCREATEARG(_arg_index, _buffer, _flags, _arg, _len);
+
+#define CLCREATEARG(_arg_index, _buffer, _flags, _arg, _arg_size) \
+  _CLCREATEARG(_arg_index, _buffer, _flags, &_arg, _arg_size);
+
+#define CLCREATEARG_DEBUG(_arg_index, _debug_buffer, _debug_ptr) \
+  { _debug_ptr = calloc(DEBUG_LEN, sizeof(unsigned char)); \
+    CLCREATEARG_ARRAY(_arg_index, _debug_buffer, GPU_RW, _debug_ptr, DEBUG_LEN); }
+
+#define CLCREATECONTEXT(_context_callback, _device_ptr) \
+  gpu_create_context(*(_device_ptr))
+
+#define CLCREATEQUEUE(_context, _device) \
+  ((void)err, gpu_create_queue(_context, _device))
+
+#define CLRUNKERNEL(_queue, _kernel, _gws_ptr) \
+  { err = gpu_enqueue_kernel(_queue, _kernel, 1, _gws_ptr); if (err != 0) { fprintf(stderr, "gpu_enqueue_kernel failed: %d\n", err); exit(-1); } }
+
+#define CLFLUSH(_queue) \
+  { err = gpu_flush(_queue); if (err != 0) { fprintf(stderr, "gpu_flush failed: %d\n", err); exit(-1); } }
+
+#define CLWAIT(_queue) \
+  { err = gpu_finish(_queue); if (err != 0) { fprintf(stderr, "gpu_finish failed: %d\n", err); exit(-1); } }
+
+#define CLWRITEBUFFER(_buffer, _len, _ptr) \
+  { err = gpu_write_buffer(queue, _buffer, _len, _ptr); \
+  if (err != 0) { fprintf(stderr, "gpu_write_buffer failed: %d\n", err); exit(-1); } }
+
+#define CLREADBUFFER(_buffer, _len, _ptr) \
+  { err = gpu_read_buffer(queue, _buffer, _len, _ptr); if (err != 0) { fprintf(stderr, "gpu_read_buffer failed: %d\n", err); exit(-1); } }
+
+#define CLFREEBUFFER(_buffer) \
+  if (_buffer != 0) { gpu_release_buffer(_buffer); _buffer = 0; }
 
 #define CLRELEASEQUEUE(_queue) \
   if (_queue != NULL) { gpu_release_queue(_queue); _queue = NULL; }

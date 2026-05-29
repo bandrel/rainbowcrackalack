@@ -48,16 +48,44 @@
 #include "version.h"
 
 #define CRACKALACK_KERNEL_PATH "crackalack.cl"
+#ifdef USE_CUDA
+#define CRACKALACK_NTLM8_KERNEL_PATH "CUDA/crackalack_ntlm8.cu"
+#else
 #define CRACKALACK_NTLM8_KERNEL_PATH "crackalack_ntlm8.cl"
+#endif
+#ifdef USE_CUDA
+#define CRACKALACK_NTLM9_KERNEL_PATH "CUDA/crackalack_ntlm9.cu"
+#else
 #define CRACKALACK_NTLM9_KERNEL_PATH "crackalack_ntlm9.cl"
+#endif
+#ifdef USE_CUDA
+#define CRACKALACK_NTLM10_KERNEL_PATH "CUDA/crackalack_ntlm10.cu"
+#else
 #define CRACKALACK_NTLM10_KERNEL_PATH "crackalack_ntlm10.cl"
+#endif
+#ifdef USE_CUDA
+#define CRACKALACK_MD5_8_KERNEL_PATH "CUDA/crackalack_md5_8.cu"
+#else
 #define CRACKALACK_MD5_8_KERNEL_PATH "crackalack_md5_8.cl"
+#endif
+#ifdef USE_CUDA
+#define CRACKALACK_MD5_9_KERNEL_PATH "CUDA/crackalack_md5_9.cu"
+#else
 #define CRACKALACK_MD5_9_KERNEL_PATH "crackalack_md5_9.cl"
+#endif
+#ifdef USE_CUDA
+#define CRACKALACK_NETNTLMV1_7_KERNEL_PATH "CUDA/crackalack_netntlmv1_7.cu"
+#else
 #define CRACKALACK_NETNTLMV1_7_KERNEL_PATH "crackalack_netntlmv1_7.cl"
+#endif
 #ifdef USE_METAL
 #define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.metal"
 #define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.metal"
 #define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "crackalack_markov_ntlm10.metal"
+#elif defined(USE_CUDA)
+#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "CUDA/crackalack_markov_ntlm8.cu"
+#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "CUDA/crackalack_markov_ntlm9.cu"
+#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "CUDA/crackalack_markov_ntlm10.cu"
 #else
 #define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.cl"
 #define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.cl"
@@ -449,7 +477,7 @@ void *host_thread(void *ptr) {
     }
   }
 
-#ifdef USE_METAL
+#if defined(USE_METAL) || defined(USE_CUDA)
   kernel_work_group_size = 256;
   kernel_preferred_work_group_size_multiple = 32;
 #else
