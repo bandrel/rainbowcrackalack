@@ -2392,6 +2392,11 @@ static void *table_load_worker(void *arg) {
 
     pthread_mutex_lock(&preloaded_tables_lock);
 
+    /* Throttle first: wait for room before appending so peak queue depth
+     * stays at MAX_PRELOAD_NUM, not MAX_PRELOAD_NUM + (n_workers - 1). */
+    while (num_preloaded_tables_available >= MAX_PRELOAD_NUM)
+      pthread_cond_wait(&condition_continue_loading_tables, &preloaded_tables_lock);
+
     /* Append to tail. */
     if (preloaded_table_list == NULL) {
       preloaded_table_list = pt;
@@ -2402,11 +2407,6 @@ static void *table_load_worker(void *arg) {
     }
     num_preloaded_tables_available++;
     pthread_cond_signal(&condition_wait_for_tables);
-
-    /* Throttle if the consumer is behind.  Multiple workers may sit here at
-     * once; each consumer signal wakes one, which re-checks the predicate. */
-    while (num_preloaded_tables_available >= MAX_PRELOAD_NUM)
-      pthread_cond_wait(&condition_continue_loading_tables, &preloaded_tables_lock);
 
     pthread_mutex_unlock(&preloaded_tables_lock);
   }
@@ -3170,6 +3170,10 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
 
     preloaded_table_list = pt_next;
   }
+  /* With N parallel workers any number of them may be parked on the throttle;
+   * reset the counter and broadcast so all of them wake and finish/exit. */
+  num_preloaded_tables_available = 0;
+  pthread_cond_broadcast(&condition_continue_loading_tables);
   pthread_mutex_unlock(&preloaded_tables_lock);
 }
 
