@@ -2329,26 +2329,62 @@ typedef struct {
   unsigned int num_paths;
 } streaming_preload_args;
 
-/* Streaming preloader thread.  Walks the pre-collected paths and loads each
- * table via load_single_table(), appending to the global preloaded_table_list
- * under preloaded_tables_lock.  Blocks when the sliding window already holds
- * MAX_PRELOAD_NUM tables; the search loop consumes via get_preloaded_table()
- * and signals condition_continue_loading_tables.
- *
- * Matches the producer-side contract of the original baseline preloader — the
- * existing search_tables() consumer path reads via get_preloaded_table() and
- * needs nothing else changed. */
-static void *streaming_preloading_thread(void *ptr) {
-  streaming_preload_args *args = (streaming_preload_args *)ptr;
+/* Shared state for the worker pool spawned by streaming_preloading_thread.
+ * pool_lock guards next_path_idx only; the preloaded_table_list append and
+ * throttle still go through preloaded_tables_lock as before. */
+typedef struct {
+  char **paths;
+  unsigned int num_paths;
+  unsigned int next_path_idx;
+  pthread_mutex_t pool_lock;
+} table_load_pool;
 
-  for (unsigned int i = 0; i < args->num_paths; i++) {
+/* Return the number of worker threads to use for parallel table loading.
+ * Defaults to min(8, online CPUs); $RCRT_LOAD_THREADS overrides in [1, 64]. */
+static unsigned int compute_load_thread_count(void) {
+  unsigned int n = 0;
+  const char *env = getenv("RCRT_LOAD_THREADS");
+  if (env != NULL && *env != '\0') {
+    long v = strtol(env, NULL, 10);
+    if (v >= 1 && v <= 64)
+      return (unsigned int)v;
+  }
+  long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+  if (ncpu < 1) ncpu = 1;
+  n = (unsigned int)ncpu;
+  if (n > 8) n = 8;
+  return n;
+}
+
+/* Worker for the parallel table loader.  Each iteration atomically claims the
+ * next unclaimed path from the pool, loads it via load_single_table(), and
+ * appends the resulting preloaded_table to the global list under
+ * preloaded_tables_lock.  Workers share the same throttle as the original
+ * single-threaded preloader: when num_preloaded_tables_available reaches
+ * MAX_PRELOAD_NUM the worker waits on condition_continue_loading_tables until
+ * the consumer drains one entry.  pthread_cond_signal from the consumer wakes
+ * exactly one waiting worker; the others stay blocked, which is the desired
+ * back-pressure behaviour. */
+static void *table_load_worker(void *arg) {
+  table_load_pool *pool = (table_load_pool *)arg;
+
+  while (1) {
+    unsigned int idx;
+    pthread_mutex_lock(&pool->pool_lock);
+    if (pool->next_path_idx >= pool->num_paths) {
+      pthread_mutex_unlock(&pool->pool_lock);
+      return NULL;
+    }
+    idx = pool->next_path_idx++;
+    pthread_mutex_unlock(&pool->pool_lock);
+
     preloaded_table *pt = calloc(1, sizeof(preloaded_table));
     if (pt == NULL) {
       fprintf(stderr, "preloader: calloc failed\n");
-      break;
+      return NULL;
     }
-    if (load_single_table(args->paths[i], pt) != 0) {
-      fprintf(stderr, "Warning: skipping unloadable table: %s\n", args->paths[i]);
+    if (load_single_table(pool->paths[idx], pt) != 0) {
+      fprintf(stderr, "Warning: skipping unloadable table: %s\n", pool->paths[idx]);
       free(pt);
       continue;
     }
@@ -2367,12 +2403,59 @@ static void *streaming_preloading_thread(void *ptr) {
     num_preloaded_tables_available++;
     pthread_cond_signal(&condition_wait_for_tables);
 
-    /* Throttle if the consumer is behind. */
+    /* Throttle if the consumer is behind.  Multiple workers may sit here at
+     * once; each consumer signal wakes one, which re-checks the predicate. */
     while (num_preloaded_tables_available >= MAX_PRELOAD_NUM)
       pthread_cond_wait(&condition_continue_loading_tables, &preloaded_tables_lock);
 
     pthread_mutex_unlock(&preloaded_tables_lock);
   }
+
+  return NULL;
+}
+
+/* Streaming preloader thread.  Dispatches a pool of worker threads which
+ * concurrently load tables via load_single_table(), appending each one to the
+ * global preloaded_table_list under preloaded_tables_lock.  Workers honour the
+ * MAX_PRELOAD_NUM sliding-window throttle just like the original
+ * single-threaded preloader.  Once all workers finish, this thread flips
+ * table_loading_complete so the consumer (get_preloaded_table) drains and
+ * returns NULL.
+ *
+ * Matches the producer-side contract of the original baseline preloader — the
+ * existing search_tables() consumer path reads via get_preloaded_table() and
+ * needs nothing else changed. */
+static void *streaming_preloading_thread(void *ptr) {
+  streaming_preload_args *args = (streaming_preload_args *)ptr;
+
+  table_load_pool pool = {0};
+  pool.paths = args->paths;
+  pool.num_paths = args->num_paths;
+  pool.next_path_idx = 0;
+  pthread_mutex_init(&pool.pool_lock, NULL);
+
+  unsigned int n_workers = compute_load_thread_count();
+  if (n_workers > args->num_paths) n_workers = args->num_paths;
+
+  pthread_t *worker_tids = NULL;
+  if (n_workers > 0) {
+    worker_tids = calloc(n_workers, sizeof(pthread_t));
+    if (worker_tids == NULL) {
+      fprintf(stderr, "Failed to allocate worker thread array\n");
+      exit(-1);
+    }
+    for (unsigned int i = 0; i < n_workers; i++) {
+      if (pthread_create(&worker_tids[i], NULL, table_load_worker, &pool) != 0) {
+        fprintf(stderr, "Failed to spawn table loader worker %u\n", i);
+        exit(-1);
+      }
+    }
+    for (unsigned int i = 0; i < n_workers; i++)
+      pthread_join(worker_tids[i], NULL);
+    free(worker_tids);
+  }
+
+  pthread_mutex_destroy(&pool.pool_lock);
 
   /* Signal end-of-stream so get_preloaded_table() can return NULL. */
   pthread_mutex_lock(&preloaded_tables_lock);
