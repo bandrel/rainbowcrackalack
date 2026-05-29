@@ -3195,9 +3195,8 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   }
   fa_batch_free(&fa_batch);
 
-  /* Free any remaining preloaded tables (i.e.: if we cracked all the hashes and quit early). */
-  /* Note: technically, this may not be a complete solution, if this is reached while the preloading
-   * thread is still performing work... */
+  /* Free any remaining preloaded tables (i.e.: if we cracked all the hashes and quit early).
+   * In-flight workers are handled below via the pool's abort flag. */
   pthread_mutex_lock(&preloaded_tables_lock);
   while (preloaded_table_list != NULL) {
     preloaded_table *pt_next = preloaded_table_list->next;
