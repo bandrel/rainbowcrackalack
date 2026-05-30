@@ -23,12 +23,15 @@
 #include <windows.h>
 #elif defined(__APPLE__)
 #include <sys/sysctl.h>
+#define O_BINARY 0
 #else
 #include <sys/sysinfo.h>
+#define O_BINARY 0
 #endif
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <locale.h>
 #include <pthread.h>
@@ -270,6 +273,8 @@ void free_loaded_hashes(char **usernames, char **hashes);
 void *host_thread_false_alarm(void *ptr);
 void print_eta_precompute();
 void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filter *bf, precomputed_and_potential_indices *ppi_head);
+gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size);
+void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
 void launch_false_alarm_kernel(fa_batch_t *batch, thread_args *args, false_alarm_state *state);
 void harvest_false_alarm_results(false_alarm_state *state);
@@ -1579,6 +1584,182 @@ static void release_precompute_gpu(unsigned int num_devices, thread_args *args) 
 }
 
 
+/* Builds the index_data cache key for a single hash configuration.  The
+ * format is fixed for interchange with blurbdust's rcracki.precalc cache:
+ *
+ *   {hash_name}_{charset_name}#{plaintext_len_min}-{plaintext_len_max}_
+ *     {table_index}_{chain_len}:{hash}\n
+ *
+ * (e.g. "ntlm_loweralpha#8-8_0_100:49e5bfaab1be72a6c5236f15736a3e15\n")
+ *
+ * `buf` is filled in.  The trailing newline is part of the key — match
+ * blurbdust exactly so caches are interchangeable. */
+static void build_precompute_index_data(char *buf, size_t buf_size,
+                                        const thread_args *args,
+                                        const char *hash) {
+  snprintf(buf, buf_size - 1, "%s_%s#%u-%u_%u_%u:%s\n",
+           args->hash_name, args->charset_name,
+           args->plaintext_len_min, args->plaintext_len_max,
+           args->table_index, args->chain_len, hash);
+}
+
+
+/* Scans *.index files in the current working directory for a key matching
+ * index_data.  On hit, opens the corresponding rcracki.precalc.N file
+ * (the .index filename with the ".index" suffix removed) and reads it as
+ * a contiguous array of gpu_ulong.  Returns a calloc'd array (caller frees),
+ * with *num_indices set to the array length and filename[] set to the .index
+ * file's name.  Returns NULL on miss.  Exits on I/O errors mid-scan, matching
+ * the blurbdust upstream behaviour. */
+gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size) {
+  char buf[256] = {0};
+  int64_t file_size = 0;
+  DIR *d = NULL;
+  struct dirent *de = NULL;
+  FILE *f = NULL;
+  gpu_ulong *ret = NULL;
+
+  *num_indices = 0;
+  memset(filename, 0, filename_size);
+
+  /* Go through all *.index files in the current directory and find any that match
+   * the hash passed to us.  If found, we already pre-computed the values. */
+  d = opendir(".");
+  if (d == NULL) {
+    fprintf(stderr, "Can't open current directory.\n");
+    exit(-1);
+  }
+  while ((de = readdir(d)) != NULL) {
+    if (!str_ends_with(de->d_name, ".index"))
+      continue;
+
+    /* Open this *.index file. */
+    f = fopen(de->d_name, "rb");
+    if (f == NULL) {
+      fprintf(stderr, "Failed to open %s for reading.\n", de->d_name);
+      exit(-1);
+    }
+
+    file_size = get_file_size(f);
+
+    /* Read the index data. */
+    if ((file_size <= 0) || ((size_t)file_size >= sizeof(buf))) {
+      FCLOSE(f);
+      continue;
+    }
+    memset(buf, 0, sizeof(buf));
+    if (fread(buf, sizeof(char), file_size, f) != (size_t)file_size) {
+      fprintf(stderr, "Failed to read index data: %s\n", strerror(errno));
+      exit(-1);
+    }
+
+    FCLOSE(f);
+
+    /* We found an index file that matches all our parameters.  Open its
+     * related file containing precomputed indices. */
+    if (strcmp(index_data, buf) == 0) {
+      /* Set the filename to the *.index file for the caller. */
+      strncpy(filename, de->d_name, filename_size - 1);
+
+      /* Strip the trailing ".index" (6 chars) to get the data filename. */
+      de->d_name[strlen(de->d_name) - 6] = '\0';
+
+      f = fopen(de->d_name, "rb");
+      if (f == NULL) {
+        fprintf(stderr, "Failed to open precomputed index file: %s\n", de->d_name);
+        exit(-1);
+      }
+
+      file_size = get_file_size(f);
+
+      if (file_size % sizeof(gpu_ulong) != 0) {
+        fprintf(stderr, "Precomputed indices file is not a multiple of %"PRIu64": %"PRId64"\n",
+                (uint64_t)sizeof(gpu_ulong), file_size);
+        exit(-1);
+      }
+
+      *num_indices = file_size / sizeof(gpu_ulong);
+
+      ret = calloc(*num_indices, sizeof(gpu_ulong));
+      if (ret == NULL) {
+        fprintf(stderr, "Failed to create indices buffer.\n");
+        exit(-1);
+      }
+
+      if (fread(ret, sizeof(gpu_ulong), *num_indices, f) != *num_indices) {
+        fprintf(stderr, "Failed to read indices file.\n");
+        exit(-1);
+      }
+      FCLOSE(f);
+
+      break;
+    }
+  }
+  closedir(d);
+  d = NULL;
+  return ret;
+}
+
+
+/* Writes a new precompute cache entry for index_data + indices[0..num_indices].
+ *
+ * Atomically creates the lowest-numbered free rcracki.precalc.N file via
+ * O_CREAT|O_EXCL (so concurrent runs don't clobber each other), writes the
+ * indices array verbatim, then writes the matching rcracki.precalc.N.index
+ * file containing the raw index_data bytes (no extra newline beyond what's
+ * already in index_data).
+ *
+ * On-disk format matches blurbdust exactly.  Exits on error. */
+void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices) {
+  char filename[128] = {0};
+  FILE *f = NULL;
+  unsigned int i = 0;
+
+  /* Search for the first unused filename in the space of rcracki.precalc.[0-1048576]. */
+  for (i = 0; i < 1048576; i++) {
+    int fd = -1;
+
+    snprintf(filename, sizeof(filename) - 1, "rcracki.precalc.%u", i);
+
+    /* Create a file for writing with permissions of 0600.  O_EXCL guarantees
+     * we don't trample a concurrent writer. */
+    fd = open(filename, O_CREAT | O_EXCL | O_WRONLY | O_BINARY, S_IRUSR | S_IWUSR);
+
+    if (fd != -1) {  /* On success, convert to a file pointer. */
+      f = fdopen(fd, "wb");
+      break;
+    }
+  }
+
+  if (f == NULL) {
+    fprintf(stderr, "Error: could not create any precalc file (rcracki.precalc.[0-1048576])\n");
+    exit(-1);
+  }
+
+  if (fwrite(indices, sizeof(gpu_ulong), num_indices, f) != num_indices) {
+    fprintf(stderr, "Error writing precalc file: %s\n", strerror(errno));
+    FCLOSE(f);
+    exit(-1);
+  }
+
+  FCLOSE(f);
+
+  /* Now create the matching rcracki.precalc.N.index file. */
+  strncat(filename, ".index", sizeof(filename) - strlen(filename) - 1);
+  f = fopen(filename, "wb");
+  if (f == NULL) {
+    fprintf(stderr, "Error while creating file: %s\n", filename);
+    exit(-1);
+  }
+  if (fwrite(index_data, sizeof(char), strlen(index_data), f) != strlen(index_data)) {
+    fprintf(stderr, "Error writing precalc index file: %s\n", strerror(errno));
+    FCLOSE(f);
+    exit(-1);
+  }
+  FCLOSE(f);
+}
+
+
 /* CPU precompute: walks the chain from every position for a single hash,
  * producing a ppi node with all candidate endpoints.  Mirrors what the GPU
  * batch kernel does, but runs on the CPU using cpu_rt_functions primitives.
@@ -1590,9 +1771,15 @@ static void release_precompute_gpu(unsigned int num_devices, thread_args *args) 
  *
  * Supports both standard and Markov NTLM8 tables.
  *
+ * If index_data_array is non-NULL, each hash's unfiltered output is also
+ * written to a disk cache entry (rcracki.precalc.N + .index file) before
+ * the non-zero filter is applied.  This makes a second lookup of the same
+ * hashes a cache hit (precompute is skipped entirely).
+ *
  * Returns 1 if batched path was used, 0 if it should fall back to per-hash. */
 int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     char **hashes, char **usernames, unsigned int num_hashes,
+    char **index_data_array,
     precomputed_and_potential_indices **ppi_head) {
 
   int use_markov_batch = args[0].use_markov &&
@@ -1782,9 +1969,28 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   for (unsigned int h = 0; h < num_hashes; h++) {
     gpu_ulong *hash_output = all_output + (size_t)h * positions_per_hash;
 
+    /* Sanity check: all-zero precompute means the kernel didn't run for this
+     * hash (or the hash truly maps to no plaintexts at every position, which
+     * is vanishingly unlikely for a realistic config).  Match blurbdust's
+     * fail-fast behaviour. */
+    unsigned int p = 0;
+    for (p = 0; p < positions_per_hash; p++)
+      if (hash_output[p] != 0) break;
+    if (p == positions_per_hash) {
+      fprintf(stderr, "Error: all zeros in precomputation!\n");
+      exit(-1);
+    }
+
+    /* Write the unfiltered output to the disk cache before we apply the
+     * non-zero filter below.  blurbdust's on-disk format is the full
+     * chain_len-1 array including zeros, so the cache is interchangeable
+     * with rcracki and with the pre-refactor crackalack_lookup. */
+    if (index_data_array != NULL && index_data_array[h] != NULL)
+      save_precompute_cache(index_data_array[h], hash_output, positions_per_hash);
+
     /* Count non-zero entries (valid precomputed endpoints). */
     unsigned int count = 0;
-    for (unsigned int p = 0; p < positions_per_hash; p++) {
+    for (p = 0; p < positions_per_hash; p++) {
       if (hash_output[p] != 0)
         count++;
     }
@@ -1800,7 +2006,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     if (ppi->precomputed_end_indices == NULL) { fprintf(stderr, "Error allocating ppi indices.\n"); exit(-1); }
 
     unsigned int idx = 0;
-    for (unsigned int p = 0; p < positions_per_hash; p++) {
+    for (p = 0; p < positions_per_hash; p++) {
       if (hash_output[p] != 0)
         ppi->precomputed_end_indices[idx++] = hash_output[p];
     }
@@ -1843,8 +2049,12 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
 
 /* If update_ppi is non-NULL, replace its precomputed endpoints in-place (for
  * re-running precomputation against a different table configuration).
- * If NULL, a new ppi node is appended to ppi_head (original behaviour). */
-void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_and_potential_indices **ppi_head, precomputed_and_potential_indices *update_ppi) {
+ * If NULL, a new ppi node is appended to ppi_head (original behaviour).
+ *
+ * If index_data is non-NULL, the computed indices are written to a disk
+ * cache entry (rcracki.precalc.N + .index file) so a subsequent run hits
+ * the cache instead of recomputing. */
+void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_and_potential_indices **ppi_head, precomputed_and_potential_indices *update_ppi, char *index_data) {
   pthread_t threads[MAX_NUM_DEVICES] = {0};
   char time_str[128] = {0};
   struct timespec start_time = {0};
@@ -1934,6 +2144,12 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
   }
 
   total_precomputed_indices_loaded += output_index;
+
+  /* Persist to the precompute disk cache so a subsequent run can skip the
+   * GPU dispatch entirely.  Matches the blurbdust on-disk format (raw
+   * gpu_ulong array, length output_index = chain_len-1). */
+  if (index_data != NULL)
+    save_precompute_cache(index_data, output, output_index);
 
   if (update_ppi != NULL) {
     /* Update an existing ppi node for a new table configuration. */
@@ -2247,24 +2463,113 @@ void streaming_lookup(char *rt_dir, const rt_parameters *filter,
 
   ppi_reset_endpoints(*ppi_head);
 
-  int used_batch = 0;
-  if (num_uncracked >= 2)
-    used_batch = batch_precompute_all_hashes(num_devices, args,
-        uncracked_hashes, uncracked_usernames, num_uncracked, ppi_head);
+  /* Build the cache key for each uncracked hash and try the disk cache
+   * first.  On hit, materialise a ppi node directly from the cached
+   * unfiltered array (applying the same non-zero filter batch_precompute
+   * applies) and skip the GPU dispatch for that hash.  Cache misses fall
+   * through to the batch (or per-hash) precompute path. */
+  char **index_data_array = calloc(num_uncracked, sizeof(char *));
+  char **cache_miss_hashes = calloc(num_uncracked, sizeof(char *));
+  char **cache_miss_usernames = calloc(num_uncracked, sizeof(char *));
+  char **cache_miss_index_data = calloc(num_uncracked, sizeof(char *));
+  if (index_data_array == NULL || cache_miss_hashes == NULL ||
+      cache_miss_usernames == NULL || cache_miss_index_data == NULL) {
+    fprintf(stderr, "streaming_lookup: calloc failed for cache arrays.\n");
+    exit(-1);
+  }
 
-  if (!used_batch) {
-    /* Per-hash fallback for hash types/charsets without a batch kernel. */
-    for (unsigned int i = 0; i < num_uncracked; i++) {
+  unsigned int num_cache_hits = 0, num_cache_misses = 0;
+  for (unsigned int i = 0; i < num_uncracked; i++) {
+    char index_data[256] = {0};
+    char cache_fn[128] = {0};
+    unsigned int num_cached = 0;
+    build_precompute_index_data(index_data, sizeof(index_data),
+                                &args[0], uncracked_hashes[i]);
+    index_data_array[i] = strdup(index_data);
+
+    gpu_ulong *cached = search_precompute_cache(index_data, &num_cached,
+                                                cache_fn, sizeof(cache_fn));
+    if (cached == NULL) {
+      /* Cache miss: queue this hash up for the batch (or per-hash) path. */
+      cache_miss_hashes[num_cache_misses]     = uncracked_hashes[i];
+      cache_miss_usernames[num_cache_misses]  = uncracked_usernames[i];
+      cache_miss_index_data[num_cache_misses] = index_data_array[i];
+      num_cache_misses++;
+      continue;
+    }
+
+    /* Cache hit: build a ppi node from the cached array, applying the
+     * same non-zero filter the batch path uses. */
+    printf("  Using cached pre-computed indices for hash %s.\n", uncracked_hashes[i]);
+    fflush(stdout);
+
+    unsigned int count = 0;
+    for (unsigned int p = 0; p < num_cached; p++)
+      if (cached[p] != 0) count++;
+
+    precomputed_and_potential_indices *ppi =
+        calloc(1, sizeof(precomputed_and_potential_indices));
+    if (ppi == NULL) { fprintf(stderr, "Error allocating ppi.\n"); exit(-1); }
+    ppi->username = uncracked_usernames[i];
+    ppi->hash = uncracked_hashes[i];
+    ppi->num_precomputed_end_indices = count;
+    ppi->precomputed_end_indices = calloc(count, sizeof(gpu_ulong));
+    if (ppi->precomputed_end_indices == NULL) {
+      fprintf(stderr, "Error allocating ppi indices.\n"); exit(-1);
+    }
+    unsigned int idx = 0;
+    for (unsigned int p = 0; p < num_cached; p++)
+      if (cached[p] != 0)
+        ppi->precomputed_end_indices[idx++] = cached[p];
+
+    /* Append to ppi_head (matches batch_precompute_all_hashes' behaviour). */
+    if (*ppi_head == NULL) {
+      *ppi_head = ppi;
+    } else {
+      precomputed_and_potential_indices *tail = *ppi_head;
+      while (tail->next != NULL) tail = tail->next;
+      tail->next = ppi;
+    }
+
+    free(cached);
+    total_precomputed_indices_loaded += num_cached;
+    num_hashes_precomputed++;
+    num_cache_hits++;
+  }
+
+  if (num_cache_hits > 0)
+    printf("  Cache: %u hit / %u miss\n", num_cache_hits, num_cache_misses);
+
+  int used_batch = 0;
+  if (num_cache_misses >= 2)
+    used_batch = batch_precompute_all_hashes(num_devices, args,
+        cache_miss_hashes, cache_miss_usernames, num_cache_misses,
+        cache_miss_index_data, ppi_head);
+
+  if (!used_batch && num_cache_misses > 0) {
+    /* Per-hash fallback for hash types/charsets without a batch kernel,
+     * or for the num_cache_misses == 1 case. */
+    for (unsigned int i = 0; i < num_cache_misses; i++) {
       for (unsigned int j = 0; j < num_devices; j++) {
-        args[j].username = uncracked_usernames[i];
-        args[j].hash = uncracked_hashes[i];
+        args[j].username = cache_miss_usernames[i];
+        args[j].hash = cache_miss_hashes[i];
       }
-      precomputed_and_potential_indices *existing = ppi_find(*ppi_head, uncracked_hashes[i]);
-      precompute_hash(num_devices, args, ppi_head, existing);
+      precomputed_and_potential_indices *existing = ppi_find(*ppi_head, cache_miss_hashes[i]);
+      precompute_hash(num_devices, args, ppi_head, existing, cache_miss_index_data[i]);
     }
   }
 
+  /* release_precompute_gpu is a no-op when no kernel was dispatched (the
+   * precompute_gpu_ready flag stays clear), so it's safe to call even on
+   * an all-cache-hit run. */
   release_precompute_gpu(num_devices, args);
+
+  for (unsigned int i = 0; i < num_uncracked; i++)
+    free(index_data_array[i]);
+  free(index_data_array);
+  free(cache_miss_hashes);
+  free(cache_miss_usernames);
+  free(cache_miss_index_data);
 
   char precomp_time_str[128] = {0};
   seconds_to_human_time(precomp_time_str, sizeof(precomp_time_str),
