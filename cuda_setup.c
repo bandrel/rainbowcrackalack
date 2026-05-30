@@ -502,7 +502,14 @@ int gpu_read_buffer(gpu_queue queue, gpu_buffer buf, size_t size, void *ptr) {
 
 void gpu_release_buffer(gpu_buffer buf)  { if (buf != 0) cuMemFree(buf); }
 void gpu_release_queue(gpu_queue q)      { if (q) cuStreamDestroy(q); }
-void gpu_release_context(gpu_context c)  { if (c) cuCtxDestroy(c); }
+void gpu_release_context(gpu_context c)  {
+  if (!c) return;
+  /* Clear the worker-thread default pointer before destroy so a later
+   * gpu_thread_attach can't push a freed context (libcuda's TSD destructor
+   * then double-frees on thread exit). */
+  if (g_default_context == c) g_default_context = NULL;
+  cuCtxDestroy(c);
+}
 void gpu_release_kernel (gpu_kernel k)   { (void)k; /* CUfunction is owned by its module */ }
 void gpu_release_program(gpu_program p)  { if (p) cuModuleUnload(p); }
 
