@@ -136,16 +136,19 @@
 #define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.metal"
 #define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "false_alarm_check_markov_ntlm9.metal"
 #define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.metal"
+#define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.metal"
 #elif defined(USE_CUDA)
 #define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.cl"
 #define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm8.cu"
 #define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm9.cu"
 #define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm10.cu"
+#define GPU_BINARY_SEARCH_KERNEL_PATH "CUDA/gpu_binary_search.cu"
 #else
 #define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.cl"
 #define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.cl"
 #define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "false_alarm_check_markov_ntlm9.cl"
 #define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.cl"
+#define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.cl"
 #endif
 
 #define HASH_FILE_FORMAT_PLAIN 1
@@ -273,6 +276,8 @@ void free_loaded_hashes(char **usernames, char **hashes);
 void *host_thread_false_alarm(void *ptr);
 void print_eta_precompute();
 void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filter *bf, precomputed_and_potential_indices *ppi_head);
+void gpu_binary_search_streaming(preloaded_table *pt, precomputed_and_potential_indices *ppi_head, thread_args *args, unsigned int num_devices);
+void gpu_binary_search_release(void);
 gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size);
 void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
@@ -341,6 +346,11 @@ unsigned int fa_batch_threshold = 16384;
  * binary-search work on this workload.  See
  * docs/superpowers/specs/2026-05-24-bloom-filter-tightening-design.md. */
 double bloom_target_fpr = 0.01;
+
+/* If non-zero, search_tables() routes per-table endpoint binary search through
+ * the GPU (gpu_binary_search_streaming) instead of CPU rt_binary_search.
+ * Off by default while still under validation; toggle with --gpu-search. */
+int gpu_search_enabled = 0;
 
 /* The platform number to disable (-1 to not disable any). */
 int disable_platform = -1;
@@ -2791,6 +2801,7 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
   fprintf(stderr, "    %s-disable-platform N%s    (Optional) Disables a platform from being used (platform numbers are reported on program start-up).  Useful when experiencing strange problems on mixed-GPU systems.  Try disabling each platform one at a time and see if the program behaves normally.\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--fa-batch N%s    (Optional) False-alarm batch flush threshold (default 16384; 1 disables batching).\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--bloom-fpr X%s    (Optional) Bloom filter target false-positive rate (default 0.01; 0 disables).\n\n", WHITEB, CLR);
+  fprintf(stderr, "    %s--gpu-search%s    (Optional) Offload per-table endpoint binary search to the GPU.  Off by default while still under validation.\n\n", WHITEB, CLR);
   fprintf(stderr, "%sExamples:%s\n    %s %s 64f12cddaa88057e06a81b54e73b949b\n    %s %s %shashes_one_per_line.txt\n    %s %s %spwdump.txt\n\n", WHITEB, CLR, prog_name, dir1, prog_name, dir1, dir2, prog_name, dir1, dir2);
   exit(exit_code);
 }
@@ -2993,6 +3004,283 @@ void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filte
 }
 
 
+/* --- GPU-accelerated rainbow-table endpoint binary search --------------- */
+
+/* Cached GPU state for gpu_binary_search_streaming.  Initialised lazily on
+ * the first call; torn down by gpu_binary_search_release() at the end of
+ * search_tables().  We deliberately use a private context/queue here rather
+ * than reusing args[].gpu.context/queue: the FA-check worker thread owns
+ * those (it created them under its own thread-attached CUDA context), and
+ * sharing would tangle stream ordering with the in-flight FA-check kernels
+ * from the previous batch. */
+static struct {
+  int           ready;
+  gpu_device    device;
+  gpu_context   context;
+  gpu_queue     queue;
+  gpu_program   program;
+  gpu_kernel    kernel;
+} g_gpu_bsearch = {0};
+
+/* Capacity (in match pairs) of the per-table GPU output buffer.  Each pair
+ * is 16 bytes, so 4M pairs = 64 MB.  Confirmed matches per table on the
+ * NetNTLMv1-7 bench workload are O(100) — multiple orders of magnitude
+ * below this cap.  On overflow we transparently fall back to
+ * rt_binary_search for that table so correctness is preserved. */
+#define GPU_BSEARCH_OUT_CAP_PAIRS (4u * 1024u * 1024u)
+
+
+void gpu_binary_search_release(void) {
+  if (!g_gpu_bsearch.ready) return;
+  CLRELEASEKERNEL(g_gpu_bsearch.kernel);
+  CLRELEASEPROGRAM(g_gpu_bsearch.program);
+  CLRELEASEQUEUE(g_gpu_bsearch.queue);
+  CLRELEASECONTEXT(g_gpu_bsearch.context);
+  g_gpu_bsearch.ready = 0;
+}
+
+
+/* GPU-offloaded variant of rt_binary_search.  On any setup/allocation
+ * failure (no devices, GPU OOM, kernel-launch error path, or output
+ * overflow) the function transparently falls back to rt_binary_search
+ * so the caller always sees identical results.  See the design notes
+ * in CUDA/gpu_binary_search.cu for the kernel's arg layout and
+ * shared-output-buffer scheme. */
+void gpu_binary_search_streaming(preloaded_table *pt,
+                                 precomputed_and_potential_indices *ppi_head,
+                                 thread_args *args, unsigned int num_devices) {
+  if (num_devices == 0 || pt == NULL || pt->num_chains == 0 ||
+      pt->rainbow_table == NULL) {
+    rt_binary_search(pt ? pt->rainbow_table : NULL,
+                     pt ? pt->num_chains : 0,
+                     pt ? pt->bf : NULL, ppi_head);
+    return;
+  }
+
+  /* Count total uncracked end indices across all ppis.  Same data the
+   * CPU rt_binary_search would walk. */
+  unsigned int total_end_indices = 0;
+  precomputed_and_potential_indices *ppi_cur = ppi_head;
+  while (ppi_cur != NULL) {
+    if (ppi_cur->plaintext == NULL)
+      total_end_indices += ppi_cur->num_precomputed_end_indices;
+    ppi_cur = ppi_cur->next;
+  }
+
+  /* Tiny / empty workload — just use the CPU path. */
+  if (total_end_indices < 2) {
+    rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+    return;
+  }
+
+  struct timespec t_total_start = {0};
+  start_timer(&t_total_start);
+
+  /* Lazily build the cached context/queue/kernel on first call.  CLCREATECONTEXT
+   * and CLCREATEQUEUE both expand to expressions that touch a local `err` int,
+   * so declare it up front to keep all backends happy. */
+  if (!g_gpu_bsearch.ready) {
+    int init_err = 0; (void)init_err;
+    g_gpu_bsearch.device = args[0].gpu.device;
+    {
+      int err = 0; (void)err;
+      g_gpu_bsearch.context = CLCREATECONTEXT(context_callback, &g_gpu_bsearch.device);
+      if (g_gpu_bsearch.context == NULL) {
+        fprintf(stderr, "  GPU search: context create failed; falling back to CPU.\n");
+        rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+        return;
+      }
+      g_gpu_bsearch.queue = CLCREATEQUEUE(g_gpu_bsearch.context, g_gpu_bsearch.device);
+      if (g_gpu_bsearch.queue == NULL) {
+        fprintf(stderr, "  GPU search: queue create failed; falling back to CPU.\n");
+        CLRELEASECONTEXT(g_gpu_bsearch.context);
+        rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+        return;
+      }
+    }
+    load_kernel(g_gpu_bsearch.context, 1, &g_gpu_bsearch.device,
+                GPU_BINARY_SEARCH_KERNEL_PATH, "gpu_binary_search",
+                &g_gpu_bsearch.program, &g_gpu_bsearch.kernel,
+                args[0].hash_type);
+    if (g_gpu_bsearch.program == NULL || g_gpu_bsearch.kernel == NULL) {
+      fprintf(stderr, "  GPU search: kernel load failed; falling back to CPU.\n");
+      CLRELEASEQUEUE(g_gpu_bsearch.queue);
+      CLRELEASECONTEXT(g_gpu_bsearch.context);
+      rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+      return;
+    }
+    g_gpu_bsearch.ready = 1;
+    printf("  GPU search: initialised dedicated context for endpoint search.\n");
+    fflush(stdout);
+  }
+
+  /* Pack end indices into a flat host buffer + remember each entry's
+   * originating ppi and position within that ppi's precomputed_end_indices.
+   * This mirrors the (ppi, position) pair that rt_binary_search records
+   * for each match. */
+  gpu_ulong *h_end_indices = malloc((size_t)total_end_indices * sizeof(gpu_ulong));
+  precomputed_and_potential_indices **entry_ppi =
+      malloc((size_t)total_end_indices * sizeof(precomputed_and_potential_indices *));
+  unsigned int *entry_pos = malloc((size_t)total_end_indices * sizeof(unsigned int));
+  if (h_end_indices == NULL || entry_ppi == NULL || entry_pos == NULL) {
+    fprintf(stderr, "  GPU search: host buffer alloc failed; falling back to CPU.\n");
+    free(h_end_indices); free(entry_ppi); free(entry_pos);
+    rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+    return;
+  }
+
+  unsigned int packed = 0;
+  ppi_cur = ppi_head;
+  while (ppi_cur != NULL) {
+    if (ppi_cur->plaintext == NULL) {
+      for (unsigned int i = 0; i < ppi_cur->num_precomputed_end_indices; i++) {
+        h_end_indices[packed] = ppi_cur->precomputed_end_indices[i];
+        entry_ppi[packed] = ppi_cur;
+        entry_pos[packed] = i;
+        packed++;
+      }
+    }
+    ppi_cur = ppi_cur->next;
+  }
+  /* packed should equal total_end_indices; harmless if it differs (we use packed). */
+
+  /* Macro plumbing: CLCREATEARG_* expects local `context`, `queue`, `kernel`,
+   * and `err` symbols.  Bind them to the cached objects. */
+  gpu_context context = g_gpu_bsearch.context;
+  gpu_queue queue = g_gpu_bsearch.queue;
+  gpu_kernel kernel = g_gpu_bsearch.kernel;
+  int err = 0;
+  (void)err;  /* silence unused-var warnings on backends where macros skip it */
+
+  /* --- Upload rainbow table (per-call, freed before return). --- */
+  size_t table_bytes = (size_t)pt->num_chains * 2 * sizeof(gpu_ulong);
+  gpu_buffer rt_buf = 0, num_chains_buf = 0, bf_bits_buf = 0, bf_mask_buf = 0;
+  gpu_buffer bf_num_hashes_buf = 0, end_indices_buf = 0, total_buf = 0;
+  gpu_buffer cap_buf = 0, head_buf = 0, results_buf = 0;
+
+  CLCREATEARG_ARRAY(0, rt_buf, GPU_RO, pt->rainbow_table, table_bytes);
+
+  gpu_ulong num_chains_val = pt->num_chains;
+  CLCREATEARG(1, num_chains_buf, GPU_RO, num_chains_val, sizeof(gpu_ulong));
+
+  /* --- Bloom upload (only if a bloom is attached). --- */
+  gpu_uint bf_num_hashes_val = 0;
+  gpu_ulong bf_mask_val = 0;
+  if (pt->bf != NULL && pt->bf->num_hashes > 0 && pt->bf->num_bits > 0) {
+    size_t bf_bytes = (size_t)(pt->bf->num_bits / 8);
+    CLCREATEARG_ARRAY(2, bf_bits_buf, GPU_RO, pt->bf->bits, bf_bytes);
+    bf_mask_val = pt->bf->mask;
+    bf_num_hashes_val = pt->bf->num_hashes;
+  } else {
+    /* Bloom disabled: feed a 1-byte stub so the buffer arg is bound, and
+     * set num_hashes=0 to make the kernel skip the prefilter. */
+    unsigned char stub = 0;
+    CLCREATEARG_ARRAY(2, bf_bits_buf, GPU_RO, &stub, 1);
+  }
+  CLCREATEARG(3, bf_mask_buf, GPU_RO, bf_mask_val, sizeof(gpu_ulong));
+  CLCREATEARG(4, bf_num_hashes_buf, GPU_RO, bf_num_hashes_val, sizeof(gpu_uint));
+
+  /* --- Inputs / outputs --- */
+  CLCREATEARG_ARRAY(5, end_indices_buf, GPU_RO,
+                    h_end_indices, (size_t)total_end_indices * sizeof(gpu_ulong));
+  gpu_uint total_val = total_end_indices;
+  CLCREATEARG(6, total_buf, GPU_RO, total_val, sizeof(gpu_uint));
+
+  gpu_uint out_cap_val = GPU_BSEARCH_OUT_CAP_PAIRS;
+  CLCREATEARG(7, cap_buf, GPU_RO, out_cap_val, sizeof(gpu_uint));
+
+  /* out_head: single atomic counter, host-zeroed. */
+  gpu_uint zero = 0;
+  CLCREATEARG(8, head_buf, GPU_RW, zero, sizeof(gpu_uint));
+
+  /* out_results: 2 * cap ulongs (chain_index, entry_index per match). */
+  size_t results_bytes = (size_t)out_cap_val * 2 * sizeof(gpu_ulong);
+  gpu_ulong *h_results = malloc(results_bytes);
+  if (h_results == NULL) {
+    fprintf(stderr, "  GPU search: results host alloc (%.0f MB) failed; falling back to CPU.\n",
+            (double)results_bytes / 1048576.0);
+    CLFREEBUFFER(rt_buf); CLFREEBUFFER(num_chains_buf);
+    CLFREEBUFFER(bf_bits_buf); CLFREEBUFFER(bf_mask_buf); CLFREEBUFFER(bf_num_hashes_buf);
+    CLFREEBUFFER(end_indices_buf); CLFREEBUFFER(total_buf);
+    CLFREEBUFFER(cap_buf); CLFREEBUFFER(head_buf);
+    free(h_end_indices); free(entry_ppi); free(entry_pos);
+    rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+    return;
+  }
+  CLCREATEARG_ARRAY(9, results_buf, GPU_RW, h_results, results_bytes);
+
+  size_t gws = ((total_end_indices + 255) / 256) * 256;
+  CLRUNKERNEL(queue, kernel, &gws);
+  CLWAIT(queue);
+
+  /* Read back the head + (capped) results. */
+  gpu_uint head_val = 0;
+  CLREADBUFFER(head_buf, sizeof(gpu_uint), &head_val);
+
+  unsigned int n_matches = (head_val > out_cap_val) ? out_cap_val : (unsigned int)head_val;
+  if (n_matches > 0) {
+    size_t read_bytes = (size_t)n_matches * 2 * sizeof(gpu_ulong);
+    CLREADBUFFER(results_buf, read_bytes, h_results);
+  }
+
+  /* Free GPU buffers now -- we're done with the device for this table. */
+  CLFREEBUFFER(rt_buf);
+  CLFREEBUFFER(num_chains_buf);
+  CLFREEBUFFER(bf_bits_buf);
+  CLFREEBUFFER(bf_mask_buf);
+  CLFREEBUFFER(bf_num_hashes_buf);
+  CLFREEBUFFER(end_indices_buf);
+  CLFREEBUFFER(total_buf);
+  CLFREEBUFFER(cap_buf);
+  CLFREEBUFFER(head_buf);
+  CLFREEBUFFER(results_buf);
+
+  if ((unsigned int)head_val > out_cap_val) {
+    /* Should be extremely rare on real workloads.  Be loud and re-run on CPU
+     * so the result set stays correct. */
+    fprintf(stderr,
+            "  GPU search: output buffer overflowed (%u > cap %u); re-running on CPU.\n",
+            (unsigned int)head_val, out_cap_val);
+    fflush(stderr);
+    free(h_results);
+    free(h_end_indices); free(entry_ppi); free(entry_pos);
+    rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi_head);
+    return;
+  }
+
+  /* Translate each (chain_index, entry_index) into the same (start, position)
+   * pair rt_binary_search would insert via add_potential_start_index_and_position. */
+  for (unsigned int m = 0; m < n_matches; m++) {
+    gpu_ulong chain_idx = h_results[(size_t)m * 2 + 0];
+    unsigned int entry_idx = (unsigned int)h_results[(size_t)m * 2 + 1];
+    if (entry_idx >= total_end_indices || chain_idx >= pt->num_chains) {
+      /* Defensive: should never happen unless the kernel mis-wrote. */
+      fprintf(stderr,
+              "  GPU search: bogus result (entry_idx=%u, chain_idx=%llu); skipping.\n",
+              entry_idx, (unsigned long long)chain_idx);
+      continue;
+    }
+    gpu_ulong start = pt->rainbow_table[chain_idx * 2];
+    add_potential_start_index_and_position(entry_ppi[entry_idx], start,
+                                           entry_pos[entry_idx]);
+    if (pt->bf != NULL) bloom_record_confirmed(pt->bf);
+  }
+
+  free(h_results);
+  free(h_end_indices); free(entry_ppi); free(entry_pos);
+
+  double s_time = get_elapsed(&t_total_start);
+  if (s_time < 1.0)
+    printf("  Table GPU-searched in %.1f ms (%u match%s).\n",
+           s_time * 1000.0, n_matches, n_matches == 1 ? "" : "es");
+  else
+    printf("  Table GPU-searched in %.2f s (%u match%s).\n",
+           s_time, n_matches, n_matches == 1 ? "" : "es");
+  fflush(stdout);
+  time_searching += s_time;
+}
+
+
 void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash_type) {
   FILE *jtr_file = fopen(jtr_pot_filename, "ab"), *hashcat_file = fopen(hashcat_pot_filename, "ab");
   unsigned int hash_len = strlen(ppi->hash);
@@ -3177,7 +3465,15 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
      * those CLCREATEARG_ARRAY calls into launch_false_alarm_kernel on
      * the main thread so the upload is synchronous. */
     start_timer(&bench_phase_start);
-    rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi);
+    if (gpu_search_enabled) {
+      /* GPU-offloaded endpoint binary search.  Falls back to
+       * rt_binary_search() internally on any failure (no GPU/VRAM,
+       * overflow, etc.) so the result set is always identical to the
+       * CPU path. */
+      gpu_binary_search_streaming(pt, ppi, args, args[0].total_devices);
+    } else {
+      rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi);
+    }
     t_search_cum += get_elapsed(&bench_phase_start);
     n_tables_bench++;
 
@@ -3257,6 +3553,10 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   start_timer(&bench_cleanup_start);
 
   fa_batch_free(&fa_batch);
+
+  /* Tear down the GPU-binary-search context/queue/kernel cached by
+   * gpu_binary_search_streaming, if any.  No-op when --gpu-search was off. */
+  gpu_binary_search_release();
 
   /* Free any remaining preloaded tables (i.e.: if we cracked all the hashes and quit early).
    * In-flight workers are handled below via the pool's abort flag. */
@@ -3354,6 +3654,8 @@ int main(int ac, char **av) {
         print_usage_and_exit(av[0], -1);
       }
       bloom_target_fpr = v;
+    } else if (strcmp(av[i], "--gpu-search") == 0) {
+      gpu_search_enabled = 1;
     } else {
       /* Undocumented third arg: override pot filename (kept for backward compat). */
       if (i == 3 && av[i][0] != '-') {
