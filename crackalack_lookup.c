@@ -392,8 +392,10 @@ unsigned int num_hashes_precomputed_total = 0;
 
 
 /* The total number of tables to preload in memory while binary searching and false
- * alarm checking is done by the main thread. */
-#define MAX_PRELOAD_NUM 4
+ * alarm checking is done by the main thread.  Overridable via $RCRT_MAX_PRELOAD
+ * to trade RAM for throughput (each in-flight table holds ~1 GB after decompress). */
+#define MAX_PRELOAD_NUM_DEFAULT 4
+unsigned int max_preload_num = MAX_PRELOAD_NUM_DEFAULT;
 
 #define LOCK_PPI() \
   if (pthread_mutex_lock(&ppi_mutex)) { perror("Failed to lock mutex"); exit(-1); }
@@ -2368,6 +2370,17 @@ static unsigned int compute_load_thread_count(void) {
   return n;
 }
 
+/* Initialize max_preload_num from $RCRT_MAX_PRELOAD if set (in [1, 256]),
+ * else leave at MAX_PRELOAD_NUM_DEFAULT.  Each in-flight table holds ~1 GB
+ * post-decompress on this workload, so the upper bound roughly caps RAM use. */
+static void init_max_preload_num(void) {
+  const char *env = getenv("RCRT_MAX_PRELOAD");
+  if (env == NULL || *env == '\0') return;
+  long v = strtol(env, NULL, 10);
+  if (v >= 1 && v <= 256)
+    max_preload_num = (unsigned int)v;
+}
+
 /* Worker for the parallel table loader.  Each iteration atomically claims the
  * next unclaimed path from the pool, loads it via load_single_table(), and
  * appends the resulting preloaded_table to the global list under
@@ -2412,7 +2425,7 @@ static void *table_load_worker(void *arg) {
 
     /* Throttle first: wait for room before appending so peak queue depth
      * stays at MAX_PRELOAD_NUM, not MAX_PRELOAD_NUM + (n_workers - 1). */
-    while (num_preloaded_tables_available >= MAX_PRELOAD_NUM)
+    while (num_preloaded_tables_available >= max_preload_num)
       pthread_cond_wait(&condition_continue_loading_tables, &preloaded_tables_lock);
 
     /* After waking from the throttle (or finding it open) the consumer may
@@ -3245,6 +3258,7 @@ int main(int ac, char **av) {
   ENABLE_CONSOLE_COLOR();
   PRINT_PROJECT_HEADER();
   setlocale(LC_NUMERIC, "");
+  init_max_preload_num();
   if (ac < 3)
     print_usage_and_exit(av[0], -1);
 
