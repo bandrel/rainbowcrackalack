@@ -2538,6 +2538,9 @@ void streaming_lookup(char *rt_dir, const rt_parameters *filter,
                      char **hashes, char **usernames, unsigned int total_hashes,
                      precomputed_and_potential_indices **ppi_head) {
 
+  struct timespec bench_presearch_start = {0};
+  start_timer(&bench_presearch_start);
+
   /* Reset preloader globals for this config group. */
   pthread_mutex_lock(&preloaded_tables_lock);
   preloaded_table_list = NULL;
@@ -2712,6 +2715,10 @@ void streaming_lookup(char *rt_dir, const rt_parameters *filter,
   seconds_to_human_time(precomp_time_str, sizeof(precomp_time_str),
                         get_elapsed(&precomp_start));
   printf("  Precompute finished in %s.\n\n", precomp_time_str);
+  fflush(stdout);
+
+  printf("[bench] streaming_lookup pre-search: %.1f ms\n",
+         get_elapsed(&bench_presearch_start) * 1000.0);
   fflush(stdout);
 
   /* Hand off to the streaming search loop.  It consumes preloaded_table_list
@@ -3053,6 +3060,19 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   preloaded_table *pt = NULL;
   false_alarm_state fa_state = {0};
 
+  struct timespec bench_phase_start = {0};
+  double t_wait_table_cum = 0.0;
+  double t_search_cum = 0.0;
+  double t_accumulate_cum = 0.0;
+  double t_harvest_cum = 0.0;
+  double t_launch_cum = 0.0;
+  double t_reset_cum = 0.0;
+  double t_cleanup = 0.0;
+  double t_drain_launch = 0.0;
+  double t_drain_harvest = 0.0;
+  unsigned int n_flushes = 0;
+  unsigned int n_tables_bench = 0;
+
   fa_batch_t fa_batch = {0};
   if (fa_batch_init(&fa_batch, fa_batch_threshold, 0) != 0) {
     fprintf(stderr, "fa_batch_init failed\n"); exit(-1);
@@ -3113,7 +3133,9 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     }
 
     /* Get the next preloaded table.  If NULL, we reached the end. */
+    start_timer(&bench_phase_start);
     pt = get_preloaded_table();
+    t_wait_table_cum += get_elapsed(&bench_phase_start);
     if (pt == NULL) {
       /* IMPORTANT: harvest must complete before fa_batch_reset.  GPU
        * threads borrow batch arrays for the duration of the in-flight
@@ -3154,7 +3176,10 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
      * so worst case is a missed crack, not a wrong one.  TODO: move
      * those CLCREATEARG_ARRAY calls into launch_false_alarm_kernel on
      * the main thread so the upload is synchronous. */
+    start_timer(&bench_phase_start);
     rt_binary_search(pt->rainbow_table, pt->num_chains, pt->bf, ppi);
+    t_search_cum += get_elapsed(&bench_phase_start);
+    n_tables_bench++;
 
     num_chains_processed += pt->num_chains;
     num_tables_processed++;
@@ -3168,21 +3193,33 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     FREE(pt);
 
     /* Append candidates from THIS table into the batch.  No GPU work yet. */
+    start_timer(&bench_phase_start);
     if (fa_batch_append(&fa_batch, ppi, args[0].reduction_offset,
                         plaintext_space_total) != 0) {
       fprintf(stderr, "fa_batch_append failed\n"); exit(-1);
     }
     /* Safe to clear ppi now -- fa_batch_append has copied the indices. */
     clear_potential_start_indices(ppi);
+    t_accumulate_cum += get_elapsed(&bench_phase_start);
 
     if (fa_batch_should_flush(&fa_batch, /*force=*/0)) {
       /* IMPORTANT: harvest must complete before fa_batch_reset.  GPU
        * threads borrow batch arrays for the duration of the in-flight
        * kernel; resetting (or freeing) before join would tear out memory
        * those threads are still reading. */
+      start_timer(&bench_phase_start);
       harvest_false_alarm_results(&fa_state);
+      t_harvest_cum += get_elapsed(&bench_phase_start);
+
+      start_timer(&bench_phase_start);
       launch_false_alarm_kernel(&fa_batch, args, &fa_state);
+      t_launch_cum += get_elapsed(&bench_phase_start);
+
+      start_timer(&bench_phase_start);
       fa_batch_reset(&fa_batch);
+      t_reset_cum += get_elapsed(&bench_phase_start);
+
+      n_flushes++;
     }
 
     {
@@ -3202,10 +3239,23 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
    * With threshold-based flushing, up to (fa_batch_threshold - 1) candidates
    * can accumulate after the last flush.  Same harvest-before-reset rule applies. */
   if (fa_batch.num_candidates > 0) {
+    start_timer(&bench_phase_start);
     launch_false_alarm_kernel(&fa_batch, args, &fa_state);
+    t_drain_launch = get_elapsed(&bench_phase_start);
+
+    start_timer(&bench_phase_start);
     harvest_false_alarm_results(&fa_state);
+    t_drain_harvest = get_elapsed(&bench_phase_start);
+
     fa_batch_reset(&fa_batch);
   }
+  printf("[bench] final drain: launch=%.1f ms harvest=%.1f ms\n",
+         t_drain_launch * 1000.0, t_drain_harvest * 1000.0);
+  fflush(stdout);
+
+  struct timespec bench_cleanup_start = {0};
+  start_timer(&bench_cleanup_start);
+
   fa_batch_free(&fa_batch);
 
   /* Free any remaining preloaded tables (i.e.: if we cracked all the hashes and quit early).
@@ -3235,6 +3285,22 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     active_load_pool->abort = 1;
   pthread_cond_broadcast(&condition_continue_loading_tables);
   pthread_mutex_unlock(&preloaded_tables_lock);
+
+  t_cleanup = get_elapsed(&bench_cleanup_start);
+  printf("[bench] cleanup: %.1f ms\n", t_cleanup * 1000.0);
+  fflush(stdout);
+
+  printf("[bench] search_tables phases: wait=%.1fms search=%.1fms accumulate=%.1fms harvest=%.1fms launch=%.1fms reset=%.1fms cleanup=%.1fms n_tables=%u n_flushes=%u\n",
+         t_wait_table_cum * 1000.0,
+         t_search_cum * 1000.0,
+         t_accumulate_cum * 1000.0,
+         t_harvest_cum * 1000.0,
+         t_launch_cum * 1000.0,
+         t_reset_cum * 1000.0,
+         t_cleanup * 1000.0,
+         n_tables_bench,
+         n_flushes);
+  fflush(stdout);
 }
 
 
