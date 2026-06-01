@@ -3355,6 +3355,11 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   preloaded_table *pt = NULL;
   false_alarm_state fa_state = {0};
 
+  /* num_cracked is only updated during FA-batch harvest, which happens at
+   * flush boundaries (every ~16k candidates).  Track what we've printed so
+   * we only emit the line when the count actually changes. */
+  unsigned int num_cracked_last_printed = num_cracked;
+
   struct timespec bench_phase_start = {0};
   double t_wait_table_cum = 0.0;
   double t_search_cum = 0.0;
@@ -3534,7 +3539,12 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
       fflush(stdout);
     }
     print_eta_search(num_tables_processed, total_tables);
-    printf("  Cracked %u of %u hashes.\n\n", num_cracked, num_hashes);
+    if (num_cracked != num_cracked_last_printed) {
+      printf("  Cracked %u of %u hashes.\n\n", num_cracked, num_hashes);
+      num_cracked_last_printed = num_cracked;
+    } else {
+      printf("\n");
+    }
 
   }
 
@@ -3551,6 +3561,10 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     t_drain_harvest = get_elapsed(&bench_phase_start);
 
     fa_batch_reset(&fa_batch);
+  }
+  if (num_cracked != num_cracked_last_printed) {
+    printf("  Cracked %u of %u hashes.\n\n", num_cracked, num_hashes);
+    num_cracked_last_printed = num_cracked;
   }
   printf("[bench] final drain: launch=%.1f ms harvest=%.1f ms\n",
          t_drain_launch * 1000.0, t_drain_harvest * 1000.0);
