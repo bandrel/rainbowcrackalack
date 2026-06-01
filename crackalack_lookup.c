@@ -2941,6 +2941,13 @@ void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filte
   struct timespec start_time_searching = {0};
   char time_searching_str[64] = {0};
   unsigned int num_threads = get_num_cpu_cores();
+  {
+    const char *env = getenv("RCRT_RT_BIN_THREADS");
+    if (env != NULL && *env != '\0') {
+      long v = strtol(env, NULL, 10);
+      if (v >= 1 && v <= 256) num_threads = (unsigned int)v;
+    }
+  }
   pthread_t *threads = NULL;
   search_thread_args *args = NULL;
   unsigned int i = 0;
