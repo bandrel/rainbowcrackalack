@@ -1249,7 +1249,7 @@ void *host_thread_false_alarm(void *ptr) {
   }
 
   if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
-    CLCREATEARG_ARRAY(16, challenge_buffer, CL_RO, args->challenge, 8);
+    CLCREATEARG_ARRAY(16, challenge_buffer, CL_RO, args->challenge, NETNTLMV1_CHALLENGE_LEN);
   }
 
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
@@ -1547,7 +1547,7 @@ void *host_thread_precompute(void *ptr) {
   }
 
   if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
-    CLCREATEARG_ARRAY(15, challenge_buffer, CL_RO, args->challenge, 8);
+    CLCREATEARG_ARRAY(15, challenge_buffer, CL_RO, args->challenge, NETNTLMV1_CHALLENGE_LEN);
   }
 
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
@@ -1960,7 +1960,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
 
   /* NetNTLMv1-7 batch kernel takes the server challenge at index 8. */
   if (use_netntlmv1_batch) {
-    CLCREATEARG_ARRAY(8, challenge_buffer, CL_RO, args[0].challenge, 8);
+    CLCREATEARG_ARRAY(8, challenge_buffer, CL_RO, args[0].challenge, NETNTLMV1_CHALLENGE_LEN);
   }
 
   /* Dispatch in position-based sub-batches to stay within GPU watchdog limits.
@@ -3750,7 +3750,11 @@ int main(int ac, char **av) {
       bloom_target_fpr = v;
     } else if (strcmp(av[i], "--gpu-search") == 0) {
       gpu_search_enabled = 1;
-    } else if ((strcmp(av[i], "--challenge") == 0) && (i + 1 < (unsigned int)ac)) {
+    } else if (strcmp(av[i], "--challenge") == 0) {
+      if (i + 1 >= (unsigned int)ac) {
+        fprintf(stderr, "Error: --challenge requires a 16-hex value.\n");
+        print_usage_and_exit(av[0], -1);
+      }
       if (parse_challenge_str(av[++i], g_challenge) != 0) {
         fprintf(stderr, "Error: --challenge must be exactly 16 hex digits, got '%s'.\n", av[i]);
         print_usage_and_exit(av[0], -1);
@@ -4048,8 +4052,9 @@ int main(int ac, char **av) {
    * Each config group carries the challenge parsed from its filename (default
    * 1122334455667788 when no -chal suffix is present).  Validate that all
    * loaded tables agree, honor/validate any user-supplied --challenge, then
-   * adopt the result and push it to the CPU hashing path. */
-  {
+   * adopt the result and push it to the CPU hashing path.  Only applies to
+   * NetNTLMv1 tables; NTLM/MD5 runs never touch g_netntlmv1_challenge. */
+  if (cg_head->params.hash_type == HASH_NETNTLMV1) {
     config_group *first_cg = cg_head;
     const unsigned char *table_challenge = first_cg->params.challenge;
 
