@@ -4187,6 +4187,13 @@ int main(int ac, char **av) {
      * precompute + baseline-style search loop.  Carved-down replacement
      * for pipelined_lookup; same wall-time, dramatically lower RSS. */
     start_timer(&precompute_start_time);
+    /* Reset the precompute progress counters for this config group so the ETA
+     * (print_eta_precompute) has a valid total to divide against.  Without a
+     * non-zero total the guard in print_eta_precompute fails and it always
+     * reports "Unknown".  num_hashes is the upper bound on hashes precomputed
+     * here, matching the "(at most)" wording of the estimate. */
+    num_hashes_precomputed = 0;
+    num_hashes_precomputed_total = num_hashes;
     streaming_lookup(rt_dir, &cg->params, num_devices, args,
                      hashes, usernames, num_hashes, &ppi_head);
     time_precomp += get_elapsed(&precompute_start_time);
