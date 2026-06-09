@@ -660,7 +660,7 @@ void *host_thread(void *ptr) {
         CLCREATEARG(13, max_positions_buffer, CL_RO, dummy_uint, sizeof(gpu_uint));
       }
       if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
-        CLCREATEARG_ARRAY(14, challenge_buffer, CL_RO, args->challenge, 8);
+        CLCREATEARG_ARRAY(14, challenge_buffer, CL_RO, args->challenge, NETNTLMV1_CHALLENGE_LEN);
       }
     } else {
       CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
