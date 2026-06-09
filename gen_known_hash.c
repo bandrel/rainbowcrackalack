@@ -5,7 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <gcrypt.h>
+/* Use OpenSSL DES so weak keys (e.g. \x01*8 from all-zero plaintext) are not
+ * rejected.  gcrypt enforces the DES spec and refuses weak keys; the GPU
+ * kernels do not check, so gcrypt would produce wrong hashes for those chains. */
+#define OPENSSL_SUPPRESS_DEPRECATED
+#include <openssl/des.h>
 #include "cpu_rt_functions.h"
 #include "shared.h"
 
@@ -14,24 +18,14 @@ extern void setup_des_key(char key_56[], unsigned char *key);
 static char charset_byte[256];
 
 /* Correct NetNTLMv1 hash: 7-byte plaintext → setup_des_key → 8-byte DES key →
- * DES-ECB encrypt magic.  The cpu_rt_functions.c version of netntlmv1_hash
- * skips setup_des_key and produces all-zero output. */
+ * DES-ECB encrypt magic. */
 static void netntlmv1_hash_correct(unsigned char *plaintext, unsigned char *hash) {
-  static int gcrypt_inited = 0;
-  if (!gcrypt_inited) {
-    gcry_check_version(NULL);
-    gcry_control(GCRYCTL_DISABLE_SECMEM, 0);
-    gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
-    gcrypt_inited = 1;
-  }
+  static const unsigned char magic[8] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
   unsigned char des_key[8] = {0};
-  unsigned char magic[8] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
   setup_des_key((char *)plaintext, des_key);
-  gcry_cipher_hd_t handle;
-  gcry_cipher_open(&handle, GCRY_CIPHER_DES, GCRY_CIPHER_MODE_ECB, 0);
-  gcry_cipher_setkey(handle, des_key, 8);
-  gcry_cipher_encrypt(handle, hash, 8, magic, 8);
-  gcry_cipher_close(handle);
+  DES_key_schedule ks;
+  DES_set_key_unchecked((const_DES_cblock *)des_key, &ks);
+  DES_ecb_encrypt((const_DES_cblock *)magic, (DES_cblock *)hash, &ks, DES_ENCRYPT);
 }
 
 int main(int ac, char **av) {
