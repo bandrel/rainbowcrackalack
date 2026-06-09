@@ -842,7 +842,12 @@ static int configs_match(const rt_parameters *a, const rt_parameters *b) {
       && a->plaintext_len_max == b->plaintext_len_max
       && a->table_index == b->table_index
       && a->chain_len == b->chain_len
-      && a->markov_keyspace == b->markov_keyspace;
+      && a->markov_keyspace == b->markov_keyspace
+      /* The NetNTLMv1 challenge is part of a table's identity: tables built for
+       * different challenges are not interchangeable, so they must not share a
+       * config group.  Keeping them separate also lets the challenge-resolution
+       * scan in main() detect a directory holding conflicting challenges. */
+      && memcmp(a->challenge, b->challenge, NETNTLMV1_CHALLENGE_LEN) == 0;
 }
 
 
