@@ -183,6 +183,8 @@ typedef struct {
   char    markov_path[1024];
   uint64_t markov_keyspace;
 
+  unsigned char challenge[8];
+
   gpu_dev gpu;
 } thread_args;
 
@@ -354,6 +356,7 @@ void *host_thread(void *ptr) {
 
   gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL;
   gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
+  gpu_buffer challenge_buffer = NULL;
 
   gpu_uint pos_start = 0;
   markov_model markov = {0};
@@ -602,6 +605,7 @@ void *host_thread(void *ptr) {
       CLFREEBUFFER(pos_start_buffer);
       CLFREEBUFFER(pspace_table_buffer);
       CLFREEBUFFER(pspace_total_buffer);
+      CLFREEBUFFER(challenge_buffer);
       if (args->use_markov) {
         CLFREEBUFFER(sorted_pos0_buffer);
         CLFREEBUFFER(sorted_bigram_buffer);
@@ -654,6 +658,9 @@ void *host_thread(void *ptr) {
         CLCREATEARG(11, sorted_pos0_buffer, CL_RO, dummy_byte, sizeof(uint8_t));
         CLCREATEARG(12, sorted_bigram_buffer, CL_RO, dummy_byte, sizeof(uint8_t));
         CLCREATEARG(13, max_positions_buffer, CL_RO, dummy_uint, sizeof(gpu_uint));
+      }
+      if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
+        CLCREATEARG_ARRAY(14, challenge_buffer, CL_RO, args->challenge, 8);
       }
     } else {
       CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
@@ -887,6 +894,8 @@ int main(int ac, char **av) {
   uint64_t part_index = 0;
   int i = 0;
   int charset_len = 0;
+  unsigned char challenge[8];
+  memcpy(challenge, NETNTLMV1_DEFAULT_CHALLENGE, 8);
 
 
   ENABLE_CONSOLE_COLOR();
@@ -954,6 +963,13 @@ int main(int ac, char **av) {
           return -1;
         }
       }
+    } else if (strcmp(av[i], "--challenge") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "--challenge requires a 16-hex value\n"); return -1; }
+      i++;
+      if (parse_challenge_str(av[i], challenge) != 0) {
+        fprintf(stderr, "Error: --challenge must be exactly 16 hex digits, got '%s'.\n", av[i]);
+        return -1;
+      }
     } else {
       fprintf(stderr, "Unknown option: %s\n", av[i]);
       print_usage_and_exit(av[0], -1);
@@ -973,6 +989,15 @@ int main(int ac, char **av) {
   if (markov_keyspace > 0) {
     char tmp[sizeof(charset_name_safe)];
     snprintf(tmp, sizeof(tmp), "%s-mk%"PRIu64, charset_name_safe, markov_keyspace);
+    strncpy(charset_name_safe, tmp, sizeof(charset_name_safe) - 1);
+    charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
+  }
+
+  /* When using a non-default NetNTLMv1 challenge, append -chal<hex> to charset. */
+  if (!challenge_is_default(challenge)) {
+    char chex[17]; format_challenge_hex(challenge, chex);
+    char tmp[sizeof(charset_name_safe)];
+    snprintf(tmp, sizeof(tmp), "%s-chal%s", charset_name_safe, chex);
     strncpy(charset_name_safe, tmp, sizeof(charset_name_safe) - 1);
     charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
   }
@@ -1216,6 +1241,9 @@ int main(int ac, char **av) {
     printf("Table generation started on %s...\n\n", time_str);  fflush(stdout);
   }
 
+  /* Set the active NetNTLMv1 challenge for the CPU-side hashing path. */
+  set_netntlmv1_challenge(challenge);
+
   /* Spin up one host thread per GPU. */
   for (i = 0; i < num_devices; i++) {
     args[i].benchmark_mode = benchmark_mode;
@@ -1231,6 +1259,7 @@ int main(int ac, char **av) {
     args[i].initial_chains_per_execution = INITIAL_CHAINS_PER_EXECUTION;
     args[i].use_markov = use_markov;
     args[i].markov_keyspace = markov_keyspace;
+    memcpy(args[i].challenge, challenge, 8);
     snprintf(args[i].markov_path, sizeof(args[i].markov_path), "%s", markov_path);
     args[i].gpu.device_number = i;
     args[i].gpu.device = devices[i];
