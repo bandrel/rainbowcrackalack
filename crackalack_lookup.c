@@ -484,21 +484,36 @@ void launch_false_alarm_kernel(fa_batch_t *batch, thread_args *args, false_alarm
    * chain, so uniform-length warps are dramatically faster. */
   fa_batch_sort_by_position(batch);
 
-  /* Hand the batch arrays directly to the kernel via state.  These
-   * pointers stay valid until fa_batch_reset() / fa_batch_free(). */
-  state->potential_start_indices          = batch->start_indices;
-  state->potential_start_index_positions  = batch->start_index_positions;
-  state->hash_base_indices                = batch->hash_base_indices;
-  state->ppi_refs                         = batch->ppi_refs;
+  /* Snapshot the batch arrays into state-owned copies.  The caller will
+   * fa_batch_reset() immediately after this returns and start filling the
+   * next iteration's candidates into the same memory -- if we let state
+   * (and the worker threads) point at batch->* directly, harvest later
+   * reads ppi_refs that have been overwritten by subsequent fa_batch_appends,
+   * causing the hash-verify strcmp to fail and the crack to be silently
+   * dropped.  Copies are freed at the end of harvest_false_alarm_results. */
+  size_t n = (size_t)batch->num_candidates;
+  state->potential_start_indices         = malloc(n * sizeof(*state->potential_start_indices));
+  state->potential_start_index_positions = malloc(n * sizeof(*state->potential_start_index_positions));
+  state->hash_base_indices               = malloc(n * sizeof(*state->hash_base_indices));
+  state->ppi_refs                        = malloc(n * sizeof(*state->ppi_refs));
+  if (state->potential_start_indices == NULL || state->potential_start_index_positions == NULL ||
+      state->hash_base_indices == NULL || state->ppi_refs == NULL) {
+    fprintf(stderr, "launch_false_alarm_kernel: malloc failed for batch snapshot (%zu candidates).\n", n);
+    exit(-1);
+  }
+  memcpy(state->potential_start_indices,         batch->start_indices,         n * sizeof(*state->potential_start_indices));
+  memcpy(state->potential_start_index_positions, batch->start_index_positions, n * sizeof(*state->potential_start_index_positions));
+  memcpy(state->hash_base_indices,               batch->hash_base_indices,     n * sizeof(*state->hash_base_indices));
+  memcpy(state->ppi_refs,                        batch->ppi_refs,              n * sizeof(*state->ppi_refs));
   state->num_potential_start_indices      = batch->num_candidates;
 
   start_timer(&state->start_time);
 
   for (unsigned int i = 0; i < total_devices; i++) {
-    args[i].potential_start_indices         = batch->start_indices;
-    args[i].num_potential_start_indices     = batch->num_candidates;
-    args[i].potential_start_index_positions = batch->start_index_positions;
-    args[i].hash_base_indices               = batch->hash_base_indices;
+    args[i].potential_start_indices         = state->potential_start_indices;
+    args[i].num_potential_start_indices     = state->num_potential_start_indices;
+    args[i].potential_start_index_positions = state->potential_start_index_positions;
+    args[i].hash_base_indices               = state->hash_base_indices;
 
     if (pthread_create(&(state->threads[i]), NULL, &host_thread_false_alarm, &(args[i]))) {
       perror("Failed to create thread");
@@ -638,8 +653,13 @@ void harvest_false_alarm_results(false_alarm_state *state) {
   seconds_to_human_time(time_str, sizeof(time_str), (unsigned int)time_delta);
   printf("  Completed false alarm checks in %s.\n", time_str);  fflush(stdout);
 
-  /* Arrays belong to the batch (fa_batch_t); do NOT free them here.
-   * Clear the pointers so stale references can't escape. */
+  /* Free the per-launch snapshot copies allocated in launch_false_alarm_kernel.
+   * (Originally these pointed straight into batch->* memory, which the caller
+   * mutates between launch and harvest -- causing missed cracks.) */
+  free(state->potential_start_indices);
+  free(state->potential_start_index_positions);
+  free(state->hash_base_indices);
+  free(state->ppi_refs);
   state->potential_start_indices         = NULL;
   state->potential_start_index_positions = NULL;
   state->hash_base_indices               = NULL;
@@ -1976,6 +1996,28 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
 
   /* Read results back. */
   CLREADBUFFER(output_buffer, output_bytes, all_output);
+
+  /* DEBUG: optional raw output dump for diagnosing batch correctness.
+   * Set RCRT_DEBUG_DUMP_PRECOMP=/path/to/file to dump all_output verbatim
+   * (num_hashes x positions_per_hash gpu_ulong entries). */
+  {
+    const char *dump_path = getenv("RCRT_DEBUG_DUMP_PRECOMP");
+    if (dump_path != NULL && *dump_path != '\0') {
+      FILE *df = fopen(dump_path, "wb");
+      if (df != NULL) {
+        if (fwrite(all_output, sizeof(gpu_ulong), (size_t)num_hashes * positions_per_hash, df) != (size_t)num_hashes * positions_per_hash) {
+          fprintf(stderr, "  RCRT_DEBUG_DUMP_PRECOMP: short write to %s\n", dump_path);
+        } else {
+          printf("  RCRT_DEBUG_DUMP_PRECOMP: dumped %zu bytes to %s\n",
+                 (size_t)num_hashes * positions_per_hash * sizeof(gpu_ulong), dump_path);
+        }
+        fclose(df);
+        fflush(stdout);
+      } else {
+        fprintf(stderr, "  RCRT_DEBUG_DUMP_PRECOMP: could not open %s for write\n", dump_path);
+      }
+    }
+  }
 
   /* Distribute results to per-hash ppi nodes. */
   for (unsigned int h = 0; h < num_hashes; h++) {
