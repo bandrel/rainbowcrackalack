@@ -183,6 +183,7 @@ typedef struct {
   unsigned int table_index;
   unsigned int reduction_offset;
   unsigned int chain_len;
+  unsigned char challenge[8];
 
   unsigned int total_devices;
   uint64_t *results;
@@ -351,6 +352,11 @@ double bloom_target_fpr = 0.01;
  * the GPU (gpu_binary_search_streaming) instead of CPU rt_binary_search.
  * Off by default while still under validation; toggle with --gpu-search. */
 int gpu_search_enabled = 0;
+
+/* Active NetNTLMv1 server challenge.  Defaults to the canonical value;
+ * overridden by --challenge or adopted from the loaded tables. */
+static unsigned char g_challenge[8];
+static int g_challenge_set = 0;
 
 /* The platform number to disable (-1 to not disable any). */
 int disable_platform = -1;
@@ -534,6 +540,9 @@ void harvest_false_alarm_results(false_alarm_state *state) {
   thread_args *args;
   gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
   int charset_len = 0;
+  char chalhex[17] = {0};
+
+  format_challenge_hex(g_challenge, chalhex);
 
   if (!state->active)
     return;
@@ -639,10 +648,10 @@ void harvest_false_alarm_results(false_alarm_state *state) {
 
       	save_cracked_hash(state->ppi_refs[j], args[i].hash_type);
         if (args[i].hash_type == HASH_NETNTLMV1) {
-          printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, state->ppi_refs[j]->hash, state->ppi_refs[j]->plaintext, CLR);
+          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, state->ppi_refs[j]->hash, chalhex, state->ppi_refs[j]->plaintext, CLR);
           fflush(stdout);
         } else {
-          printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, (state->ppi_refs[j]->username != NULL) ? state->ppi_refs[j]->username : state->ppi_refs[j]->hash, plaintext, CLR);  fflush(stdout);
+          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, (state->ppi_refs[j]->username != NULL) ? state->ppi_refs[j]->username : state->ppi_refs[j]->hash, chalhex, plaintext, CLR);  fflush(stdout);
         }
       }
     }
@@ -957,6 +966,7 @@ void setup_args_for_config(thread_args *args, unsigned int num_devices, const rt
     args[idx].reduction_offset  = params->reduction_offset;
     args[idx].chain_len         = params->chain_len;
     args[idx].markov_keyspace   = params->markov_keyspace;
+    memcpy(args[idx].challenge, g_challenge, 8);
   }
 }
 
@@ -1017,6 +1027,7 @@ void *host_thread_false_alarm(void *ptr) {
 
   gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL;
   gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
+  gpu_buffer challenge_buffer = NULL;
   /*gpu_buffer debug_ulong_buffer = NULL;*/
 
   gpu_ulong *start_indices = NULL, *hash_base_indices = NULL, *plaintext_indices = NULL, *output_block = NULL;
@@ -1237,6 +1248,10 @@ void *host_thread_false_alarm(void *ptr) {
     CLCREATEARG(18, max_positions_buffer, CL_RO, args->markov_max_positions, sizeof(gpu_uint));
   }
 
+  if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
+    CLCREATEARG_ARRAY(16, challenge_buffer, CL_RO, args->challenge, 8);
+  }
+
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
     unsigned int exec_block_scaler = exec_block * gws;
 
@@ -1285,6 +1300,7 @@ void *host_thread_false_alarm(void *ptr) {
   CLFREEBUFFER(start_index_positions_buffer);
   CLFREEBUFFER(hash_base_indices_buffer);
   CLFREEBUFFER(output_block_buffer);
+  CLFREEBUFFER(challenge_buffer);
   if (args->use_markov) {
     CLFREEBUFFER(sorted_pos0_buffer);
     CLFREEBUFFER(sorted_bigram_buffer);
@@ -1329,6 +1345,7 @@ void *host_thread_precompute(void *ptr) {
   char *kernel_path = PRECOMPUTE_KERNEL_PATH, *kernel_name = "precompute";
 
   gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL/*, debug_buffer = NULL*/;
+  gpu_buffer challenge_buffer = NULL;
 
   size_t gws = 0;
   gpu_ulong *output = NULL, *output_block = NULL;
@@ -1529,6 +1546,10 @@ void *host_thread_precompute(void *ptr) {
     }
   }
 
+  if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
+    CLCREATEARG_ARRAY(15, challenge_buffer, CL_RO, args->challenge, 8);
+  }
+
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
     unsigned int exec_block_scaler = exec_block * gws;
 
@@ -1587,6 +1608,7 @@ void *host_thread_precompute(void *ptr) {
   CLFREEBUFFER(output_block_buffer);
   CLFREEBUFFER(pspace_table_buffer);
   CLFREEBUFFER(pspace_total_buffer);
+  CLFREEBUFFER(challenge_buffer);
   if (args->use_markov) {
     CLFREEBUFFER(sorted_pos0_buffer);
     CLFREEBUFFER(sorted_bigram_buffer);
@@ -1840,6 +1862,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   gpu_buffer device_num_buffer = NULL, total_devices_buffer = NULL;
   gpu_buffer output_buffer = NULL;
   gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
+  gpu_buffer challenge_buffer = NULL;
 
   unsigned int positions_per_hash = args[0].chain_len;  /* Single device: all positions */
   size_t total_work_items = (size_t)num_hashes * positions_per_hash;
@@ -1933,6 +1956,11 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     CLCREATEARG_ARRAY(9, sorted_bigram_buffer, CL_RO, args[0].sorted_bigram,
                       args[0].markov_max_positions * args[0].markov_charset_len *
                       args[0].markov_charset_len * sizeof(uint8_t));
+  }
+
+  /* NetNTLMv1-7 batch kernel takes the server challenge at index 8. */
+  if (use_netntlmv1_batch) {
+    CLCREATEARG_ARRAY(8, challenge_buffer, CL_RO, args[0].challenge, 8);
   }
 
   /* Dispatch in position-based sub-batches to stay within GPU watchdog limits.
@@ -2089,6 +2117,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     CLFREEBUFFER(sorted_pos0_buffer);
     CLFREEBUFFER(sorted_bigram_buffer);
   }
+  CLFREEBUFFER(challenge_buffer);
   CLRELEASEKERNEL(gpu->kernel);
   CLRELEASEPROGRAM(gpu->program);
   CLRELEASEQUEUE(gpu->queue);
@@ -2844,6 +2873,7 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
   fprintf(stderr, "    %s--fa-batch N%s    (Optional) False-alarm batch flush threshold (default 16384; 1 disables batching).\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--bloom-fpr X%s    (Optional) Bloom filter target false-positive rate (default 0.01; 0 disables).\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--gpu-search%s    (Optional) Offload per-table endpoint binary search to the GPU.  Off by default while still under validation.\n\n", WHITEB, CLR);
+  fprintf(stderr, "    %s--challenge HEX%s    (Optional) NetNTLMv1 server challenge as 16 hex digits (default 1122334455667788).  Normally adopted automatically from the loaded tables.\n\n", WHITEB, CLR);
   fprintf(stderr, "%sExamples:%s\n    %s %s 64f12cddaa88057e06a81b54e73b949b\n    %s %s %shashes_one_per_line.txt\n    %s %s %spwdump.txt\n\n", WHITEB, CLR, prog_name, dir1, prog_name, dir1, dir2, prog_name, dir1, dir2);
   exit(exit_code);
 }
@@ -3688,6 +3718,7 @@ int main(int ac, char **av) {
   PRINT_PROJECT_HEADER();
   setlocale(LC_NUMERIC, "");
   init_max_preload_num();
+  memcpy(g_challenge, NETNTLMV1_DEFAULT_CHALLENGE, 8);
   if (ac < 3)
     print_usage_and_exit(av[0], -1);
 
@@ -3719,6 +3750,12 @@ int main(int ac, char **av) {
       bloom_target_fpr = v;
     } else if (strcmp(av[i], "--gpu-search") == 0) {
       gpu_search_enabled = 1;
+    } else if ((strcmp(av[i], "--challenge") == 0) && (i + 1 < (unsigned int)ac)) {
+      if (parse_challenge_str(av[++i], g_challenge) != 0) {
+        fprintf(stderr, "Error: --challenge must be exactly 16 hex digits, got '%s'.\n", av[i]);
+        print_usage_and_exit(av[0], -1);
+      }
+      g_challenge_set = 1;
     } else {
       /* Undocumented third arg: override pot filename (kept for backward compat). */
       if (i == 3 && av[i][0] != '-') {
@@ -4005,6 +4042,43 @@ int main(int ac, char **av) {
         exit(-1);
       }
     }
+  }
+
+  /* Resolve the active NetNTLMv1 server challenge from the loaded tables.
+   * Each config group carries the challenge parsed from its filename (default
+   * 1122334455667788 when no -chal suffix is present).  Validate that all
+   * loaded tables agree, honor/validate any user-supplied --challenge, then
+   * adopt the result and push it to the CPU hashing path. */
+  {
+    config_group *first_cg = cg_head;
+    const unsigned char *table_challenge = first_cg->params.challenge;
+
+    /* All loaded tables must carry the same challenge. */
+    for (config_group *cg = cg_head->next; cg != NULL; cg = cg->next) {
+      if (memcmp(cg->params.challenge, table_challenge, 8) != 0) {
+        char a[17] = {0}, b[17] = {0};
+        format_challenge_hex(table_challenge, a);
+        format_challenge_hex(cg->params.challenge, b);
+        fprintf(stderr, "Error: loaded tables carry conflicting NetNTLMv1 challenges "
+                "('%s' for charset '%s' vs '%s' for charset '%s').  Look up one challenge at a time.\n",
+                a, first_cg->params.charset_name, b, cg->params.charset_name);
+        exit(-1);
+      }
+    }
+
+    if (g_challenge_set && memcmp(g_challenge, table_challenge, 8) != 0) {
+      char a[17] = {0}, b[17] = {0};
+      format_challenge_hex(g_challenge, a);
+      format_challenge_hex(table_challenge, b);
+      fprintf(stderr, "Error: --challenge %s does not match the loaded tables' challenge %s (charset '%s').\n",
+              a, b, first_cg->params.charset_name);
+      exit(-1);
+    }
+
+    /* Adopt the tables' challenge. */
+    memcpy(g_challenge, table_challenge, 8);
+    g_challenge_set = 1;
+    set_netntlmv1_challenge(g_challenge);
   }
 
   /* Issue a warning if more than 5,000 hashes were provided, as rainbow tables may
