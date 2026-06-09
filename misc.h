@@ -66,6 +66,7 @@ struct _rt_parameters {
   unsigned int table_part;
 
   uint64_t markov_keyspace; /* 0 = not Markov; >0 = truncated keyspace */
+  unsigned char challenge[8]; /* NetNTLMv1 server challenge; default if absent. */
   unsigned int parsed; /* Set to 1 if parameters successfully parsed, otherwise 0. */
 };
 typedef struct _rt_parameters rt_parameters;
