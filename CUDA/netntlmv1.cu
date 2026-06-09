@@ -2705,7 +2705,11 @@ DECLSPEC void _des_ecb_crypt_keysetup (u32 c, u32 d, PRIVATE_AS u32 *Kc, PRIVATE
 }
 
 
-inline void netntlmv1_hash(unsigned char *plaintext, unsigned char *hash) {
+/* Unused hashcat-derived reference implementation, kept for provenance.
+ * Renamed from netntlmv1_hash to keep parity with CL/netntlmv1.cl (where the
+ * duplicate name is a portability hazard) and to self-document that it is dead.
+ * Not called anywhere. */
+inline void netntlmv1_hash_jtr_unused(unsigned char *plaintext, unsigned char *hash) {
 
   const u32 gid = (blockIdx.x * blockDim.x + threadIdx.x);
   const u32 lid = threadIdx.x;
