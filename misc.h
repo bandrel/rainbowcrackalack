@@ -89,6 +89,10 @@ unsigned int is_ntlm10(unsigned int hash_type, char *charset, unsigned int plain
 unsigned int is_markov_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, int use_markov);
 unsigned int is_md5_8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
 unsigned int is_md5_9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
+/* Canonical NetNTLMv1 server challenge (defined in misc.c).  Host-only;
+ * not safe to expose in shared.h which is included by GPU kernel sources.
+ * Size must match NETNTLMV1_CHALLENGE_LEN (8) defined in shared.h. */
+extern const unsigned char NETNTLMV1_DEFAULT_CHALLENGE[8];
 int parse_challenge_str(const char *s, unsigned char out[8]);
 void format_challenge_hex(const unsigned char in[8], char *buf);
 int challenge_is_default(const unsigned char c[8]);

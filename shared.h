@@ -13,7 +13,6 @@
 /* Canonical NetNTLMv1 server challenge.  A challenge equal to this is treated
  * as "default" and produces backward-compatible filenames (plain "byte"). */
 #define NETNTLMV1_CHALLENGE_LEN 8
-extern const unsigned char NETNTLMV1_DEFAULT_CHALLENGE[NETNTLMV1_CHALLENGE_LEN];
 
 #define MAX_PLAINTEXT_LEN 16
 #define MAX_HASH_OUTPUT_LEN 16
