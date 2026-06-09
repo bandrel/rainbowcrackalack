@@ -88,6 +88,9 @@ unsigned int is_ntlm10(unsigned int hash_type, char *charset, unsigned int plain
 unsigned int is_markov_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, int use_markov);
 unsigned int is_md5_8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
 unsigned int is_md5_9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
+int parse_challenge_str(const char *s, unsigned char out[8]);
+void format_challenge_hex(const unsigned char in[8], char *buf);
+int challenge_is_default(const unsigned char c[8]);
 unsigned int parse_uint_arg(const char *s, const char *name);
 uint64_t parse_uint64_arg(const char *s, const char *name);
 void parse_rt_params(rt_parameters *rt_params, char *rt_filename);

@@ -42,6 +42,43 @@
 #include "shared.h"
 
 
+const unsigned char NETNTLMV1_DEFAULT_CHALLENGE[NETNTLMV1_CHALLENGE_LEN] =
+    {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+
+static int hexval(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+/* Parse exactly 16 hex chars into 8 bytes (MSB first).  Returns 0 on success,
+ * non-zero on malformed input. */
+int parse_challenge_str(const char *s, unsigned char out[8]) {
+  if (s == NULL || strlen(s) != 16) return 1;
+  for (int i = 0; i < 8; i++) {
+    int hi = hexval(s[i * 2]), lo = hexval(s[i * 2 + 1]);
+    if (hi < 0 || lo < 0) return 1;
+    out[i] = (unsigned char)((hi << 4) | lo);
+  }
+  return 0;
+}
+
+/* Format 8 bytes as 16 lowercase hex chars plus NUL (buf must be >= 17). */
+void format_challenge_hex(const unsigned char in[8], char *buf) {
+  static const char *h = "0123456789abcdef";
+  for (int i = 0; i < 8; i++) {
+    buf[i * 2]     = h[(in[i] >> 4) & 0xF];
+    buf[i * 2 + 1] = h[in[i] & 0xF];
+  }
+  buf[16] = '\0';
+}
+
+int challenge_is_default(const unsigned char c[8]) {
+  return memcmp(c, NETNTLMV1_DEFAULT_CHALLENGE, 8) == 0;
+}
+
+
 /* Given a rainbow table filename, delete its associated log, if any exists. */
 void delete_rt_log(char *rt_filename) {
   char log_filename[256] = {0};
