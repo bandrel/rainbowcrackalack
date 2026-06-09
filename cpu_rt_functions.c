@@ -31,6 +31,12 @@
 #include <windows.h>
 #endif
 
+static unsigned char g_netntlmv1_challenge[8] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+
+void set_netntlmv1_challenge(const unsigned char challenge[8]) {
+  memcpy(g_netntlmv1_challenge, challenge, 8);
+}
+
 static pthread_once_t gcrypt_once = PTHREAD_ONCE_INIT;
 
 static void gcrypt_init_once(void) {
@@ -379,7 +385,8 @@ void netntlmv1_hash(unsigned char *plaintext, unsigned int plaintext_len, unsign
     gcry_error_t err;
 
     // Define key and plaintext
-    unsigned char magic[KEY_SIZE] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88 };
+    unsigned char magic[KEY_SIZE];
+    memcpy(magic, g_netntlmv1_challenge, KEY_SIZE);
 
     // Open cipher context
     err = gcry_cipher_open(&handle, GCRY_CIPHER, GCRY_MODE, 0);
