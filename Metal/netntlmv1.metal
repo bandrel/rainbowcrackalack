@@ -308,7 +308,7 @@ inline void des_ecb_setkey_56(thread uint32_t SK[32], thread unsigned char _key[
   des_ecb_setkey(SK, key);
 }
 
-inline void netntlmv1_hash(thread uint32_t SK[32], thread unsigned char *plaintext, thread unsigned char *output) {
+inline void netntlmv1_hash(thread uint32_t SK[32], thread unsigned char *plaintext, thread unsigned char *output, thread unsigned char *challenge) {
   int i;
   uint32_t X, Y, T;
 
@@ -316,8 +316,9 @@ inline void netntlmv1_hash(thread uint32_t SK[32], thread unsigned char *plainte
 
   des_ecb_setkey_56(SK, plaintext);
 
-  X = 0xf0aaf0aa;
-  Y = 0x00cd00cd;
+  GET_UINT32_BE(X, challenge, 0);
+  GET_UINT32_BE(Y, challenge, 4);
+  DES_IP(X, Y);
 
   for (i = 0; i < 8; i++) {
     DES_ROUND(Y, X);

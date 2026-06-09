@@ -20,6 +20,7 @@ kernel void precompute_netntlmv1_7(
     device ulong *g_output [[buffer(12)]],
     device ulong *unused8 [[buffer(13)]],
     device ulong *unused9 [[buffer(14)]],
+    device const unsigned char *g_challenge [[buffer(15)]],
     uint gid [[thread_position_in_grid]],
     uint lid [[thread_index_in_threadgroup]],
     uint lsz [[threads_per_threadgroup]]) {
@@ -47,9 +48,12 @@ kernel void precompute_netntlmv1_7(
   unsigned char plaintext[8];
   ulong index = hash_char_to_index_netntlmv1_7(g_hash, reduction_offset, target_chain_len - 1);
 
+  unsigned char challenge_local[8];
+  for (int _c = 0; _c < 8; _c++) challenge_local[_c] = g_challenge[_c];
+
   for(unsigned int i = target_chain_len; i < 881688; i++) {
     index_to_plaintext_netntlmv1_7(index, plaintext);
-    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
+    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, challenge_local, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
   }
 
   g_output[gid] = index;
