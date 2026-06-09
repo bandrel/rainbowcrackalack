@@ -36,6 +36,7 @@ __device__ inline void netntlmv1_hash_fast(
     uint32_t SK[32],
     unsigned char *plaintext,
     unsigned char *output,
+    unsigned char *challenge,
     uint32_t *l_SB1, uint32_t *l_SB2,
     uint32_t *l_SB3, uint32_t *l_SB4,
     uint32_t *l_SB5, uint32_t *l_SB6,
@@ -47,9 +48,10 @@ __device__ inline void netntlmv1_hash_fast(
 
   des_ecb_setkey_56(SK, plaintext);
 
-  /* State after initial permutation of "1122334455667788" */
-  X = 0xf0aaf0aa;
-  Y = 0x00cd00cd;
+  /* DES state after initial permutation, derived from runtime challenge */
+  GET_UINT32_BE(X, challenge, 0);
+  GET_UINT32_BE(Y, challenge, 4);
+  DES_IP(X, Y);
 
   uint32_t *SK_ptr = SK;
 
