@@ -28,7 +28,8 @@ __kernel void precompute_netntlmv1_7_batch(
     __global unsigned long *g_chain_len,
     __global unsigned int *g_pos_start,
     __global unsigned int *g_total_positions,
-    __global unsigned long *g_output) {
+    __global unsigned long *g_output,
+    __global unsigned char *g_challenge) {
 
   /* Shared-memory S-box arrays -- one copy per workgroup. */
   __local uint32_t l_SB1[64], l_SB2[64], l_SB3[64], l_SB4[64];
@@ -67,9 +68,12 @@ __kernel void precompute_netntlmv1_7_batch(
   unsigned char plaintext[8];
   unsigned long index = hash_char_to_index_netntlmv1_7(hash, reduction_offset, target_chain_len - 1);
 
+  unsigned char challenge_local[8];
+  for (int _c = 0; _c < 8; _c++) challenge_local[_c] = g_challenge[_c];
+
   for (unsigned long i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_netntlmv1_7(index, plaintext);
-    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
+    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, challenge_local, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
   }
 
   g_output[(unsigned long)hash_idx * total_positions + absolute_pos] = index;

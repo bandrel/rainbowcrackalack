@@ -183,6 +183,7 @@ typedef struct {
   unsigned int table_index;
   unsigned int reduction_offset;
   unsigned int chain_len;
+  unsigned char challenge[8];
 
   unsigned int total_devices;
   uint64_t *results;
@@ -352,6 +353,11 @@ double bloom_target_fpr = 0.01;
  * Off by default while still under validation; toggle with --gpu-search. */
 int gpu_search_enabled = 0;
 
+/* Active NetNTLMv1 server challenge.  Defaults to the canonical value;
+ * overridden by --challenge or adopted from the loaded tables. */
+static unsigned char g_challenge[8];
+static int g_challenge_set = 0;
+
 /* The platform number to disable (-1 to not disable any). */
 int disable_platform = -1;
 
@@ -484,21 +490,36 @@ void launch_false_alarm_kernel(fa_batch_t *batch, thread_args *args, false_alarm
    * chain, so uniform-length warps are dramatically faster. */
   fa_batch_sort_by_position(batch);
 
-  /* Hand the batch arrays directly to the kernel via state.  These
-   * pointers stay valid until fa_batch_reset() / fa_batch_free(). */
-  state->potential_start_indices          = batch->start_indices;
-  state->potential_start_index_positions  = batch->start_index_positions;
-  state->hash_base_indices                = batch->hash_base_indices;
-  state->ppi_refs                         = batch->ppi_refs;
+  /* Snapshot the batch arrays into state-owned copies.  The caller will
+   * fa_batch_reset() immediately after this returns and start filling the
+   * next iteration's candidates into the same memory -- if we let state
+   * (and the worker threads) point at batch->* directly, harvest later
+   * reads ppi_refs that have been overwritten by subsequent fa_batch_appends,
+   * causing the hash-verify strcmp to fail and the crack to be silently
+   * dropped.  Copies are freed at the end of harvest_false_alarm_results. */
+  size_t n = (size_t)batch->num_candidates;
+  state->potential_start_indices         = malloc(n * sizeof(*state->potential_start_indices));
+  state->potential_start_index_positions = malloc(n * sizeof(*state->potential_start_index_positions));
+  state->hash_base_indices               = malloc(n * sizeof(*state->hash_base_indices));
+  state->ppi_refs                        = malloc(n * sizeof(*state->ppi_refs));
+  if (state->potential_start_indices == NULL || state->potential_start_index_positions == NULL ||
+      state->hash_base_indices == NULL || state->ppi_refs == NULL) {
+    fprintf(stderr, "launch_false_alarm_kernel: malloc failed for batch snapshot (%zu candidates).\n", n);
+    exit(-1);
+  }
+  memcpy(state->potential_start_indices,         batch->start_indices,         n * sizeof(*state->potential_start_indices));
+  memcpy(state->potential_start_index_positions, batch->start_index_positions, n * sizeof(*state->potential_start_index_positions));
+  memcpy(state->hash_base_indices,               batch->hash_base_indices,     n * sizeof(*state->hash_base_indices));
+  memcpy(state->ppi_refs,                        batch->ppi_refs,              n * sizeof(*state->ppi_refs));
   state->num_potential_start_indices      = batch->num_candidates;
 
   start_timer(&state->start_time);
 
   for (unsigned int i = 0; i < total_devices; i++) {
-    args[i].potential_start_indices         = batch->start_indices;
-    args[i].num_potential_start_indices     = batch->num_candidates;
-    args[i].potential_start_index_positions = batch->start_index_positions;
-    args[i].hash_base_indices               = batch->hash_base_indices;
+    args[i].potential_start_indices         = state->potential_start_indices;
+    args[i].num_potential_start_indices     = state->num_potential_start_indices;
+    args[i].potential_start_index_positions = state->potential_start_index_positions;
+    args[i].hash_base_indices               = state->hash_base_indices;
 
     if (pthread_create(&(state->threads[i]), NULL, &host_thread_false_alarm, &(args[i]))) {
       perror("Failed to create thread");
@@ -519,6 +540,9 @@ void harvest_false_alarm_results(false_alarm_state *state) {
   thread_args *args;
   gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
   int charset_len = 0;
+  char chalhex[17] = {0};
+
+  format_challenge_hex(g_challenge, chalhex);
 
   if (!state->active)
     return;
@@ -624,10 +648,10 @@ void harvest_false_alarm_results(false_alarm_state *state) {
 
       	save_cracked_hash(state->ppi_refs[j], args[i].hash_type);
         if (args[i].hash_type == HASH_NETNTLMV1) {
-          printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, state->ppi_refs[j]->hash, state->ppi_refs[j]->plaintext, CLR);
+          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, state->ppi_refs[j]->hash, chalhex, state->ppi_refs[j]->plaintext, CLR);
           fflush(stdout);
         } else {
-          printf("%sHASH CRACKED => %s:1122334455667788:%s%s\n", GREENB, (state->ppi_refs[j]->username != NULL) ? state->ppi_refs[j]->username : state->ppi_refs[j]->hash, plaintext, CLR);  fflush(stdout);
+          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, (state->ppi_refs[j]->username != NULL) ? state->ppi_refs[j]->username : state->ppi_refs[j]->hash, chalhex, plaintext, CLR);  fflush(stdout);
         }
       }
     }
@@ -638,8 +662,13 @@ void harvest_false_alarm_results(false_alarm_state *state) {
   seconds_to_human_time(time_str, sizeof(time_str), (unsigned int)time_delta);
   printf("  Completed false alarm checks in %s.\n", time_str);  fflush(stdout);
 
-  /* Arrays belong to the batch (fa_batch_t); do NOT free them here.
-   * Clear the pointers so stale references can't escape. */
+  /* Free the per-launch snapshot copies allocated in launch_false_alarm_kernel.
+   * (Originally these pointed straight into batch->* memory, which the caller
+   * mutates between launch and harvest -- causing missed cracks.) */
+  free(state->potential_start_indices);
+  free(state->potential_start_index_positions);
+  free(state->hash_base_indices);
+  free(state->ppi_refs);
   state->potential_start_indices         = NULL;
   state->potential_start_index_positions = NULL;
   state->hash_base_indices               = NULL;
@@ -813,7 +842,12 @@ static int configs_match(const rt_parameters *a, const rt_parameters *b) {
       && a->plaintext_len_max == b->plaintext_len_max
       && a->table_index == b->table_index
       && a->chain_len == b->chain_len
-      && a->markov_keyspace == b->markov_keyspace;
+      && a->markov_keyspace == b->markov_keyspace
+      /* The NetNTLMv1 challenge is part of a table's identity: tables built for
+       * different challenges are not interchangeable, so they must not share a
+       * config group.  Keeping them separate also lets the challenge-resolution
+       * scan in main() detect a directory holding conflicting challenges. */
+      && memcmp(a->challenge, b->challenge, NETNTLMV1_CHALLENGE_LEN) == 0;
 }
 
 
@@ -937,6 +971,7 @@ void setup_args_for_config(thread_args *args, unsigned int num_devices, const rt
     args[idx].reduction_offset  = params->reduction_offset;
     args[idx].chain_len         = params->chain_len;
     args[idx].markov_keyspace   = params->markov_keyspace;
+    memcpy(args[idx].challenge, g_challenge, 8);
   }
 }
 
@@ -997,6 +1032,7 @@ void *host_thread_false_alarm(void *ptr) {
 
   gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL;
   gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
+  gpu_buffer challenge_buffer = NULL;
   /*gpu_buffer debug_ulong_buffer = NULL;*/
 
   gpu_ulong *start_indices = NULL, *hash_base_indices = NULL, *plaintext_indices = NULL, *output_block = NULL;
@@ -1217,6 +1253,10 @@ void *host_thread_false_alarm(void *ptr) {
     CLCREATEARG(18, max_positions_buffer, CL_RO, args->markov_max_positions, sizeof(gpu_uint));
   }
 
+  if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
+    CLCREATEARG_ARRAY(16, challenge_buffer, CL_RO, args->challenge, NETNTLMV1_CHALLENGE_LEN);
+  }
+
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
     unsigned int exec_block_scaler = exec_block * gws;
 
@@ -1265,6 +1305,7 @@ void *host_thread_false_alarm(void *ptr) {
   CLFREEBUFFER(start_index_positions_buffer);
   CLFREEBUFFER(hash_base_indices_buffer);
   CLFREEBUFFER(output_block_buffer);
+  CLFREEBUFFER(challenge_buffer);
   if (args->use_markov) {
     CLFREEBUFFER(sorted_pos0_buffer);
     CLFREEBUFFER(sorted_bigram_buffer);
@@ -1309,6 +1350,7 @@ void *host_thread_precompute(void *ptr) {
   char *kernel_path = PRECOMPUTE_KERNEL_PATH, *kernel_name = "precompute";
 
   gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL/*, debug_buffer = NULL*/;
+  gpu_buffer challenge_buffer = NULL;
 
   size_t gws = 0;
   gpu_ulong *output = NULL, *output_block = NULL;
@@ -1509,6 +1551,10 @@ void *host_thread_precompute(void *ptr) {
     }
   }
 
+  if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
+    CLCREATEARG_ARRAY(15, challenge_buffer, CL_RO, args->challenge, NETNTLMV1_CHALLENGE_LEN);
+  }
+
   for (exec_block = 0; exec_block < num_exec_blocks; exec_block++) {
     unsigned int exec_block_scaler = exec_block * gws;
 
@@ -1567,6 +1613,7 @@ void *host_thread_precompute(void *ptr) {
   CLFREEBUFFER(output_block_buffer);
   CLFREEBUFFER(pspace_table_buffer);
   CLFREEBUFFER(pspace_total_buffer);
+  CLFREEBUFFER(challenge_buffer);
   if (args->use_markov) {
     CLFREEBUFFER(sorted_pos0_buffer);
     CLFREEBUFFER(sorted_bigram_buffer);
@@ -1820,6 +1867,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   gpu_buffer device_num_buffer = NULL, total_devices_buffer = NULL;
   gpu_buffer output_buffer = NULL;
   gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
+  gpu_buffer challenge_buffer = NULL;
 
   unsigned int positions_per_hash = args[0].chain_len;  /* Single device: all positions */
   size_t total_work_items = (size_t)num_hashes * positions_per_hash;
@@ -1915,6 +1963,11 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
                       args[0].markov_charset_len * sizeof(uint8_t));
   }
 
+  /* NetNTLMv1-7 batch kernel takes the server challenge at index 8. */
+  if (use_netntlmv1_batch) {
+    CLCREATEARG_ARRAY(8, challenge_buffer, CL_RO, args[0].challenge, NETNTLMV1_CHALLENGE_LEN);
+  }
+
   /* Dispatch in position-based sub-batches to stay within GPU watchdog limits.
    * Each sub-batch processes all hashes at a range of chain positions.
    *
@@ -1976,6 +2029,28 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
 
   /* Read results back. */
   CLREADBUFFER(output_buffer, output_bytes, all_output);
+
+  /* DEBUG: optional raw output dump for diagnosing batch correctness.
+   * Set RCRT_DEBUG_DUMP_PRECOMP=/path/to/file to dump all_output verbatim
+   * (num_hashes x positions_per_hash gpu_ulong entries). */
+  {
+    const char *dump_path = getenv("RCRT_DEBUG_DUMP_PRECOMP");
+    if (dump_path != NULL && *dump_path != '\0') {
+      FILE *df = fopen(dump_path, "wb");
+      if (df != NULL) {
+        if (fwrite(all_output, sizeof(gpu_ulong), (size_t)num_hashes * positions_per_hash, df) != (size_t)num_hashes * positions_per_hash) {
+          fprintf(stderr, "  RCRT_DEBUG_DUMP_PRECOMP: short write to %s\n", dump_path);
+        } else {
+          printf("  RCRT_DEBUG_DUMP_PRECOMP: dumped %zu bytes to %s\n",
+                 (size_t)num_hashes * positions_per_hash * sizeof(gpu_ulong), dump_path);
+        }
+        fclose(df);
+        fflush(stdout);
+      } else {
+        fprintf(stderr, "  RCRT_DEBUG_DUMP_PRECOMP: could not open %s for write\n", dump_path);
+      }
+    }
+  }
 
   /* Distribute results to per-hash ppi nodes. */
   for (unsigned int h = 0; h < num_hashes; h++) {
@@ -2047,6 +2122,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     CLFREEBUFFER(sorted_pos0_buffer);
     CLFREEBUFFER(sorted_bigram_buffer);
   }
+  CLFREEBUFFER(challenge_buffer);
   CLRELEASEKERNEL(gpu->kernel);
   CLRELEASEPROGRAM(gpu->program);
   CLRELEASEQUEUE(gpu->queue);
@@ -2802,6 +2878,7 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
   fprintf(stderr, "    %s--fa-batch N%s    (Optional) False-alarm batch flush threshold (default 16384; 1 disables batching).\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--bloom-fpr X%s    (Optional) Bloom filter target false-positive rate (default 0.01; 0 disables).\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--gpu-search%s    (Optional) Offload per-table endpoint binary search to the GPU.  Off by default while still under validation.\n\n", WHITEB, CLR);
+  fprintf(stderr, "    %s--challenge HEX%s    (Optional) NetNTLMv1 server challenge as 16 hex digits (default 1122334455667788).  Normally adopted automatically from the loaded tables.\n\n", WHITEB, CLR);
   fprintf(stderr, "%sExamples:%s\n    %s %s 64f12cddaa88057e06a81b54e73b949b\n    %s %s %shashes_one_per_line.txt\n    %s %s %spwdump.txt\n\n", WHITEB, CLR, prog_name, dir1, prog_name, dir1, dir2, prog_name, dir1, dir2);
   exit(exit_code);
 }
@@ -3646,6 +3723,7 @@ int main(int ac, char **av) {
   PRINT_PROJECT_HEADER();
   setlocale(LC_NUMERIC, "");
   init_max_preload_num();
+  memcpy(g_challenge, NETNTLMV1_DEFAULT_CHALLENGE, 8);
   if (ac < 3)
     print_usage_and_exit(av[0], -1);
 
@@ -3677,6 +3755,16 @@ int main(int ac, char **av) {
       bloom_target_fpr = v;
     } else if (strcmp(av[i], "--gpu-search") == 0) {
       gpu_search_enabled = 1;
+    } else if (strcmp(av[i], "--challenge") == 0) {
+      if (i + 1 >= (unsigned int)ac) {
+        fprintf(stderr, "Error: --challenge requires a 16-hex value.\n");
+        print_usage_and_exit(av[0], -1);
+      }
+      if (parse_challenge_str(av[++i], g_challenge) != 0) {
+        fprintf(stderr, "Error: --challenge must be exactly 16 hex digits, got '%s'.\n", av[i]);
+        print_usage_and_exit(av[0], -1);
+      }
+      g_challenge_set = 1;
     } else {
       /* Undocumented third arg: override pot filename (kept for backward compat). */
       if (i == 3 && av[i][0] != '-') {
@@ -3963,6 +4051,44 @@ int main(int ac, char **av) {
         exit(-1);
       }
     }
+  }
+
+  /* Resolve the active NetNTLMv1 server challenge from the loaded tables.
+   * Each config group carries the challenge parsed from its filename (default
+   * 1122334455667788 when no -chal suffix is present).  Validate that all
+   * loaded tables agree, honor/validate any user-supplied --challenge, then
+   * adopt the result and push it to the CPU hashing path.  Only applies to
+   * NetNTLMv1 tables; NTLM/MD5 runs never touch g_netntlmv1_challenge. */
+  if (cg_head->params.hash_type == HASH_NETNTLMV1) {
+    config_group *first_cg = cg_head;
+    const unsigned char *table_challenge = first_cg->params.challenge;
+
+    /* All loaded tables must carry the same challenge. */
+    for (config_group *cg = cg_head->next; cg != NULL; cg = cg->next) {
+      if (memcmp(cg->params.challenge, table_challenge, 8) != 0) {
+        char a[17] = {0}, b[17] = {0};
+        format_challenge_hex(table_challenge, a);
+        format_challenge_hex(cg->params.challenge, b);
+        fprintf(stderr, "Error: loaded tables carry conflicting NetNTLMv1 challenges "
+                "('%s' for charset '%s' vs '%s' for charset '%s').  Look up one challenge at a time.\n",
+                a, first_cg->params.charset_name, b, cg->params.charset_name);
+        exit(-1);
+      }
+    }
+
+    if (g_challenge_set && memcmp(g_challenge, table_challenge, 8) != 0) {
+      char a[17] = {0}, b[17] = {0};
+      format_challenge_hex(g_challenge, a);
+      format_challenge_hex(table_challenge, b);
+      fprintf(stderr, "Error: --challenge %s does not match the loaded tables' challenge %s (charset '%s').\n",
+              a, b, first_cg->params.charset_name);
+      exit(-1);
+    }
+
+    /* Adopt the tables' challenge. */
+    memcpy(g_challenge, table_challenge, 8);
+    g_challenge_set = 1;
+    set_netntlmv1_challenge(g_challenge);
   }
 
   /* Issue a warning if more than 5,000 hashes were provided, as rainbow tables may

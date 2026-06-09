@@ -31,7 +31,11 @@ inline void do_hash(unsigned int hash_type, thread unsigned char *plaintext, uns
   *hash_len = 16;
 #elif HASH_TYPE == HASH_NETNTLMV1
   uint32_t SK[32];
-  netntlmv1_hash(SK, plaintext, hash_value);
+  /* Generic path retains the historical default server challenge
+   * 11 22 33 44 55 66 77 88.  Only the NetNTLMv1-7 fast-path kernels accept a
+   * runtime-configurable challenge. */
+  unsigned char _default_challenge[8] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+  netntlmv1_hash(SK, plaintext, hash_value, _default_challenge);
   *hash_len = 8;
 #elif HASH_TYPE == HASH_MD5
   md5_hash(plaintext, plaintext_len, hash_value);

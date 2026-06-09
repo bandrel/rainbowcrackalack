@@ -10,6 +10,10 @@
 #define HASH_SHA1 4
 #define HASH_NETNTLMV1 9
 
+/* Canonical NetNTLMv1 server challenge.  A challenge equal to this is treated
+ * as "default" and produces backward-compatible filenames (plain "byte"). */
+#define NETNTLMV1_CHALLENGE_LEN 8
+
 #define MAX_PLAINTEXT_LEN 16
 #define MAX_HASH_OUTPUT_LEN 16
 #define MAX_CHARSET_LEN 256
