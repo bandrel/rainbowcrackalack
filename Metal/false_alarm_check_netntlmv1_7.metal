@@ -21,6 +21,7 @@ kernel void false_alarm_check_netntlmv1_7(
     device ulong *g_hash_base_indices [[buffer(13)]],
     device unsigned int *g_exec_block_scaler [[buffer(14)]],
     device ulong *g_plaintext_indices [[buffer(15)]],
+    device const unsigned char *g_challenge [[buffer(16)]],
     uint gid [[thread_position_in_grid]],
     uint lid [[thread_index_in_threadgroup]],
     uint lsz [[threads_per_threadgroup]]) {
@@ -47,11 +48,14 @@ kernel void false_alarm_check_netntlmv1_7(
   ulong hash_base_index = g_hash_base_indices[index_pos] & 0x00FFFFFFFFFFFFFFUL;
   unsigned int endpoint = g_start_index_positions[index_pos];
 
+  unsigned char challenge_local[8];
+  for (int _c = 0; _c < 8; _c++) challenge_local[_c] = g_challenge[_c];
+
   for (unsigned int pos = 0; pos < endpoint + 1; pos++) {
     index_to_plaintext_netntlmv1_7(index, plaintext);
 
     previous_index = index;
-    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, pos);
+    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, challenge_local, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, pos);
 
     if ((index == (hash_base_index + pos)) || (index == (hash_base_index + pos - 72057594037927936UL))) {
       g_plaintext_indices[index_pos] = previous_index;

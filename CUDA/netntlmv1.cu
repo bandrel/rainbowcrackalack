@@ -3102,7 +3102,7 @@ __device__ inline void des_ecb_setkey_56(uint32_t SK[32], unsigned char _key[DES
   des_ecb_setkey(SK, key);
 }
 
-__device__ inline void netntlmv1_hash(uint32_t SK[32], unsigned char *plaintext, unsigned char *output) {
+__device__ inline void netntlmv1_hash(uint32_t SK[32], unsigned char *plaintext, unsigned char *output, unsigned char *challenge) {
   int i;
   uint32_t X, Y, T;
 
@@ -3123,10 +3123,11 @@ __device__ inline void netntlmv1_hash(uint32_t SK[32], unsigned char *plaintext,
   // X: f0aaf0aa; Y: cd00cd
   //printf("X: %x; Y: %x\n", X, Y);
 
-  // This sets the state after the initial permutation is applied to the
-  // plaintext "1122334455667788".
-  X = 0xf0aaf0aa;
-  Y = 0x00cd00cd;
+  // The DES state after the initial permutation is derived at runtime from
+  // the 8-byte server challenge.
+  GET_UINT32_BE(X, challenge, 0);
+  GET_UINT32_BE(Y, challenge, 4);
+  DES_IP(X, Y);
 
   for (i = 0; i < 8; i++) {
     DES_ROUND(Y, X);

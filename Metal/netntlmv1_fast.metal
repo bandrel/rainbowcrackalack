@@ -28,6 +28,7 @@ inline void netntlmv1_hash_fast(
     thread uint32_t SK[32],
     thread unsigned char *plaintext,
     thread unsigned char *output,
+    thread unsigned char *challenge,
     threadgroup uint32_t *l_SB1, threadgroup uint32_t *l_SB2,
     threadgroup uint32_t *l_SB3, threadgroup uint32_t *l_SB4,
     threadgroup uint32_t *l_SB5, threadgroup uint32_t *l_SB6,
@@ -39,9 +40,10 @@ inline void netntlmv1_hash_fast(
 
   des_ecb_setkey_56(SK, plaintext);
 
-  /* State after initial permutation of "1122334455667788" */
-  X = 0xf0aaf0aa;
-  Y = 0x00cd00cd;
+  /* DES state after initial permutation, derived from runtime challenge */
+  GET_UINT32_BE(X, challenge, 0);
+  GET_UINT32_BE(Y, challenge, 4);
+  DES_IP(X, Y);
 
   thread uint32_t *SK_ptr = SK;
 

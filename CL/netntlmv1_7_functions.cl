@@ -14,12 +14,12 @@ inline void index_to_plaintext_netntlmv1_7(unsigned long index, unsigned char *p
 }
 
 
-inline unsigned long hash_netntlmv1_7(unsigned char *plaintext) {
+inline unsigned long hash_netntlmv1_7(unsigned char *plaintext, unsigned char *challenge) {
   uint32_t SK[32];
   unsigned char output[8];
 
   plaintext[7] = '\0';
-  netntlmv1_hash(SK, plaintext, output);
+  netntlmv1_hash(SK, plaintext, output, challenge);
 
   /* Pack in little-endian order to match the generic hash_to_index byte
    * assembly: ret = hash[7]<<56 | hash[6]<<48 | ... | hash[0]. */
@@ -37,6 +37,7 @@ inline unsigned long hash_netntlmv1_7(unsigned char *plaintext) {
 /* Fast variant using __local S-boxes for optimized kernels. */
 inline unsigned long hash_netntlmv1_7_fast(
     unsigned char *plaintext,
+    unsigned char *challenge,
     __local uint32_t *l_SB1, __local uint32_t *l_SB2,
     __local uint32_t *l_SB3, __local uint32_t *l_SB4,
     __local uint32_t *l_SB5, __local uint32_t *l_SB6,
@@ -45,7 +46,7 @@ inline unsigned long hash_netntlmv1_7_fast(
   unsigned char output[8];
 
   plaintext[7] = '\0';
-  netntlmv1_hash_fast(SK, plaintext, output,
+  netntlmv1_hash_fast(SK, plaintext, output, challenge,
                        l_SB1, l_SB2, l_SB3, l_SB4,
                        l_SB5, l_SB6, l_SB7, l_SB8);
 
