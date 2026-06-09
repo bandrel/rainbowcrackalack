@@ -383,6 +383,7 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
 
 
   rt_params->parsed = 0;
+  memcpy(rt_params->challenge, NETNTLMV1_DEFAULT_CHALLENGE, 8);
 
   /* Skip the directory path, if this filename is absolute. */
 #ifdef _WIN32
@@ -434,6 +435,18 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
 
       strncpy(rt_params->charset_name, charset_name_ptr, sizeof(rt_params->charset_name) - 1);
       rt_params->charset_name[sizeof(rt_params->charset_name) - 1] = '\0';
+
+      /* Extract NetNTLMv1 challenge from charset name if present
+       * (e.g. "byte-chalaabbccddeeff0011"). */
+      {
+        char *ch = strstr(rt_params->charset_name, "-chal");
+        if (ch) {
+          unsigned char parsed_chal[8];
+          if (parse_challenge_str(ch + 5, parsed_chal) == 0)
+            memcpy(rt_params->challenge, parsed_chal, 8);
+          *ch = '\0';
+        }
+      }
 
       /* Extract Markov keyspace from charset name if present (e.g. "ascii-32-95-mk1000000"). */
       {
