@@ -99,6 +99,7 @@ int challenge_is_default(const unsigned char c[8]);
 unsigned int parse_uint_arg(const char *s, const char *name);
 uint64_t parse_uint64_arg(const char *s, const char *name);
 void parse_rt_params(rt_parameters *rt_params, char *rt_filename);
+unsigned int compute_batch_chunk_size(unsigned int num_hashes);
 void *recalloc(void *ptr, size_t new_size, size_t old_size);
 size_t rt_log(rc_file f, const char *fmt, ...);
 int str_ends_with(const char *str, const char *suffix);

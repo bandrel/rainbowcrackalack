@@ -186,6 +186,13 @@ phase_run() {
             sync
             sudo sh -c "echo 3 > /proc/sys/vm/drop_caches"
 
+            # Remove any precompute cache from a prior trial.  crackalack_lookup
+            # writes rcracki.precalc.* into its working dir (the binary's dir)
+            # and reuses them on the next run, which would skip the precompute
+            # phase entirely and make later trials measure a warm cache instead
+            # of a cold run.  Clear them so every trial is cold and comparable.
+            rm -f "$bin_dir"/rcracki.precalc.* 2>/dev/null || true
+
             local log_file="$results_dir/trial_$(printf '%02d' "$n")_${branch}.log"
             local time_file="$results_dir/trial_$(printf '%02d' "$n")_${branch}.time"
 
