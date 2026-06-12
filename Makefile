@@ -42,6 +42,23 @@ ifeq ($(BUILD),macos)
   GPU_BACKEND_OBJ := $(OBJDIR)/metal_setup.o
 endif
 
+ifeq ($(BUILD),linux-opencl)
+  # Native Linux build using the OpenCL backend (instead of CUDA).  Useful for
+  # exercising the OpenCL (.cl) kernels on Linux hosts that have an OpenCL ICD
+  # (e.g. NVIDIA's, or PoCL).  Binaries go under build/linux-opencl/ so they do
+  # not clobber the CUDA binaries in the project root.  Run them from the repo
+  # root so the CL/ kernel dir is found.  Requires OpenCL headers (/usr/include/CL)
+  # -- opencl_setup.c dlopen()s libOpenCL at runtime, so no -lOpenCL is needed.
+  CC := $(CC_linux)
+  EXE :=
+  OUTDIR := $(BUILD_DIR)
+  CPPFLAGS := $(CPPFLAGS_common)
+  CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
+  LDFLAGS  := $(LDFLAGS_common) -flto=auto
+  LIBS     := -lpthread -ldl -lgcrypt -lm
+  GPU_BACKEND_OBJ := $(OBJDIR)/opencl_setup.o
+endif
+
 ifeq ($(BUILD),windows)
   CC := $(CC_windows)
   EXE := .exe
@@ -83,7 +100,7 @@ BINARIES := \
 	$(OUTDIR)/$(SORT_PROG) \
 	$(OUTDIR)/$(PLAN_PROG)
 
-.PHONY: all linux macos windows clean strip \
+.PHONY: all linux linux-opencl macos windows clean strip \
         prep_opencl_headers prep_none \
         bundle_windows
 
@@ -91,6 +108,9 @@ all: $(PREP) $(BINARIES)
 
 linux:
 	$(MAKE) BUILD=linux all
+
+linux-opencl:
+	$(MAKE) BUILD=linux-opencl all
 
 macos:
 	$(MAKE) BUILD=macos all
