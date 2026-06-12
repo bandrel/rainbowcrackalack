@@ -34,10 +34,11 @@ inline ulong hash_netntlmv1_7(thread unsigned char *plaintext, thread unsigned c
 }
 
 
-/* Fast variant using threadgroup S-boxes for optimized kernels. */
-inline ulong hash_netntlmv1_7_fast(
+/* Fast variant using threadgroup S-boxes with a pre-permuted challenge
+ * (cx/cy = DES_IP(challenge)).  Chain loops compute cx/cy once and call this. */
+inline ulong hash_netntlmv1_7_fast_ip(
     thread unsigned char *plaintext,
-    thread unsigned char *challenge,
+    uint32_t cx, uint32_t cy,
     threadgroup uint32_t *l_SB1, threadgroup uint32_t *l_SB2,
     threadgroup uint32_t *l_SB3, threadgroup uint32_t *l_SB4,
     threadgroup uint32_t *l_SB5, threadgroup uint32_t *l_SB6,
@@ -46,9 +47,9 @@ inline ulong hash_netntlmv1_7_fast(
   unsigned char output[8];
 
   plaintext[7] = '\0';
-  netntlmv1_hash_fast(SK, plaintext, output, challenge,
-                       l_SB1, l_SB2, l_SB3, l_SB4,
-                       l_SB5, l_SB6, l_SB7, l_SB8);
+  netntlmv1_hash_fast_ip(SK, plaintext, output, cx, cy,
+                          l_SB1, l_SB2, l_SB3, l_SB4,
+                          l_SB5, l_SB6, l_SB7, l_SB8);
 
   return ((ulong)output[7] << 56) |
          ((ulong)output[6] << 48) |
@@ -58,6 +59,21 @@ inline ulong hash_netntlmv1_7_fast(
          ((ulong)output[2] << 16) |
          ((ulong)output[1] << 8) |
          ((ulong)output[0]);
+}
+
+/* Fast variant using threadgroup S-boxes for optimized kernels. */
+inline ulong hash_netntlmv1_7_fast(
+    thread unsigned char *plaintext,
+    thread unsigned char *challenge,
+    threadgroup uint32_t *l_SB1, threadgroup uint32_t *l_SB2,
+    threadgroup uint32_t *l_SB3, threadgroup uint32_t *l_SB4,
+    threadgroup uint32_t *l_SB5, threadgroup uint32_t *l_SB6,
+    threadgroup uint32_t *l_SB7, threadgroup uint32_t *l_SB8) {
+  uint32_t cx, cy;
+  netntlmv1_challenge_to_ip(challenge, &cx, &cy);
+  return hash_netntlmv1_7_fast_ip(plaintext, cx, cy,
+                                  l_SB1, l_SB2, l_SB3, l_SB4,
+                                  l_SB5, l_SB6, l_SB7, l_SB8);
 }
 
 

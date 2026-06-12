@@ -62,9 +62,13 @@ kernel void precompute_netntlmv1_7_batch(
   unsigned char challenge_local[8];
   for (int _c = 0; _c < 8; _c++) challenge_local[_c] = g_challenge[_c];
 
+  /* Challenge initial permutation is loop-invariant: compute once. */
+  uint32_t cx, cy;
+  netntlmv1_challenge_to_ip(challenge_local, &cx, &cy);
+
   for (ulong i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_netntlmv1_7(index, plaintext);
-    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, challenge_local, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
+    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast_ip(plaintext, cx, cy, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
   }
 
   g_output[(ulong)hash_idx * total_positions + absolute_pos] = index;
