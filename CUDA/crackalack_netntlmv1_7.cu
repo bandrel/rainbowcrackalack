@@ -8,9 +8,9 @@ extern "C" __global__ void crackalack_netntlmv1_7(
     unsigned int *unused4,
     unsigned int *unused5,
     unsigned int *g_reduction_offset,
-    unsigned int *unused_chain_len,
+    unsigned int *g_chain_len,
     unsigned long long *g_indices,
-    unsigned long long *unused8,
+    unsigned int *g_pos_start,
     unsigned long long *unused9,
     unsigned int *unused10,
     char *unused11,
@@ -34,7 +34,12 @@ extern "C" __global__ void crackalack_netntlmv1_7(
   uint32_t cx, cy;
   netntlmv1_challenge_to_ip(g_challenge, &cx, &cy);
 
-  for (unsigned int pos = 0; pos < 881688; pos++) {
+  /* Honor the host's calibrated pos_start/chain_len (like crackalack_ntlm8),
+   * so multi-pass generation is correct and the gen probe measures real
+   * throughput.  Previously this loop was hardcoded 0..881688, which made the
+   * calibration mis-measure (it walked the full chain regardless of the probe's
+   * chain_len) and broke multi-pass (each pass re-walked the whole chain). */
+  for (unsigned int pos = *g_pos_start; pos < (*g_chain_len - 1); pos++) {
     index_to_plaintext_netntlmv1_7(index, plaintext);
     index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast_ip(plaintext, cx, cy, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, pos);
   }
