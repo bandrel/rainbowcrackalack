@@ -30,9 +30,13 @@ extern "C" __global__ void crackalack_netntlmv1_7(
   unsigned char plaintext[8];
   unsigned int reduction_offset = *g_reduction_offset;
 
+  /* Challenge initial permutation is loop-invariant: compute once. */
+  uint32_t cx, cy;
+  netntlmv1_challenge_to_ip(g_challenge, &cx, &cy);
+
   for (unsigned int pos = 0; pos < 881688; pos++) {
     index_to_plaintext_netntlmv1_7(index, plaintext);
-    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, g_challenge, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, pos);
+    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast_ip(plaintext, cx, cy, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, pos);
   }
 
   g_indices[blockIdx.x * blockDim.x + threadIdx.x] = index;

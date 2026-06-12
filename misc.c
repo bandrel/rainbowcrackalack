@@ -518,6 +518,32 @@ uint64_t parse_uint64_arg(const char *s, const char *name) {
 
 
 /* Combines realloc() with calloc(). */
+/* Default position-chunk size for the batched precompute kernel dispatch.
+ *
+ * Wall time of the heaviest (first) chunk scales as num_hashes * chunk_size,
+ * because the lowest-position chunk walks ~chain_len steps for every work
+ * item.  The 2-hash / 8192 configuration was measured at ~5 s for that chunk
+ * (comfortably under NVIDIA's 30 s TDR watchdog), so we hold the product
+ * num_hashes * chunk_size constant at 2 * 8192 = 16384 and clamp the result
+ * to [256, 8192].  Total GPU work is chunk-invariant, so shrinking the chunk
+ * for large hash batches costs nothing but keeps each dispatch TDR-safe; the
+ * 256 floor still yields >= 16384 work items per dispatch (>=64 hashes), more
+ * than enough to saturate the SMs. */
+unsigned int compute_batch_chunk_size(unsigned int num_hashes) {
+  const unsigned int target_work_items = 16384;  /* 2 hashes * 8192 */
+  const unsigned int min_chunk = 256;
+  const unsigned int max_chunk = 8192;
+
+  if (num_hashes == 0)
+    return max_chunk;
+
+  unsigned int chunk = target_work_items / num_hashes;
+  if (chunk < min_chunk) chunk = min_chunk;
+  if (chunk > max_chunk) chunk = max_chunk;
+  return chunk;
+}
+
+
 void *recalloc(void *ptr, size_t new_size, size_t old_size) {
   ptr = realloc(ptr, new_size);
   if (ptr == NULL) {
