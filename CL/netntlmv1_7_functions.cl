@@ -34,10 +34,11 @@ inline unsigned long hash_netntlmv1_7(unsigned char *plaintext, unsigned char *c
 }
 
 
-/* Fast variant using __local S-boxes for optimized kernels. */
-inline unsigned long hash_netntlmv1_7_fast(
+/* Fast variant using __local S-boxes with a pre-permuted challenge
+ * (cx/cy = DES_IP(challenge)).  Chain loops compute cx/cy once and call this. */
+inline unsigned long hash_netntlmv1_7_fast_ip(
     unsigned char *plaintext,
-    unsigned char *challenge,
+    uint32_t cx, uint32_t cy,
     __local uint32_t *l_SB1, __local uint32_t *l_SB2,
     __local uint32_t *l_SB3, __local uint32_t *l_SB4,
     __local uint32_t *l_SB5, __local uint32_t *l_SB6,
@@ -46,9 +47,9 @@ inline unsigned long hash_netntlmv1_7_fast(
   unsigned char output[8];
 
   plaintext[7] = '\0';
-  netntlmv1_hash_fast(SK, plaintext, output, challenge,
-                       l_SB1, l_SB2, l_SB3, l_SB4,
-                       l_SB5, l_SB6, l_SB7, l_SB8);
+  netntlmv1_hash_fast_ip(SK, plaintext, output, cx, cy,
+                          l_SB1, l_SB2, l_SB3, l_SB4,
+                          l_SB5, l_SB6, l_SB7, l_SB8);
 
   return ((unsigned long)output[7] << 56) |
          ((unsigned long)output[6] << 48) |
@@ -58,6 +59,21 @@ inline unsigned long hash_netntlmv1_7_fast(
          ((unsigned long)output[2] << 16) |
          ((unsigned long)output[1] << 8) |
          ((unsigned long)output[0]);
+}
+
+/* Fast variant using __local S-boxes for optimized kernels. */
+inline unsigned long hash_netntlmv1_7_fast(
+    unsigned char *plaintext,
+    unsigned char *challenge,
+    __local uint32_t *l_SB1, __local uint32_t *l_SB2,
+    __local uint32_t *l_SB3, __local uint32_t *l_SB4,
+    __local uint32_t *l_SB5, __local uint32_t *l_SB6,
+    __local uint32_t *l_SB7, __local uint32_t *l_SB8) {
+  uint32_t cx, cy;
+  netntlmv1_challenge_to_ip(challenge, &cx, &cy);
+  return hash_netntlmv1_7_fast_ip(plaintext, cx, cy,
+                                  l_SB1, l_SB2, l_SB3, l_SB4,
+                                  l_SB5, l_SB6, l_SB7, l_SB8);
 }
 
 
