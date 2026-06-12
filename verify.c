@@ -332,7 +332,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     unsigned int i = 0, plaintext_len = sizeof(plaintext), hash_len = sizeof(hash);
 
 
-    if (rt_params.hash_type == HASH_NTLM || rt_params.hash_type == HASH_MD5) {
+    if (rt_params.hash_type == HASH_NTLM || rt_params.hash_type == HASH_MD5 || rt_params.hash_type == HASH_NETNTLMV1) {
       /* For incomplete tables, verify the LAST N chains (not random). */
       if (table_should_be_complete == VERIFY_TABLE_MAY_BE_INCOMPLETE) {
         uint64_t start_offset = (actual_num_chains > num_chains_to_verify) ?
@@ -381,8 +381,12 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
   return 1;
 
  err:
+  /* verify_rainbowtable_file() returns 1 on success / 0 on failure (its caller
+   * checks `if (!verify_rainbowtable_file(...))`).  Returning the nonzero
+   * VERIFY_ERR_CORRUPTED (-3) here was a bug: it read as success, so a chain
+   * mismatch printed the error but the table was still reported as verified. */
   FREE(rainbow_table);
-  return VERIFY_ERR_CORRUPTED;
+  return 0;
 }
 
 
