@@ -2705,10 +2705,17 @@ DECLSPEC void _des_ecb_crypt_keysetup (u32 c, u32 d, PRIVATE_AS u32 *Kc, PRIVATE
 }
 
 
-/* Unused hashcat-derived reference implementation, kept for provenance.
- * Renamed from netntlmv1_hash to keep parity with CL/netntlmv1.cl (where the
- * duplicate name is a portability hazard) and to self-document that it is dead.
- * Not called anywhere. */
+   Unused hashcat-derived reference implementation, kept for provenance.
+   Renamed from netntlmv1_hash to keep parity with CL/netntlmv1.cl (where the
+   duplicate name is a portability hazard) and to self-document that it is dead.
+   Not called anywhere.
+
+   NOTE: this entire reference block is disabled by the enclosing C comment
+   that opens above and closes after this function.  Do NOT introduce a nested
+   "asterisk-slash" sequence here -- it would close the enclosing comment
+   early and expose this device-only code as a host function, which NVRTC
+   rejects ("host functions are not allowed in JIT mode").
+
 inline void netntlmv1_hash_jtr_unused(unsigned char *plaintext, unsigned char *hash) {
 
   const u32 gid = (blockIdx.x * blockDim.x + threadIdx.x);

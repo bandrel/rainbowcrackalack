@@ -2695,11 +2695,17 @@ DECLSPEC void _des_ecb_crypt_keysetup (u32 c, u32 d, PRIVATE_AS u32 *Kc, PRIVATE
 }
 
 
-/* Unused hashcat-derived reference implementation, kept for provenance.
- * Renamed from netntlmv1_hash to avoid a duplicate function name with the
- * active netntlmv1_hash() below: OpenCL C has no function overloading, so two
- * functions sharing a name in one translation unit is undefined behaviour on
- * strict compilers.  Not called anywhere. */
+   Unused hashcat-derived reference implementation, kept for provenance.
+   Renamed from netntlmv1_hash to avoid a duplicate function name with the
+   active netntlmv1_hash() below: OpenCL C has no function overloading, so two
+   functions sharing a name in one translation unit is undefined behaviour on
+   strict compilers.  Not called anywhere.
+
+   NOTE: this entire reference block is disabled by the enclosing C comment
+   that opens above and closes after this function.  Do NOT introduce a nested
+   "asterisk-slash" sequence here -- it would close the enclosing comment early
+   and expose this code as a live (and invalid) function.
+
 inline void netntlmv1_hash_jtr_unused(unsigned char *plaintext, unsigned char *hash) {
 
   const u32 gid = get_global_id (0);

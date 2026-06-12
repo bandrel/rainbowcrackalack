@@ -1986,7 +1986,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
    * 30 sec TDR.  Honor $RCRT_PRECOMP_CHUNK to retune per-GPU without
    * recompiling (e.g. larger hash batches may benefit from a smaller chunk
    * because the hash dimension already saturates the GPU). */
-  unsigned int chunk_size = 8192;
+  unsigned int chunk_size = compute_batch_chunk_size(num_hashes);
   const char *cs_env = getenv("RCRT_PRECOMP_CHUNK");
   if (cs_env != NULL && *cs_env != '\0') {
     int n = atoi(cs_env);
