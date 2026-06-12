@@ -442,6 +442,50 @@ static int group_j(void) {
 }
 
 
+/* --- Group K: compute_batch_chunk_size --- */
+static int group_k(void)
+{
+    int ok = 1;
+
+    /* CBC-01: a single hash clamps to the 8192 maximum. */
+    if (compute_batch_chunk_size(1) != 8192)
+        { fprintf(stderr, "CBC-01 failed: got %u, expected 8192\n",
+                  compute_batch_chunk_size(1)); ok = 0; }
+
+    /* CBC-02: 2 hashes preserves the measured sweet spot (16384/2 = 8192). */
+    if (compute_batch_chunk_size(2) != 8192)
+        { fprintf(stderr, "CBC-02 failed: got %u, expected 8192\n",
+                  compute_batch_chunk_size(2)); ok = 0; }
+
+    /* CBC-03: mid-range hash count scales down (16384/5 = 3276). */
+    if (compute_batch_chunk_size(5) != 3276)
+        { fprintf(stderr, "CBC-03 failed: got %u, expected 3276\n",
+                  compute_batch_chunk_size(5)); ok = 0; }
+
+    /* CBC-04: at the floor boundary (16384/64 = 256). */
+    if (compute_batch_chunk_size(64) != 256)
+        { fprintf(stderr, "CBC-04 failed: got %u, expected 256\n",
+                  compute_batch_chunk_size(64)); ok = 0; }
+
+    /* CBC-05: large hash count clamps to the 256 minimum (16384/100 = 163). */
+    if (compute_batch_chunk_size(100) != 256)
+        { fprintf(stderr, "CBC-05 failed: got %u, expected 256\n",
+                  compute_batch_chunk_size(100)); ok = 0; }
+
+    /* CBC-06: very large hash count still clamps to 256, never 0. */
+    if (compute_batch_chunk_size(100000) != 256)
+        { fprintf(stderr, "CBC-06 failed: got %u, expected 256\n",
+                  compute_batch_chunk_size(100000)); ok = 0; }
+
+    /* CBC-07: zero hashes is safe (no divide-by-zero) and yields the max. */
+    if (compute_batch_chunk_size(0) != 8192)
+        { fprintf(stderr, "CBC-07 failed: got %u, expected 8192\n",
+                  compute_batch_chunk_size(0)); ok = 0; }
+
+    return ok;
+}
+
+
 int test_misc(void)
 {
     int ok = 1;
@@ -456,6 +500,7 @@ int test_misc(void)
     ok &= group_h();
     ok &= group_i();
     ok &= group_j();
+    ok &= group_k();
 
     return ok;
 }
