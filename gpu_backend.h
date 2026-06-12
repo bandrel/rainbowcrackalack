@@ -89,7 +89,13 @@ typedef cl_bool  gpu_bool;
 
 #define GPU_SUCCESS CL_SUCCESS
 
-#define DEFAULT_BUILD_OPTIONS "-I. -ICL"
+/* -cl-std=CL1.2: the .cl kernels are written OpenCL-1.x style (bare pointers
+ * are implicitly private).  Without this, OpenCL 2.0+ runtimes (e.g. NVIDIA's,
+ * which defaults to OpenCL 3.0) treat bare pointers as __generic and reject
+ * calls that pass them to private-qualified parameters
+ * ("changes address space of pointer", e.g. netntlmv1_hash -> des_ecb_setkey_56).
+ * Compiling as 1.2 disables the generic address space and matches the kernels. */
+#define DEFAULT_BUILD_OPTIONS "-I. -ICL -cl-std=CL1.2"
 
 #endif /* USE_METAL */
 
