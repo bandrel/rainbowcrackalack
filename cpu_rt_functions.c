@@ -25,6 +25,10 @@
 #define GCRY_CIPHER GCRY_CIPHER_DES     // Use DES cipher
 #define GCRY_MODE GCRY_CIPHER_MODE_ECB  // Use ECB mode
 #define KEY_SIZE 8                      // DES key size in bytes
+
+/* Self-contained table DES (ported from the GPU kernel) for netntlmv1_hash, so
+ * DES weak keys are not rejected the way libgcrypt rejects them. */
+#include "cpu_des_impl.h"
 #define BLOCK_SIZE 8                    // DES block size in bytes
 #include <pthread.h>
 #ifdef _WIN32
@@ -156,14 +160,22 @@ uint64_t generate_rainbow_chain(
   unsigned int pos = 0;
 
 
-  if (hash_type != HASH_NTLM && hash_type != HASH_MD5)
-    fprintf(stderr, "\n\tWARNING: only NTLM and MD5 hashes are currently supported!\n\n");
+  if (hash_type != HASH_NTLM && hash_type != HASH_MD5 && hash_type != HASH_NETNTLMV1)
+    fprintf(stderr, "\n\tWARNING: only NTLM, MD5, and NetNTLMv1 hashes are currently supported!\n\n");
 
   for (; pos < chain_len - 1; pos++) {
     index_to_plaintext(index, charset, charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index, plaintext, plaintext_len);
     if (hash_type == HASH_MD5) {
       md5_hash(plaintext, *plaintext_len, hash);
       *hash_len = 16;
+    } else if (hash_type == HASH_NETNTLMV1) {
+      /* NetNTLMv1: DES-expand the plaintext into an 8-byte key, then encrypt
+       * the (global) server challenge.  Mirrors the GPU fast path and the CPU
+       * reference in test_chain_netntlmv1.c.  hash_to_index() reads 8 bytes. */
+      unsigned char des_key[8] = {0};
+      setup_des_key(plaintext, des_key);
+      netntlmv1_hash(des_key, 8, hash);
+      *hash_len = 8;
     } else {
       ntlm_hash(plaintext, *plaintext_len, hash);
     }
@@ -379,40 +391,34 @@ void HashNetNTLMv1(
 {
   */
 void netntlmv1_hash(unsigned char *plaintext, unsigned int plaintext_len, unsigned char *hash) {
-    ensure_gcrypt_init();
+    /* `plaintext` is the 8-byte DES key produced by setup_des_key().  We encrypt
+     * the (global) server challenge with it using the self-contained table DES
+     * from cpu_des_impl.h instead of libgcrypt.  libgcrypt refuses DES weak/
+     * semi-weak keys (e.g. 0x01*8, which the all-zero plaintext expands to), but
+     * the GPU applies no such check -- using the same table DES here makes the
+     * CPU reference match the GPU bit-for-bit for every key. */
+    uint32_t SK_schedule[32];
+    uint32_t X, Y, T;
+    uint32_t *SK;
+    int i;
+    (void)plaintext_len;
 
-    gcry_cipher_hd_t handle;
-    gcry_error_t err;
+    cpu_des_ecb_setkey(SK_schedule, plaintext);
 
-    // Define key and plaintext
-    unsigned char magic[KEY_SIZE];
-    memcpy(magic, g_netntlmv1_challenge, KEY_SIZE);
+    GET_UINT32_BE(X, g_netntlmv1_challenge, 0);
+    GET_UINT32_BE(Y, g_netntlmv1_challenge, 4);
+    DES_IP(X, Y);
 
-    // Open cipher context
-    err = gcry_cipher_open(&handle, GCRY_CIPHER, GCRY_MODE, 0);
-    if (err) {
-        fprintf(stderr, "Failed to open cipher: %s\n", gcry_strerror(err));
-        return;
+    SK = SK_schedule;
+    for (i = 0; i < 8; i++) {
+        DES_ROUND(Y, X);
+        DES_ROUND(X, Y);
     }
 
-    // Set the key for encryption
-    err = gcry_cipher_setkey(handle, plaintext, plaintext_len);
-    if (err) {
-        fprintf(stderr, "Failed to set key: %s\n", gcry_strerror(err));
-        gcry_cipher_close(handle);
-        return;
-    }
+    DES_FP(Y, X);
 
-    // Encrypt the plaintext
-    err = gcry_cipher_encrypt(handle, hash, BLOCK_SIZE, magic, BLOCK_SIZE);
-    if (err) {
-        fprintf(stderr, "Encryption failed: %s\n", gcry_strerror(err));
-        gcry_cipher_close(handle);
-        return;
-    }
-
-    // Clean up
-    gcry_cipher_close(handle);
+    PUT_UINT32_BE(Y, hash, 0);
+    PUT_UINT32_BE(X, hash, 4);
 }
 
 
