@@ -182,8 +182,8 @@ phase_run() {
     # Gen throughput (all paths) + ncu profile (PROFILE_CONFIGS) per role.
     for role in base cand; do
         bin_dir="$(role_dir "$role")"
-        "$SCRIPT_DIR/bench_gen.sh" "$bin_dir" "$role" "$results_dir" || log "WARN: bench_gen $role failed"
-        "$SCRIPT_DIR/profile_ncu.sh" "$bin_dir" "$role" "$results_dir" || log "WARN: profile_ncu $role failed"
+        bash "$SCRIPT_DIR/bench_gen.sh" "$bin_dir" "$role" "$results_dir" || log "WARN: bench_gen $role failed"
+        bash "$SCRIPT_DIR/profile_ncu.sh" "$bin_dir" "$role" "$results_dir" || log "WARN: profile_ncu $role failed"
     done
 
     # Output equivalence: generate one small seeded table from each build, compare sha.
