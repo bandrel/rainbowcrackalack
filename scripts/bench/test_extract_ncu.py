@@ -19,5 +19,13 @@ class TestParseNcuCsv(unittest.TestCase):
     def test_metric_map_covers_friendly_names(self):
         self.assertIn("sm__throughput.avg.pct_of_peak_sustained_elapsed", METRIC_MAP)
 
+class TestEmptyCsv(unittest.TestCase):
+    def test_junk_returns_empty(self):
+        self.assertEqual(parse_ncu_csv("not a csv"), {})
+
+    def test_header_only_returns_empty(self):
+        header = '"ID","Process ID","Kernel Name","Metric Name","Metric Unit","Metric Value"\n'
+        self.assertEqual(parse_ncu_csv(header), {})
+
 if __name__ == "__main__":
     unittest.main()
