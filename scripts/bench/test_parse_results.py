@@ -154,5 +154,41 @@ class TestWriteSummaryMdGeneric(unittest.TestCase):
             self.assertIn("master (base) vs my-branch (candidate)", content)
 
 
+class TestMergeSections(unittest.TestCase):
+    def _copy_fixture(self, d, name):
+        import shutil
+        shutil.copy(os.path.join(FIXTURES, name), os.path.join(d, name))
+
+    def test_load_optional_sections(self):
+        from parse_results import load_optional_sections
+        with tempfile.TemporaryDirectory() as d:
+            for n in ("gen.json", "profile.json", "equivalence.json"):
+                self._copy_fixture(d, n)
+            sections = load_optional_sections(d)
+            self.assertAlmostEqual(sections["gen"]["netntlmv1_7"]["cand"]["chains_per_s"], 8500.0)
+            self.assertEqual(sections["profile"]["netntlmv1_7"]["base"]["registers_per_thread"], 119)
+            self.assertTrue(sections["equivalence"]["netntlmv1_7_precompute"]["match"])
+
+    def test_missing_sections_are_empty(self):
+        from parse_results import load_optional_sections
+        with tempfile.TemporaryDirectory() as d:
+            sections = load_optional_sections(d)
+            self.assertEqual(sections, {"gen": {}, "profile": {}, "equivalence": {}})
+
+    def test_summary_renders_gen_and_equivalence(self):
+        from parse_results import write_summary_md, load_optional_sections
+        with tempfile.TemporaryDirectory() as d:
+            for n in ("gen.json", "profile.json", "equivalence.json"):
+                self._copy_fixture(d, n)
+            out_md = os.path.join(d, "summary.md")
+            write_summary_md([], {"divergence": False}, {"host": "h"}, out_md,
+                             sections=load_optional_sections(d))
+            with open(out_md) as f:
+                content = f.read()
+            self.assertIn("netntlmv1_7", content)
+            self.assertIn("chains_per_s", content)
+            self.assertIn("EQUIVALENCE", content.upper())
+
+
 if __name__ == "__main__":
     unittest.main()
