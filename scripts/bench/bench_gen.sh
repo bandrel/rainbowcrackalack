@@ -13,11 +13,10 @@ PYTHON="${BENCH_PYTHON:-python3}"
 mapfile -t CONFIG_NAMES < <("$PYTHON" -c "import sys; sys.path.insert(0,'$SCRIPT_DIR'); import configs; print('\n'.join(configs.CONFIGS))")
 
 for name in "${CONFIG_NAMES[@]}"; do
-    argv=$("$PYTHON" -c "import sys; sys.path.insert(0,'$SCRIPT_DIR'); import configs; print(' '.join(configs.gen_argv('$name', $GEN_NUM_CHAINS)))")
+    mapfile -t argv < <("$PYTHON" -c "import sys; sys.path.insert(0,'$SCRIPT_DIR'); import configs; print('\n'.join(configs.gen_argv('$name', $GEN_NUM_CHAINS)))")
     log_file="$RESULTS_DIR/gen_${ROLE}_${name}.log"
-    echo "[bench_gen] $ROLE/$name: crackalack_gen $argv" >&2
-    # shellcheck disable=SC2086
-    ( cd "$BIN_DIR" && with_gpu_lock ./crackalack_gen $argv ) > "$log_file" 2>&1 || true
+    echo "[bench_gen] $ROLE/$name: crackalack_gen ${argv[*]}" >&2
+    ( cd "$BIN_DIR" && with_gpu_lock ./crackalack_gen "${argv[@]}" ) > "$log_file" 2>&1 || true
     "$PYTHON" "$SCRIPT_DIR/parse_gen_bench.py" --merge "$RESULTS_DIR" \
         --config "$name" --role "$ROLE" --log "$log_file" \
         || echo "[bench_gen] WARN: no rate parsed for $name ($ROLE)" >&2
