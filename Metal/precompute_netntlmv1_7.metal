@@ -13,7 +13,7 @@ kernel void precompute_netntlmv1_7(
     device unsigned int *unused5 [[buffer(5)]],
     device unsigned int *unused6 [[buffer(6)]],
     device unsigned int *g_table_index [[buffer(7)]],
-    device ulong *unused_chain_len [[buffer(8)]],
+    device ulong *g_chain_len [[buffer(8)]],
     device unsigned int *g_device_num [[buffer(9)]],
     device unsigned int *g_total_devices [[buffer(10)]],
     device unsigned int *g_exec_block_scaler [[buffer(11)]],
@@ -37,7 +37,11 @@ kernel void precompute_netntlmv1_7(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  long target_chain_len = (881689 - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
+  /* Honor the host's chain_len (arg 8) instead of a hardcoded constant, so the
+   * per-hash fallback path is correct for tables of any chain length.  Mirrors
+   * the fix applied to crackalack_netntlmv1_7 (f11bf2f) and the batch kernel. */
+  long chain_len = (long)(*g_chain_len);
+  long target_chain_len = (chain_len - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
 
   if (target_chain_len < 1) {
     g_output[gid] = 0;
@@ -55,7 +59,7 @@ kernel void precompute_netntlmv1_7(
   uint32_t cx, cy;
   netntlmv1_challenge_to_ip(challenge_local, &cx, &cy);
 
-  for(unsigned int i = target_chain_len; i < 881688; i++) {
+  for(unsigned int i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_netntlmv1_7(index, plaintext);
     index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast_ip(plaintext, cx, cy, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
   }

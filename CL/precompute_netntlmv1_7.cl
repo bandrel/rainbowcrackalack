@@ -10,7 +10,7 @@ __kernel void precompute_netntlmv1_7(
     __global unsigned int *unused5,
     __global unsigned int *unused6,
     __global unsigned int *g_table_index,
-    __global unsigned long *unused_chain_len,
+    __global unsigned long *g_chain_len,
     __global unsigned int *g_device_num,
     __global unsigned int *g_total_devices,
     __global unsigned int *g_exec_block_scaler,
@@ -27,7 +27,11 @@ __kernel void precompute_netntlmv1_7(
                      l_SB1, l_SB2, l_SB3, l_SB4,
                      l_SB5, l_SB6, l_SB7, l_SB8);
 
-  long target_chain_len = (881689 - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
+  /* Honor the host's chain_len (arg 8) instead of a hardcoded constant, so the
+   * per-hash fallback path is correct for tables of any chain length.  Mirrors
+   * the fix applied to crackalack_netntlmv1_7 (f11bf2f) and the batch kernel. */
+  long chain_len = (long)(*g_chain_len);
+  long target_chain_len = (chain_len - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
 
   if (target_chain_len < 1) {
     g_output[get_global_id(0)] = 0;
@@ -41,9 +45,14 @@ __kernel void precompute_netntlmv1_7(
   unsigned char challenge_local[8];
   for (int _c = 0; _c < 8; _c++) challenge_local[_c] = g_challenge[_c];
 
-  for(unsigned int i = target_chain_len; i < 881688; i++) {
+  /* Challenge initial permutation is loop-invariant: compute once (mirrors the
+   * CUDA/Metal fast path). */
+  uint32_t cx, cy;
+  netntlmv1_challenge_to_ip(challenge_local, &cx, &cy);
+
+  for(unsigned int i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_netntlmv1_7(index, plaintext);
-    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast(plaintext, challenge_local, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
+    index = hash_to_index_netntlmv1_7(hash_netntlmv1_7_fast_ip(plaintext, cx, cy, l_SB1, l_SB2, l_SB3, l_SB4, l_SB5, l_SB6, l_SB7, l_SB8), reduction_offset, i);
   }
 
   g_output[get_global_id(0)] = index;
