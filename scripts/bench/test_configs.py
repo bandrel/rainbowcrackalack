@@ -17,12 +17,16 @@ class TestConfigs(unittest.TestCase):
             self.assertIn("gen_kernel", c, name)
             self.assertIsInstance(c["gen_args"], list, name)
 
-    def test_gen_argv_appends_bench(self):
+    def test_gen_argv_uses_part_index(self):
         argv = gen_argv("ntlm8", num_chains=1000)
         self.assertEqual(
             argv,
-            ["ntlm", "ascii-32-95", "8", "8", "0", "422000", "1000", "-bench"],
+            ["ntlm", "ascii-32-95", "8", "8", "0", "422000", "1000", "0"],
         )
+
+    def test_gen_argv_custom_part(self):
+        argv = gen_argv("ntlm8", num_chains=1000, part="3")
+        self.assertEqual(argv[-1], "3")
 
     def test_netntlmv1_kernel_name(self):
         self.assertEqual(CONFIGS["netntlmv1_7"]["gen_kernel"], "crackalack_netntlmv1_7")

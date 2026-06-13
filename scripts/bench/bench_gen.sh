@@ -20,4 +20,7 @@ for name in "${CONFIG_NAMES[@]}"; do
     "$PYTHON" "$SCRIPT_DIR/parse_gen_bench.py" --merge "$RESULTS_DIR" \
         --config "$name" --role "$ROLE" --log "$log_file" \
         || echo "[bench_gen] WARN: no rate parsed for $name ($ROLE)" >&2
+    # Normal gen writes a .rt table + .rt.state into bin_dir; remove them so
+    # the bench doesn't accumulate tables across configs/roles/reruns.
+    rm -f "$BIN_DIR"/*.rt "$BIN_DIR"/*.rt.state 2>/dev/null || true
 done
