@@ -10,6 +10,7 @@
 : "${GPU_LOCK_TIMEOUT:=3600}"
 
 with_gpu_lock() {
+    local __gpu_fd
     exec {__gpu_fd}>>"$GPU_LOCK_FILE"
     flock -w "$GPU_LOCK_TIMEOUT" "$__gpu_fd" || {
         echo "with_gpu_lock: timed out acquiring $GPU_LOCK_FILE" >&2
