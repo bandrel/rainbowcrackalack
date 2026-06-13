@@ -189,6 +189,19 @@ class TestMergeSections(unittest.TestCase):
             self.assertIn("chains_per_s", content)
             self.assertIn("EQUIVALENCE", content.upper())
 
+    def test_summary_renders_equivalence_fail(self):
+        from parse_results import write_summary_md
+        with tempfile.TemporaryDirectory() as d:
+            out_md = os.path.join(d, "summary.md")
+            sections = {"gen": {}, "profile": {},
+                        "equivalence": {"chk": {"base_sha": "aaa", "cand_sha": "bbb", "match": False}}}
+            write_summary_md([], {"divergence": False}, {"host": "h"}, out_md, sections=sections)
+            with open(out_md) as f:
+                content = f.read()
+            self.assertIn("**FAIL**", content)
+            self.assertIn("aaa", content)
+            self.assertIn("bbb", content)
+
 
 if __name__ == "__main__":
     unittest.main()
