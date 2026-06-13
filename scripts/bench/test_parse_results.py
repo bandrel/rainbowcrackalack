@@ -132,5 +132,24 @@ class TestWriteSummaryMd(unittest.TestCase):
             self.assertIn("ace7f9d", content)
 
 
+class TestWriteSummaryMdGeneric(unittest.TestCase):
+    def test_renders_base_cand_provenance(self):
+        trials = [
+            {"branch": "base", "wall_seconds": 100.0, "peak_rss_kb": 1000, "cracked": 5, "exit_status": 0, "trial": 1},
+            {"branch": "base", "wall_seconds": 110.0, "peak_rss_kb": 1000, "cracked": 5, "exit_status": 0, "trial": 2},
+            {"branch": "cand", "wall_seconds": 50.0,  "peak_rss_kb": 1000, "cracked": 5, "exit_status": 0, "trial": 1},
+            {"branch": "cand", "wall_seconds": 55.0,  "peak_rss_kb": 1000, "cracked": 5, "exit_status": 0, "trial": 2},
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            out_md = os.path.join(d, "summary.md")
+            meta = {"host": "dell3", "gpu": "TestGPU", "base_ref": "master",
+                    "base_sha": "aaa111", "cand_ref": "my-branch", "cand_sha": "bbb222"}
+            write_summary_md(trials, summarize(trials), meta, out_md)
+            content = open(out_md).read()
+            self.assertIn("aaa111", content)
+            self.assertIn("bbb222", content)
+            self.assertIn("my-branch", content)
+
+
 if __name__ == "__main__":
     unittest.main()
