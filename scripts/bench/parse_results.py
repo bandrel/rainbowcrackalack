@@ -182,8 +182,8 @@ def write_summary_md(trials: list, summary: dict, meta: dict, out_path: str) -> 
     lines.append("")
 
     lines.append("## Provenance")
-    for k in ("blurbdust_sha", "feature_sha", "base_ref", "base_sha", "cand_ref", "cand_sha",
-              "host", "gpu", "parts", "hash_count", "hash_seed", "table_source", "started_at"):
+    for k in ("base_ref", "base_sha", "cand_ref", "cand_sha", "host", "gpu",
+              "parts", "hash_count", "hash_seed", "table_source", "started_at"):
         if k in meta:
             lines.append(f"- {k}: `{meta[k]}`")
     lines.append("")

@@ -122,7 +122,8 @@ class TestWriteSummaryMd(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             out_md = os.path.join(d, "summary.md")
             meta = {"host": "gpuhost3", "gpu": "TestGPU", "parts": 8, "hash_count": 100,
-                    "blurbdust_sha": "ace7f9d", "feature_sha": "deadbee"}
+                    "base_ref": "blurbdust", "base_sha": "ace7f9d",
+                    "cand_ref": "feature", "cand_sha": "deadbee"}
             write_summary_md(trials, summarize(trials), meta, out_md)
             with open(out_md) as f:
                 content = f.read()
@@ -145,10 +146,12 @@ class TestWriteSummaryMdGeneric(unittest.TestCase):
             meta = {"host": "gpuhost3", "gpu": "TestGPU", "base_ref": "master",
                     "base_sha": "aaa111", "cand_ref": "my-branch", "cand_sha": "bbb222"}
             write_summary_md(trials, summarize(trials), meta, out_md)
-            content = open(out_md).read()
+            with open(out_md) as f:
+                content = f.read()
             self.assertIn("aaa111", content)
             self.assertIn("bbb222", content)
             self.assertIn("my-branch", content)
+            self.assertIn("master (base) vs my-branch (candidate)", content)
 
 
 if __name__ == "__main__":
