@@ -133,7 +133,21 @@ def _fmt_kb(kb: int) -> str:
     return f"{kb/1024/1024:.2f} GB"
 
 
-def write_summary_md(trials: list, summary: dict, meta: dict, out_path: str) -> None:
+def load_optional_sections(results_dir: str) -> dict:
+    """Load gen.json/profile.json/equivalence.json if present (else empty)."""
+    out = {"gen": {}, "profile": {}, "equivalence": {}}
+    for key, fname in (("gen", "gen.json"),
+                       ("profile", "profile.json"),
+                       ("equivalence", "equivalence.json")):
+        path = os.path.join(results_dir, fname)
+        if os.path.exists(path):
+            with open(path) as f:
+                out[key] = json.load(f)
+    return out
+
+
+def write_summary_md(trials: list, summary: dict, meta: dict, out_path: str,
+                     sections: dict = None) -> None:
     lines = []
     base_ref = meta.get("base_ref", "base")
     cand_ref = meta.get("cand_ref", "cand")
@@ -188,6 +202,43 @@ def write_summary_md(trials: list, summary: dict, meta: dict, out_path: str) -> 
             lines.append(f"- {k}: `{meta[k]}`")
     lines.append("")
 
+    sections = sections or {"gen": {}, "profile": {}, "equivalence": {}}
+
+    if sections.get("gen"):
+        lines.append("## Gen throughput (chains/s, higher is better)")
+        lines.append("")
+        lines.append("| Config | Base chains_per_s | Cand chains_per_s | Delta |")
+        lines.append("|--------|------------------:|------------------:|------:|")
+        for cfg in sorted(sections["gen"]):
+            b = sections["gen"][cfg].get("base", {}).get("chains_per_s")
+            c = sections["gen"][cfg].get("cand", {}).get("chains_per_s")
+            delta = f"{(c/b - 1)*100:+.1f}%" if (b and c) else "-"
+            lines.append(f"| {cfg} | {b or '-'} | {c or '-'} | {delta} |")
+        lines.append("")
+
+    if sections.get("profile"):
+        lines.append("## Kernel profile (ncu)")
+        lines.append("")
+        lines.append("| Config | Metric | Base | Candidate |")
+        lines.append("|--------|--------|-----:|----------:|")
+        for cfg in sorted(sections["profile"]):
+            base_m = sections["profile"][cfg].get("base", {})
+            cand_m = sections["profile"][cfg].get("cand", {})
+            for metric in sorted(set(base_m) | set(cand_m)):
+                lines.append(f"| {cfg} | {metric} | {base_m.get(metric,'-')} | {cand_m.get(metric,'-')} |")
+        lines.append("")
+
+    if sections.get("equivalence"):
+        lines.append("## Output EQUIVALENCE")
+        lines.append("")
+        lines.append("| Check | Match | Base sha | Cand sha |")
+        lines.append("|-------|:-----:|----------|----------|")
+        for chk in sorted(sections["equivalence"]):
+            e = sections["equivalence"][chk]
+            mark = "PASS" if e.get("match") else "**FAIL**"
+            lines.append(f"| {chk} | {mark} | `{e.get('base_sha','?')}` | `{e.get('cand_sha','?')}` |")
+        lines.append("")
+
     with open(out_path, "w") as f:
         f.write("\n".join(lines))
 
@@ -212,10 +263,13 @@ def main() -> int:
 
     json_path = os.path.join(args.results_dir, "results.json")
     md_path = os.path.join(args.results_dir, "summary.md")
+    sections = load_optional_sections(args.results_dir)
     with open(json_path, "w") as f:
-        json.dump({"meta": meta, "summary": summary, "trials": trials},
+        json.dump({"meta": meta, "summary": summary, "trials": trials,
+                   "gen": sections["gen"], "profile": sections["profile"],
+                   "equivalence": sections["equivalence"]},
                   f, indent=2, sort_keys=True)
-    write_summary_md(trials, summary, meta, md_path)
+    write_summary_md(trials, summary, meta, md_path, sections=sections)
     print(f"Wrote {json_path} and {md_path}")
     return 0
 
