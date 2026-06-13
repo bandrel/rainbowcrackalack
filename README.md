@@ -202,6 +202,8 @@ Then starting the build with:
  - Added `crackalack_plan` tool with `estimate`, `recommend`, and `train` subcommands.
  - Added Markov model support: `--markov <file>` flag on both `crackalack_gen` and `crackalack_lookup` for probability-biased table generation and lookup.
  - Added position-aware Markov models: position-specific bigram tables capture real password patterns (e.g., capitals at start, numbers at end). Train with `--max-positions N` to control position table count (default: 10).
+ - Fixed NetNTLMv1-7 per-hash precompute fallback ignoring the table's chain length (it assumed the standard length); now honors the host-provided value across the CUDA, OpenCL, and Metal backends.
+ - Fixed OpenCL NetNTLMv1-7 lookups loading the wrong false-alarm kernel file.
 
 ### v1.3 (February 26, 2021)
  - Improved speed of NTLM9 precomputation by 9.5x and false alarm checks by 4.5x!
