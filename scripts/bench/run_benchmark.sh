@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Benchmark blurbdust/master vs feature/faster-table-loading on dell3.
+# Benchmark BASE vs CANDIDATE crackalack builds on dell3 (lookup, gen, profile, equivalence).
 # Spec: docs/superpowers/specs/2026-05-02-blurbdust-perf-comparison-design.md
 #
 # Usage:
@@ -44,6 +44,7 @@ phase_prepare() {
     mkdir -p "$BENCH_ROOT" "$BENCH_INPUT" "$BENCH_TABLES"
 
     for role in base cand; do
+        local repo ref dir
         if [[ "$role" == "base" ]]; then repo="$BASE_REPO"; ref="$BASE_REF"; dir="$BASE_DIR"
                                     else repo="$CAND_REPO"; ref="$CAND_REF"; dir="$CAND_DIR"; fi
         if [[ ! -d "$dir/.git" ]]; then log "cloning $role ($repo)"; git clone "$repo" "$dir"; fi
@@ -117,7 +118,8 @@ phase_prepare() {
 }
 
 phase_run() {
-    log "RUN: $TRIALS trials per branch, alternating"
+    log "RUN: $TRIALS trials per role, alternating"
+    local n bin_dir
 
     # Verify prepare outputs exist.
     if [[ ! -x "$BASE_DIR/crackalack_lookup" ]] \
@@ -170,8 +172,8 @@ phase_run() {
             rm -f "$bin_dir"/rcracki.precalc.* 2>/dev/null || true
             local log_file="$results_dir/trial_$(printf '%02d' "$n")_${role}.log"
             local time_file="$results_dir/trial_$(printf '%02d' "$n")_${role}.time"
-            ( cd "$bin_dir" && /usr/bin/time -v -o "$time_file" \
-                with_gpu_lock timeout "${TIMEOUT_MIN}m" \
+            ( cd "$bin_dir" && with_gpu_lock /usr/bin/time -v -o "$time_file" \
+                timeout "${TIMEOUT_MIN}m" \
                 ./crackalack_lookup "$BENCH_TABLES" "$BENCH_HASHES" > "$log_file" 2>&1 ) || true
             log "trial $n/$TRIALS role=$role — exit=$(awk -F': ' '/Exit status/{print $2}' "$time_file" 2>/dev/null || echo '?')"
         done
