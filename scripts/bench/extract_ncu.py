@@ -21,10 +21,22 @@ NCU_METRICS = ",".join(METRIC_MAP.keys())
 
 
 def parse_ncu_csv(text: str) -> dict:
+    # ncu emits its CSV report to stdout AFTER the profiled app's own stdout
+    # (the crackalack_gen banner + progress + ==PROF== lines).  Skip everything
+    # before the real CSV header row so DictReader doesn't treat banner text as
+    # the header.
+    lines = text.splitlines()
+    start = None
+    for i, ln in enumerate(lines):
+        if '"Metric Name"' in ln and '"Metric Value"' in ln:
+            start = i
+            break
+    if start is None:
+        return {}
     out = {}
-    reader = csv.DictReader(io.StringIO(text))
+    reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
     for row in reader:
-        raw = row.get("Metric Name", "").strip()
+        raw = (row.get("Metric Name") or "").strip()
         if raw in METRIC_MAP:
             key, typ = METRIC_MAP[raw]
             val = row.get("Metric Value", "").strip().replace(",", "")
