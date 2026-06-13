@@ -26,4 +26,6 @@ for name in $PROFILE_CONFIGS; do
     "$PYTHON" "$SCRIPT_DIR/extract_ncu.py" --merge "$RESULTS_DIR" \
         --config "$name" --role "$ROLE" --csv "$csv_file" \
         || echo "[profile_ncu] WARN: no metrics parsed for $name ($ROLE)" >&2
+    # The profiled gen run writes a .rt table into bin_dir; clean it up.
+    rm -f "$BIN_DIR"/*.rt "$BIN_DIR"/*.rt.state 2>/dev/null || true
 done

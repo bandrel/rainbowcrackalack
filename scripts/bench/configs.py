@@ -40,7 +40,13 @@ CONFIGS = {
 }
 
 
-def gen_argv(name: str, num_chains: int) -> list:
-    """Full positional argv for `crackalack_gen <argv>` in -bench mode."""
+def gen_argv(name: str, num_chains: int, part: str = "0") -> list:
+    """Full positional argv for a normal `crackalack_gen <argv>` run.
+
+    Uses a real part index (default "0"), NOT -bench: the -bench flag is
+    disabled in this release, so throughput is measured from a normal gen run,
+    which prints a parseable `Rate: N/s` line and launches the gen kernel (so
+    ncu can profile it). Callers clean up the generated .rt table afterward.
+    """
     c = CONFIGS[name]
-    return list(c["gen_args"]) + [str(num_chains), "-bench"]
+    return list(c["gen_args"]) + [str(num_chains), str(part)]
