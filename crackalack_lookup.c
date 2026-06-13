@@ -129,7 +129,7 @@
 #define FALSE_ALARM_MD5_8_KERNEL_PATH "false_alarm_check_md5_8.cl"
 #define FALSE_ALARM_MD5_9_KERNEL_PATH "false_alarm_check_md5_9.cl"
 #define PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH "precompute_netntlmv1_7.cl"
-#define FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH "precompute_netntlmv1_7.cl"
+#define FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH "false_alarm_check_netntlmv1_7.cl"
 #endif
 #ifdef USE_METAL
 #define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.metal"
