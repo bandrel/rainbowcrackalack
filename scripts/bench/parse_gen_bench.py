@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Parse `crackalack_gen ... -bench` output into a chains/sec rate.
+"""Parse a normal `crackalack_gen` run's output into a chains/sec rate.
+
+crackalack_gen prints e.g. `Run time: 22.2 secs; Chains generated: N; Rate: 7389/s`,
+but the rate value is wrapped in ANSI color codes, so we strip ANSI before matching.
 
 Also a CLI to merge one (config, role, rate) into gen.json in a results dir:
     parse_gen_bench.py --merge <results_dir> --config <name> --role <base|cand> --log <logfile>
 """
 import argparse, json, os, re, sys
 
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 RATE_RE = re.compile(r"Rate:\s*([\d.]+)\s*/s")
 
 
 def parse_rate(text: str) -> float:
-    m = RATE_RE.search(text)
+    m = RATE_RE.search(ANSI_RE.sub("", text))
     if not m:
         raise ValueError("no 'Rate: N/s' line found")
     return float(m.group(1))

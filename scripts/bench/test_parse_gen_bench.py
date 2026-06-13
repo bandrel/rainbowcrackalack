@@ -15,5 +15,10 @@ class TestParseRate(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_rate("no rate here")
 
+    def test_strips_ansi_color_codes(self):
+        # Real crackalack_gen wraps the rate value in ANSI color codes.
+        line = "Run time: 6.0 secs; Chains generated: 40960; Rate: \x1b[1;97m6863/s\x1b[0m"
+        self.assertEqual(parse_rate(line), 6863.0)
+
 if __name__ == "__main__":
     unittest.main()
