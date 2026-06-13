@@ -169,7 +169,11 @@ phase_run() {
             bin_dir="$(role_dir "$role")"
             log "trial $n/$TRIALS role=$role — dropping cache"
             sync; sudo sh -c "echo 3 > /proc/sys/vm/drop_caches"
-            rm -f "$bin_dir"/rcracki.precalc.* 2>/dev/null || true
+            # Clear the precompute cache for a cold run. crackalack_lookup reads
+            # ANY *.index file in its cwd as a cached precompute, so clear those
+            # too (not just rcracki.precalc.*), or a stale cache yields a 0.0s
+            # precompute and non-comparable timing.
+            rm -f "$bin_dir"/rcracki.precalc.* "$bin_dir"/*.index 2>/dev/null || true
             local log_file="$results_dir/trial_$(printf '%02d' "$n")_${role}.log"
             local time_file="$results_dir/trial_$(printf '%02d' "$n")_${role}.time"
             ( cd "$bin_dir" && with_gpu_lock /usr/bin/time -v -o "$time_file" \
