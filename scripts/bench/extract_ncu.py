@@ -55,6 +55,10 @@ def main() -> int:
     a = p.parse_args()
     with open(a.csv, errors="replace") as f:
         metrics = parse_ncu_csv(f.read())
+    if not metrics:
+        print(f"{a.config}/{a.role}: no metrics parsed (ncu failed?) — not merging",
+              file=sys.stderr)
+        return 1
     merge(a.merge, a.config, a.role, metrics)
     print(f"{a.config}/{a.role}: {metrics}")
     return 0
