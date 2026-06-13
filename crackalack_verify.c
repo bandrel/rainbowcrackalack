@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cpu_rt_functions.h"
 #include "markov.h"
 #include "misc.h"
 #include "terminal_color.h"
@@ -39,12 +40,13 @@ static struct option long_options[] = {
   {"truncate_on_err", no_argument, &truncate_on_err, VERIFY_TRUNCATE_ON_ERROR},
   {"num_chains", required_argument, 0, 'n'},
   {"markov", required_argument, 0, 'm'},
+  {"challenge", required_argument, 0, 'c'},
   {0, 0, 0, 0}
 };
 
 
 void print_usage(char *prog_name) {
-  fprintf(stderr, "This program verifies rainbow tables.\n\n\n  %s --raw [--truncate_on_err] [--num_chains X] [--markov FILE] table.rt\n\nThe above command will verify a newly-generated rainbow table.  This ensures that the table 1.) has sequential start points, and 2.) has non-zero ending points.  Optionally, it can truncate_on_err the file to just before the first error found, if any.\n\nWhen --markov is specified, the Markov model is used for CPU chain verification.\n\n\n  %s --quick [--markov FILE] table.rt\n\nThe above command will quickly verify a newly-generated rainbow table.  It is similar to using '--raw', but does not examine the start & end points, and only verifies 5 random chains.  As a result, it can do basic verification without needing to read the entire table into memory first (which incurs a huge I/O cost).  The use case for this option is for quickly checking terabytes of tables for sanity.\n\n\n  %s --sorted [--num_chains X] table.rtc\n\nThe above command will verify a sorted rainbow table (i.e.: that it is suitable for lookups).  It ensures that the end indices are sorted in ascending order.  The table may be compressed or uncompressed.\n\n\nIn any case, --num_chains sets the number of random chains to verify using CPU code (hence, providing a large number here will have a dramatic effect on the speed of verification).  Unless overridden, this defaults to 100.\n\n\n", prog_name, prog_name, prog_name);
+  fprintf(stderr, "This program verifies rainbow tables.\n\n\n  %s --raw [--truncate_on_err] [--num_chains X] [--markov FILE] table.rt\n\nThe above command will verify a newly-generated rainbow table.  This ensures that the table 1.) has sequential start points, and 2.) has non-zero ending points.  Optionally, it can truncate_on_err the file to just before the first error found, if any.\n\nWhen --markov is specified, the Markov model is used for CPU chain verification.\n\n\n  %s --quick [--markov FILE] table.rt\n\nThe above command will quickly verify a newly-generated rainbow table.  It is similar to using '--raw', but does not examine the start & end points, and only verifies 5 random chains.  As a result, it can do basic verification without needing to read the entire table into memory first (which incurs a huge I/O cost).  The use case for this option is for quickly checking terabytes of tables for sanity.\n\n\n  %s --sorted [--num_chains X] table.rtc\n\nThe above command will verify a sorted rainbow table (i.e.: that it is suitable for lookups).  It ensures that the end indices are sorted in ascending order.  The table may be compressed or uncompressed.\n\n\nIn any case, --num_chains sets the number of random chains to verify using CPU code (hence, providing a large number here will have a dramatic effect on the speed of verification).  Unless overridden, this defaults to 100.\n\nFor NetNTLMv1 tables, --challenge HEX16 sets the 8-byte server challenge used for CPU chain verification (defaults to the standard challenge 1122334455667788).\n\n\n", prog_name, prog_name, prog_name);
 }
 
 
@@ -69,6 +71,17 @@ int main(int ac, char **av) {
     case 'm':
       markov_path = optarg;
       break;
+    case 'c': {
+      /* NetNTLMv1 CPU chain verification needs the server challenge the table
+       * was generated with.  Defaults to the standard challenge otherwise. */
+      unsigned char challenge[8];
+      if (parse_challenge_str(optarg, challenge) != 0) {
+        fprintf(stderr, "Error: --challenge must be exactly 16 hex digits, got '%s'.\n", optarg);
+        exit(-1);
+      }
+      set_netntlmv1_challenge(challenge);
+      break;
+    }
     default:
       print_usage(av[0]);
       exit(-1);
