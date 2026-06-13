@@ -135,7 +135,9 @@ def _fmt_kb(kb: int) -> str:
 
 def write_summary_md(trials: list, summary: dict, meta: dict, out_path: str) -> None:
     lines = []
-    lines.append("# Benchmark: blurbdust/master vs feature/faster-table-loading")
+    base_ref = meta.get("base_ref", "base")
+    cand_ref = meta.get("cand_ref", "cand")
+    lines.append(f"# Benchmark: {base_ref} (base) vs {cand_ref} (candidate)")
     lines.append(
         f"Host: {meta.get('host','?')} | GPU: {meta.get('gpu','?')} | "
         f"Subset: {meta.get('parts','?')} parts | Hashes: {meta.get('hash_count','?')}"
@@ -180,8 +182,8 @@ def write_summary_md(trials: list, summary: dict, meta: dict, out_path: str) -> 
     lines.append("")
 
     lines.append("## Provenance")
-    for k in ("blurbdust_sha", "feature_sha", "host", "gpu", "parts",
-              "hash_count", "hash_seed", "table_source", "started_at"):
+    for k in ("blurbdust_sha", "feature_sha", "base_ref", "base_sha", "cand_ref", "cand_sha",
+              "host", "gpu", "parts", "hash_count", "hash_seed", "table_source", "started_at"):
         if k in meta:
             lines.append(f"- {k}: `{meta[k]}`")
     lines.append("")
