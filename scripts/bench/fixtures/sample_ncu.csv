@@ -1,0 +1,6 @@
+"ID","Process ID","Kernel Name","Metric Name","Metric Unit","Metric Value"
+"0","1234","crackalack_netntlmv1_7","sm__throughput.avg.pct_of_peak_sustained_elapsed","%","97.94"
+"0","1234","crackalack_netntlmv1_7","gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed","%","0.02"
+"0","1234","crackalack_netntlmv1_7","sm__warps_active.avg.pct_of_peak_sustained_active","%","31.21"
+"0","1234","crackalack_netntlmv1_7","launch__registers_per_thread","register/thread","119"
+"0","1234","crackalack_netntlmv1_7","l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum","","0"

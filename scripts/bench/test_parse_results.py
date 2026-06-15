@@ -122,7 +122,8 @@ class TestWriteSummaryMd(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             out_md = os.path.join(d, "summary.md")
             meta = {"host": "gpuhost3", "gpu": "TestGPU", "parts": 8, "hash_count": 100,
-                    "blurbdust_sha": "ace7f9d", "feature_sha": "deadbee"}
+                    "base_ref": "blurbdust", "base_sha": "ace7f9d",
+                    "cand_ref": "feature", "cand_sha": "deadbee"}
             write_summary_md(trials, summarize(trials), meta, out_md)
             with open(out_md) as f:
                 content = f.read()
@@ -130,6 +131,76 @@ class TestWriteSummaryMd(unittest.TestCase):
             self.assertIn("feature", content)
             self.assertIn("speedup", content.lower())
             self.assertIn("ace7f9d", content)
+
+
+class TestWriteSummaryMdGeneric(unittest.TestCase):
+    def test_renders_base_cand_provenance(self):
+        trials = [
+            {"branch": "base", "wall_seconds": 100.0, "peak_rss_kb": 1000, "cracked": 5, "exit_status": 0, "trial": 1},
+            {"branch": "base", "wall_seconds": 110.0, "peak_rss_kb": 1000, "cracked": 5, "exit_status": 0, "trial": 2},
+            {"branch": "cand", "wall_seconds": 50.0,  "peak_rss_kb": 1000, "cracked": 5, "exit_status": 0, "trial": 1},
+            {"branch": "cand", "wall_seconds": 55.0,  "peak_rss_kb": 1000, "cracked": 5, "exit_status": 0, "trial": 2},
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            out_md = os.path.join(d, "summary.md")
+            meta = {"host": "gpuhost3", "gpu": "TestGPU", "base_ref": "master",
+                    "base_sha": "aaa111", "cand_ref": "my-branch", "cand_sha": "bbb222"}
+            write_summary_md(trials, summarize(trials), meta, out_md)
+            with open(out_md) as f:
+                content = f.read()
+            self.assertIn("aaa111", content)
+            self.assertIn("bbb222", content)
+            self.assertIn("my-branch", content)
+            self.assertIn("master (base) vs my-branch (candidate)", content)
+
+
+class TestMergeSections(unittest.TestCase):
+    def _copy_fixture(self, d, name):
+        import shutil
+        shutil.copy(os.path.join(FIXTURES, name), os.path.join(d, name))
+
+    def test_load_optional_sections(self):
+        from parse_results import load_optional_sections
+        with tempfile.TemporaryDirectory() as d:
+            for n in ("gen.json", "profile.json", "equivalence.json"):
+                self._copy_fixture(d, n)
+            sections = load_optional_sections(d)
+            self.assertAlmostEqual(sections["gen"]["netntlmv1_7"]["cand"]["chains_per_s"], 8500.0)
+            self.assertEqual(sections["profile"]["netntlmv1_7"]["base"]["registers_per_thread"], 119)
+            self.assertTrue(sections["equivalence"]["netntlmv1_7_precompute"]["match"])
+
+    def test_missing_sections_are_empty(self):
+        from parse_results import load_optional_sections
+        with tempfile.TemporaryDirectory() as d:
+            sections = load_optional_sections(d)
+            self.assertEqual(sections, {"gen": {}, "profile": {}, "equivalence": {}})
+
+    def test_summary_renders_gen_and_equivalence(self):
+        from parse_results import write_summary_md, load_optional_sections
+        with tempfile.TemporaryDirectory() as d:
+            for n in ("gen.json", "profile.json", "equivalence.json"):
+                self._copy_fixture(d, n)
+            out_md = os.path.join(d, "summary.md")
+            write_summary_md([], {"divergence": False}, {"host": "h"}, out_md,
+                             sections=load_optional_sections(d))
+            with open(out_md) as f:
+                content = f.read()
+            self.assertIn("netntlmv1_7", content)
+            self.assertIn("chains_per_s", content)
+            self.assertIn("EQUIVALENCE", content.upper())
+
+    def test_summary_renders_equivalence_fail(self):
+        from parse_results import write_summary_md
+        with tempfile.TemporaryDirectory() as d:
+            out_md = os.path.join(d, "summary.md")
+            sections = {"gen": {}, "profile": {},
+                        "equivalence": {"chk": {"base_sha": "aaa", "cand_sha": "bbb", "match": False}}}
+            write_summary_md([], {"divergence": False}, {"host": "h"}, out_md, sections=sections)
+            with open(out_md) as f:
+                content = f.read()
+            self.assertIn("**FAIL**", content)
+            self.assertIn("aaa", content)
+            self.assertIn("bbb", content)
 
 
 if __name__ == "__main__":
