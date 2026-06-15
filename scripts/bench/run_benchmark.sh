@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Benchmark blurbdust/master vs feature/faster-table-loading on dell3.
+# Benchmark BASE vs CANDIDATE crackalack builds on dell3 (lookup, gen, profile, equivalence).
 # Spec: docs/superpowers/specs/2026-05-02-blurbdust-perf-comparison-design.md
 #
 # Usage:
@@ -18,21 +18,24 @@ set -euo pipefail
 : "${TRIALS:=3}"
 : "${TIMEOUT_MIN:=30}"
 : "${GPU_INDEX:=0}"
-: "${BLURBDUST_REPO:=https://github.com/blurbdust/rainbowcrackalack.git}"
-: "${BLURBDUST_REF:=master}"
-: "${FEATURE_REPO:=https://github.com/blurbdust/rainbowcrackalack.git}"  # overridden in prepare
-: "${FEATURE_REF:=feature/faster-table-loading}"
+# This repo is the candidate by default; master is the base.
+: "${THIS_REPO:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+: "${BASE_REPO:=$THIS_REPO}"
+: "${BASE_REF:=master}"
+: "${CAND_REPO:=$THIS_REPO}"
+: "${CAND_REF:=$(git -C "$THIS_REPO" rev-parse --abbrev-ref HEAD)}"
+: "${PROFILE_CONFIGS:=netntlmv1_7}"
+export PROFILE_CONFIGS
 
-# Resolved paths (don't override).
 BENCH_INPUT="$BENCH_ROOT/bench_input"
 BENCH_TABLES="$BENCH_INPUT/tables"
 BENCH_HASHES="$BENCH_INPUT/hashes.txt"
 BENCH_VENV="$BENCH_ROOT/.venv"
-BLURBDUST_DIR="$BENCH_ROOT/blurbdust"
-FEATURE_DIR="$BENCH_ROOT/feature"
-
-# Path to this script's dir (for invoking the python helpers).
+BASE_DIR="$BENCH_ROOT/base"
+CAND_DIR="$BENCH_ROOT/cand"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/gpu_lock.sh"
+role_dir() { [[ "$1" == "base" ]] && echo "$BASE_DIR" || echo "$CAND_DIR"; }
 
 log() { echo "[bench $(date -u +%H:%M:%S)] $*" >&2; }
 
@@ -40,33 +43,17 @@ phase_prepare() {
     log "PREPARE: bench root $BENCH_ROOT"
     mkdir -p "$BENCH_ROOT" "$BENCH_INPUT" "$BENCH_TABLES"
 
-    # Clone or update blurbdust.
-    if [[ ! -d "$BLURBDUST_DIR/.git" ]]; then
-        log "cloning blurbdust"
-        git clone --depth 50 "$BLURBDUST_REPO" "$BLURBDUST_DIR"
-    fi
-    git -C "$BLURBDUST_DIR" fetch origin "$BLURBDUST_REF"
-    git -C "$BLURBDUST_DIR" checkout "$BLURBDUST_REF"
-    git -C "$BLURBDUST_DIR" reset --hard "origin/$BLURBDUST_REF"
-
-    # Clone or update feature branch from the local repo we ship with.
-    # Caller is expected to push feature/faster-table-loading to a reachable
-    # remote before running, OR to set FEATURE_REPO to a local path/URL.
-    if [[ ! -d "$FEATURE_DIR/.git" ]]; then
-        log "cloning feature"
-        git clone "$FEATURE_REPO" "$FEATURE_DIR"
-    fi
-    git -C "$FEATURE_DIR" fetch origin "$FEATURE_REF"
-    git -C "$FEATURE_DIR" checkout "$FEATURE_REF"
-    git -C "$FEATURE_DIR" reset --hard "origin/$FEATURE_REF"
-
-    # Build both.
-    for d in "$BLURBDUST_DIR" "$FEATURE_DIR"; do
-        log "building $d"
-        ( cd "$d" && make clean >/dev/null 2>&1 || true && make linux )
-        if [[ ! -x "$d/crackalack_lookup" ]]; then
-            log "ERROR: $d/crackalack_lookup not built"; exit 1
-        fi
+    for role in base cand; do
+        local repo ref dir
+        if [[ "$role" == "base" ]]; then repo="$BASE_REPO"; ref="$BASE_REF"; dir="$BASE_DIR"
+                                    else repo="$CAND_REPO"; ref="$CAND_REF"; dir="$CAND_DIR"; fi
+        if [[ ! -d "$dir/.git" ]]; then log "cloning $role ($repo)"; git clone "$repo" "$dir"; fi
+        git -C "$dir" fetch origin "$ref" || git -C "$dir" fetch "$repo" "$ref"
+        git -C "$dir" checkout "$ref"
+        git -C "$dir" reset --hard "$(git -C "$dir" rev-parse FETCH_HEAD 2>/dev/null || echo "origin/$ref")"
+        log "building $role at $dir"
+        ( cd "$dir" && make clean >/dev/null 2>&1 || true && make linux )
+        [[ -x "$dir/crackalack_lookup" && -x "$dir/crackalack_gen" ]] || { log "ERROR: $role build incomplete"; exit 1; }
     done
 
     # Set up Python venv with pycryptodome.  Recreate from scratch if the venv
@@ -105,9 +92,9 @@ phase_prepare() {
         log "staged $count parts"
     fi
 
-    # Smoke test: run blurbdust against one part for 30s to confirm it doesn't
+    # Smoke test: run base against one part for 30s to confirm it doesn't
     # crash on the directory layout.
-    log "smoke-testing blurbdust on staged inputs (30s cap)"
+    log "smoke-testing base on staged inputs (30s cap)"
     local smoke_dir="$BENCH_ROOT/smoke"
     mkdir -p "$smoke_dir"
     ln -sf "$(readlink -f "$BENCH_TABLES"/*.rtc | head -1)" "$smoke_dir/" 2>/dev/null || \
@@ -120,22 +107,23 @@ phase_prepare() {
      # and 255 (some binaries' ungraceful response to SIGTERM) are all expected
      # ways for a 30s-capped run to end without a real crash.
     local rc=0
-    timeout 30 "$BLURBDUST_DIR/crackalack_lookup" "$smoke_dir" \
+    timeout 30 "$BASE_DIR/crackalack_lookup" "$smoke_dir" \
         "$BENCH_HASHES" >/dev/null 2>&1 || rc=$?
     case "$rc" in
         0|124|137|143|255) ;;
-        *) log "WARN: blurbdust smoke test exited $rc — investigate before running full bench" ;;
+        *) log "WARN: base smoke test exited $rc — investigate before running full bench" ;;
     esac
 
     log "PREPARE done."
 }
 
 phase_run() {
-    log "RUN: $TRIALS trials per branch, alternating"
+    log "RUN: $TRIALS trials per role, alternating"
+    local n bin_dir
 
     # Verify prepare outputs exist.
-    if [[ ! -x "$BLURBDUST_DIR/crackalack_lookup" ]] \
-       || [[ ! -x "$FEATURE_DIR/crackalack_lookup" ]] \
+    if [[ ! -x "$BASE_DIR/crackalack_lookup" ]] \
+       || [[ ! -x "$CAND_DIR/crackalack_lookup" ]] \
        || [[ ! -s "$BENCH_HASHES" ]] \
        || [[ -z "$(ls -A "$BENCH_TABLES" 2>/dev/null)" ]]; then
         log "ERROR: prepare outputs missing — run '$0 prepare' first"
@@ -159,8 +147,10 @@ phase_run() {
     # Capture provenance.
     {
         echo "# Provenance"
-        echo "blurbdust_sha=$(git -C "$BLURBDUST_DIR" rev-parse HEAD)"
-        echo "feature_sha=$(git -C "$FEATURE_DIR" rev-parse HEAD)"
+        echo "base_ref=$BASE_REF"
+        echo "base_sha=$(git -C "$BASE_DIR" rev-parse HEAD)"
+        echo "cand_ref=$CAND_REF"
+        echo "cand_sha=$(git -C "$CAND_DIR" rev-parse HEAD)"
         echo "host=$(hostname)"
         echo "uname=$(uname -a)"
         echo "started_at=$stamp"
@@ -174,44 +164,49 @@ phase_run() {
             | head -1 | sed 's/^/gpu=/'
     } > "$results_dir/provenance.txt"
 
-    # Trial loop: alternating blurbdust, feature.
-    local n
     for ((n=1; n<=TRIALS; n++)); do
-        for branch in blurbdust feature; do
-            local bin_dir
-            if [[ "$branch" == "blurbdust" ]]; then bin_dir="$BLURBDUST_DIR"; \
-                                              else bin_dir="$FEATURE_DIR"; fi
-
-            log "trial $n/$TRIALS branch=$branch — dropping cache"
-            sync
-            sudo sh -c "echo 3 > /proc/sys/vm/drop_caches"
-
-            # Remove any precompute cache from a prior trial.  crackalack_lookup
-            # writes rcracki.precalc.* into its working dir (the binary's dir)
-            # and reuses them on the next run, which would skip the precompute
-            # phase entirely and make later trials measure a warm cache instead
-            # of a cold run.  Clear them so every trial is cold and comparable.
-            rm -f "$bin_dir"/rcracki.precalc.* 2>/dev/null || true
-
-            local log_file="$results_dir/trial_$(printf '%02d' "$n")_${branch}.log"
-            local time_file="$results_dir/trial_$(printf '%02d' "$n")_${branch}.time"
-
-            # /usr/bin/time -v captures wall + RSS + exit. timeout caps the run.
-            # `cd $bin_dir` so that CL/ kernel dir is found alongside the binary.
-            log "trial $n/$TRIALS branch=$branch — running"
-            (
-                cd "$bin_dir"
-                /usr/bin/time -v -o "$time_file" \
-                    timeout "${TIMEOUT_MIN}m" \
-                    ./crackalack_lookup "$BENCH_TABLES" "$BENCH_HASHES" \
-                    > "$log_file" 2>&1
-            ) || true   # /usr/bin/time still writes the .time file on non-zero exit
-
-            local exit_status
-            exit_status=$(awk -F': ' '/Exit status/{print $2}' "$time_file" 2>/dev/null || echo "?")
-            log "trial $n/$TRIALS branch=$branch — exit=$exit_status"
+        for role in base cand; do
+            bin_dir="$(role_dir "$role")"
+            log "trial $n/$TRIALS role=$role — dropping cache"
+            sync; sudo sh -c "echo 3 > /proc/sys/vm/drop_caches"
+            # Clear the precompute cache for a cold run. crackalack_lookup reads
+            # ANY *.index file in its cwd as a cached precompute, so clear those
+            # too (not just rcracki.precalc.*), or a stale cache yields a 0.0s
+            # precompute and non-comparable timing.
+            rm -f "$bin_dir"/rcracki.precalc.* "$bin_dir"/*.index 2>/dev/null || true
+            local log_file="$results_dir/trial_$(printf '%02d' "$n")_${role}.log"
+            local time_file="$results_dir/trial_$(printf '%02d' "$n")_${role}.time"
+            ( cd "$bin_dir" && with_gpu_lock /usr/bin/time -v -o "$time_file" \
+                timeout "${TIMEOUT_MIN}m" \
+                ./crackalack_lookup "$BENCH_TABLES" "$BENCH_HASHES" > "$log_file" 2>&1 ) || true
+            log "trial $n/$TRIALS role=$role — exit=$(awk -F': ' '/Exit status/{print $2}' "$time_file" 2>/dev/null || echo '?')"
         done
     done
+
+    # Gen throughput (all paths) + ncu profile (PROFILE_CONFIGS) per role.
+    for role in base cand; do
+        bin_dir="$(role_dir "$role")"
+        bash "$SCRIPT_DIR/bench_gen.sh" "$bin_dir" "$role" "$results_dir" || log "WARN: bench_gen $role failed"
+        bash "$SCRIPT_DIR/profile_ncu.sh" "$bin_dir" "$role" "$results_dir" || log "WARN: profile_ncu $role failed"
+    done
+
+    # Output equivalence: generate one small seeded table from each build, compare sha.
+    local eq_args="netntlmv1 byte 7 7 0 881689 256 0"
+    for role in base cand; do
+        bin_dir="$(role_dir "$role")"
+        rm -f "$bin_dir"/netntlmv1_byte#7-7_0_881689x256_0.rt* 2>/dev/null || true
+        # shellcheck disable=SC2086
+        ( cd "$bin_dir" && with_gpu_lock ./crackalack_gen $eq_args >/dev/null 2>&1 ) || true
+    done
+    local base_rt cand_rt
+    base_rt="$(ls "$BASE_DIR"/netntlmv1_byte#7-7_0_881689x256_0.rt 2>/dev/null || true)"
+    cand_rt="$(ls "$CAND_DIR"/netntlmv1_byte#7-7_0_881689x256_0.rt 2>/dev/null || true)"
+    if [[ -f "$base_rt" && -f "$cand_rt" ]]; then
+        "$BENCH_VENV/bin/python3" "$SCRIPT_DIR/check_equivalence.py" --results "$results_dir" \
+            --check netntlmv1_7_gen_table --base-file "$base_rt" --cand-file "$cand_rt" || true
+    else
+        log "WARN: equivalence skipped — table(s) not produced"
+    fi
 
     log "RUN done. Results at $results_dir"
 }
