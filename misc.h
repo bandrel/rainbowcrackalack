@@ -96,6 +96,9 @@ extern const unsigned char NETNTLMV1_DEFAULT_CHALLENGE[8];
 int parse_challenge_str(const char *s, unsigned char out[8]);
 void format_challenge_hex(const unsigned char in[8], char *buf);
 int challenge_is_default(const unsigned char c[8]);
+void build_precompute_cache_charset(char *out, size_t out_size,
+                                    const char *charset_name,
+                                    const unsigned char challenge[8]);
 unsigned int parse_uint_arg(const char *s, const char *name);
 uint64_t parse_uint64_arg(const char *s, const char *name);
 void parse_rt_params(rt_parameters *rt_params, char *rt_filename);

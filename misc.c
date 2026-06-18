@@ -78,6 +78,24 @@ int challenge_is_default(const unsigned char c[8]) {
   return memcmp(c, NETNTLMV1_DEFAULT_CHALLENGE, 8) == 0;
 }
 
+/* Composes the charset segment of a precompute cache key.  Default challenge
+ * -> charset_name verbatim (interchange-compatible with blurbdust caches).
+ * Non-default -> "charset_name-chal<16-hex>", mirroring the table-filename
+ * convention so cross-challenge lookups never collide on the same key.
+ * out_size must be at least strlen(charset_name) + 22 (the "-chal" prefix is
+ * 5 chars + 16 hex + NUL); a smaller buffer truncates the key. */
+void build_precompute_cache_charset(char *out, size_t out_size,
+                                    const char *charset_name,
+                                    const unsigned char challenge[8]) {
+  if (challenge_is_default(challenge)) {
+    snprintf(out, out_size, "%s", charset_name);
+  } else {
+    char hex[17] = {0};
+    format_challenge_hex(challenge, hex);
+    snprintf(out, out_size, "%s-chal%s", charset_name, hex);
+  }
+}
+
 
 /* Given a rainbow table filename, delete its associated log, if any exists. */
 void delete_rt_log(char *rt_filename) {
