@@ -486,6 +486,40 @@ static int group_k(void)
 }
 
 
+/* --- Group L: build_precompute_cache_charset --- */
+static int group_l(void)
+{
+    int ok = 1;
+    char out[128];
+
+    /* BPCC-01: default challenge -> charset verbatim, no suffix. */
+    build_precompute_cache_charset(out, sizeof(out), "byte", NETNTLMV1_DEFAULT_CHALLENGE);
+    if (strcmp(out, "byte") != 0)
+        { fprintf(stderr, "BPCC-01 failed: got \"%s\"\n", out); ok = 0; }
+
+    /* BPCC-02: non-default challenge -> "<charset>-chal<hex>". */
+    unsigned char chal[8] = {0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x00,0x11};
+    build_precompute_cache_charset(out, sizeof(out), "byte", chal);
+    if (strcmp(out, "byte-chalaabbccddeeff0011") != 0)
+        { fprintf(stderr, "BPCC-02 failed: got \"%s\"\n", out); ok = 0; }
+
+    /* BPCC-03: a non-"byte" charset is preserved before the suffix. */
+    build_precompute_cache_charset(out, sizeof(out), "ascii-32-95", chal);
+    if (strcmp(out, "ascii-32-95-chalaabbccddeeff0011") != 0)
+        { fprintf(stderr, "BPCC-03 failed: got \"%s\"\n", out); ok = 0; }
+
+    /* BPCC-04: tiny buffer never overflows and stays NUL-terminated. */
+    char small[8];
+    build_precompute_cache_charset(small, sizeof(small), "byte", chal);
+    if (small[sizeof(small) - 1] != '\0')
+        { fprintf(stderr, "BPCC-04 failed: not NUL-terminated\n"); ok = 0; }
+    if (strncmp(small, "byte-ch", 7) != 0)
+        { fprintf(stderr, "BPCC-04 failed: bad truncated prefix \"%s\"\n", small); ok = 0; }
+
+    return ok;
+}
+
+
 int test_misc(void)
 {
     int ok = 1;
@@ -501,6 +535,7 @@ int test_misc(void)
     ok &= group_i();
     ok &= group_j();
     ok &= group_k();
+    ok &= group_l();
 
     return ok;
 }
