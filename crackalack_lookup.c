@@ -1656,8 +1656,10 @@ static void release_precompute_gpu(unsigned int num_devices, thread_args *args) 
 static void build_precompute_index_data(char *buf, size_t buf_size,
                                         const thread_args *args,
                                         const char *hash) {
+  char cs[128];
+  build_precompute_cache_charset(cs, sizeof(cs), args->charset_name, args->challenge);
   snprintf(buf, buf_size - 1, "%s_%s#%u-%u_%u_%u:%s\n",
-           args->hash_name, args->charset_name,
+           args->hash_name, cs,
            args->plaintext_len_min, args->plaintext_len_max,
            args->table_index, args->chain_len, hash);
 }
