@@ -38,8 +38,13 @@ else
             sleep 1
             __waited=$((__waited + 1))
         done
+        # Ensure the lockdir is removed on abnormal exit (SIGINT/SIGTERM/set -e),
+        # matching the flock path which self-clears on process death. SIGKILL still
+        # cannot be trapped, so a hard kill (-9) requires manual cleanup of the lockdir.
+        trap 'rmdir "$__gpu_lockdir" 2>/dev/null || true' EXIT
         local rc=0
         "$@" || rc=$?
+        trap - EXIT
         rmdir "$__gpu_lockdir" 2>/dev/null || true
         return "$rc"
     }
