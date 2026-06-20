@@ -65,6 +65,10 @@ def build_report(roundtrips: dict, crackdiff: dict) -> str:
 
     lines.append("## Differential (BASE vs CANDIDATE, real tables)")
     lines.append("")
+    if crackdiff.get("skipped"):
+        lines.append("_Skipped — REAL_TABLES not available; differential not run._")
+        lines.append("")
+        return "\n".join(lines)
     lines.append(f"- BASE cracked:      {crackdiff.get('base_cracked', 0)}")
     lines.append(f"- CANDIDATE cracked: {crackdiff.get('cand_cracked', 0)}")
     regs = crackdiff.get("regressions", [])

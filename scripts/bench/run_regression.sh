@@ -57,11 +57,13 @@ ensure_venv() {
 }
 
 build_repo() {  # build_repo <ref> <dir>
-    local ref="$1" dir="$2"
+    local ref="$1" dir="$2" sha
+    sha="$(git -C "$THIS_REPO" rev-parse --verify "${ref}^{commit}" 2>/dev/null)" || {
+        log "build_repo: cannot resolve ref '$ref' in $THIS_REPO (try: git fetch origin)"; return 1; }
     if [[ ! -d "$dir/.git" ]]; then git clone "$THIS_REPO" "$dir"; fi
     git -C "$dir" fetch "$THIS_REPO" 2>/dev/null || true
-    git -C "$dir" fetch origin 2>/dev/null || true
-    git -C "$dir" checkout -f "$ref"
+    git -C "$dir" checkout -f "$sha"
+    git -C "$dir" reset --hard "$sha"
     ( cd "$dir" && make clean >/dev/null 2>&1 || true && make "$MAKE_TARGET" )
 }
 
