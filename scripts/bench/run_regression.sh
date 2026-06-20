@@ -129,12 +129,19 @@ phase_roundtrip() {
     mkdir -p "$RESULTS"
     local json="$RESULTS/roundtrip_$BACKEND.json"
     export PYTHONPATH="$SCRIPT_DIR"
+    "$PY" -c "from crack_diff import parse_pot" 2>/dev/null \
+        || { log "ERROR: crack_diff not importable (PYTHONPATH=$PYTHONPATH)"; exit 1; }
     echo "{" > "$json"
     local first=1
     for cfg in "${ROUNDTRIP_CONFIGS[@]}"; do
         IFS='|' read -r name gen_args gkh_flags chain_len <<<"$cfg"
         log "round-trip: $name"
-        read -r cracked exp_hash gotpair < <(run_one_roundtrip "$name" "$gen_args" "$gkh_flags" "$chain_len")
+        local rt_out
+        if ! rt_out="$(run_one_roundtrip "$name" "$gen_args" "$gkh_flags" "$chain_len")"; then
+            log "$name: run_one_roundtrip failed (exit $?); recording as not cracked"
+            rt_out="false  |"
+        fi
+        read -r cracked exp_hash gotpair <<<"$rt_out"
         local storedpt="${gotpair%%|*}" exp="${gotpair##*|}"
         [[ $first -eq 1 ]] || echo "," >> "$json"; first=0
         local gotjson="null"; [[ -n "$storedpt" ]] && gotjson="\"$storedpt\""
