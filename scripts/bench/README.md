@@ -97,3 +97,58 @@ bash scripts/bench/test_gpu_lock.sh   # needs Linux flock
   `HASH_COUNT`/`TIMEOUT_MIN` for the lookup phase accordingly.
 - `ncu` profiling defaults to `netntlmv1_7` only — profiling every path under
   `ncu` is very slow for little signal. Gen throughput still covers all paths.
+
+## Crack regression / false-negative framework
+
+`run_regression.sh` proves cracking has no false negatives (self-contained
+round-trip) and no regressions (BASE-vs-CANDIDATE differential) for the NTLM-8,
+NTLM-9, and NetNTLMv1-7 (default-challenge) paths.
+
+Phases: `prepare | roundtrip | crackdiff | report | all`.
+
+```bash
+# Self-contained correctness on whatever GPU is present (CUDA on dell3, Metal locally):
+scripts/bench/run_regression.sh prepare
+scripts/bench/run_regression.sh roundtrip      # -> results/roundtrip_<backend>.json
+
+# Differential against real tables (dell3):
+REAL_TABLES=/mnt/nvme/rtc/ scripts/bench/run_regression.sh crackdiff   # -> results/crackdiff.json
+
+# Summary + pass/fail exit code:
+scripts/bench/run_regression.sh report         # -> results/regression_summary.md
+```
+
+The round-trip builds a tiny table per path, derives a plaintext provably in it
+(via `get_chain` + `gen_known_hash`), looks it up, and treats the hash's
+PRESENCE in the pot as the success signal (a crack only reaches the pot after
+crackalack's false-alarm check recomputes and confirms it). NTLM-8/NTLM-9 use
+the published chain lengths (422000 / 803000) because the optimized
+`precompute_ntlm8`/`precompute_ntlm9` kernels hardcode those lengths (their
+chain-length arg is `unused_chain_len`); NetNTLMv1-7 honors the host chain
+length, so it uses a fast length of 1000.
+
+The differential runs a BASE build and the CANDIDATE build against the SAME real
+tables with the SAME seeded hash set, clearing the precompute cache between runs,
+and flags any hash cracked by BASE but missed by CANDIDATE as a regression.
+
+Cross-backend: run `roundtrip` on dell3 and locally, copy both
+`roundtrip_<backend>.json` into one `results/` dir, then `report`. A path that
+cracks on one backend but not the other is reported as a divergence (FAIL).
+
+Tunables (env): `REG_ROOT`, `BASE_REF` (default `origin/bench-base-preinnerloop`),
+`CAND_REF` (default current branch), `REAL_TABLES`, `HASH_COUNT`, `HASH_SEED`,
+`BACKEND`/`MAKE_TARGET` (auto-detected from the OS).
+
+Pure-logic unit tests (no GPU):
+```bash
+cd scripts/bench && /tmp/reg-venv/bin/python -m pytest test_crack_diff.py test_render_report.py
+```
+(`test_gen_known_hash.py` additionally requires the `gen_known_hash` binary built
+via `make gen_known_hash`.)
+
+### Known limitation surfaced by this framework
+
+`precompute_ntlm8` / `precompute_ntlm9` (all backends) ignore the host chain
+length and hardcode 422000 / 803000. Lookups against NTLM-8/9 tables built at a
+non-standard chain length will silently fail to crack (false negatives). The
+NetNTLMv1-7 precompute path was fixed to honor the host chain length.
