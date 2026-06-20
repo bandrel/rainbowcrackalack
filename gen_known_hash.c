@@ -60,6 +60,7 @@ int main(int ac, char **av) {
   enum { ALGO_NETNTLMV1, ALGO_NTLM } algo = ALGO_NETNTLMV1;
   const char *charset_name = "byte";
   unsigned int plaintext_len = 7;
+  int charset_set = 0, plen_set = 0;
 
   const char *positional[4] = {NULL, NULL, NULL, NULL};
   int pos_count = 0;
@@ -81,9 +82,11 @@ int main(int ac, char **av) {
     } else if (strcmp(av[i], "--charset") == 0) {
       if (i + 1 >= ac) { fprintf(stderr, "%s: --charset requires a value\n", av[0]); return 1; }
       charset_name = av[++i];
+      charset_set = 1;
     } else if (strcmp(av[i], "--plaintext-len") == 0) {
       if (i + 1 >= ac) { fprintf(stderr, "%s: --plaintext-len requires a value\n", av[0]); return 1; }
       plaintext_len = (unsigned int)strtoul(av[++i], NULL, 10);
+      plen_set = 1;
     } else {
       if (pos_count < 4) positional[pos_count] = av[i];
       pos_count++;
@@ -103,6 +106,11 @@ int main(int ac, char **av) {
   uint64_t start_index          = strtoull(positional[2], NULL, 10);
   unsigned int target_pos       = (unsigned int)strtoul(positional[3], NULL, 10);
 
+  if (algo == ALGO_NTLM && (plaintext_len == 0 || plaintext_len > MAX_PLAINTEXT_LEN - 1)) {
+    fprintf(stderr, "%s: --plaintext-len must be 1..%u\n", av[0], MAX_PLAINTEXT_LEN - 1);
+    return 1;
+  }
+
   /* Select charset + hash length per algorithm. */
   for (int i = 0; i < 256; i++) charset_byte[i] = (char)i;
   char *charset;
@@ -113,6 +121,8 @@ int main(int ac, char **av) {
     charset_len = (unsigned int)strlen(charset);
     hash_len = 16;
   } else {
+    if (charset_set || plen_set)
+      fprintf(stderr, "%s: warning: --charset/--plaintext-len ignored for --algo netntlmv1 (forced to byte/7)\n", av[0]);
     charset = charset_byte;
     charset_len = 256;
     plaintext_len = 7;   /* NetNTLMv1 is fixed at 7 bytes. */
