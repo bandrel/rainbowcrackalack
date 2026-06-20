@@ -49,3 +49,12 @@ def test_assert_in_pot_false_when_missing(tmp_path):
 def test_assert_in_pot_false_on_wrong_plaintext(tmp_path):
     pot = write(tmp_path / "x.pot.hashcat", "0011223344556677:ffffffff\n")
     assert assert_in_pot(pot, "0011223344556677", "41424344") is False
+
+
+def test_parse_pot_all_hex_ascii_plaintext_is_kept_verbatim(tmp_path):
+    # KNOWN heuristic limitation: an NTLM ASCII plaintext that is itself valid
+    # even-length hex ("deadbeef") is kept verbatim rather than hex-encoded.
+    # This pins the documented behavior so a future change is a conscious choice.
+    pot = write(tmp_path / "x.pot.hashcat", "aabb:deadbeef\n")
+    got = parse_pot(pot)
+    assert got == {"aabb": "deadbeef"}

@@ -17,6 +17,14 @@ import os
 import sys
 
 
+# KNOWN LIMITATION: an NTLM ASCII plaintext that is coincidentally valid
+# even-length hex (e.g. "deadbeef") is treated as already-hex and returned
+# verbatim instead of being hex-encoded. For random 8-char ascii-32-95
+# plaintexts this happens ~1 in 5500 runs (~1 in 240k for 9-char). The
+# round-trip phase (run_regression.sh) guards against this by treating a hash's
+# PRESENCE in the pot as the false-negative signal, so this ambiguity cannot
+# turn a real crack into a spurious framework failure. Do not extend this
+# hex-detect heuristic to higher-stakes uses.
 def _to_hex(pt: bytes) -> str:
     """Normalize a pot plaintext field to lowercase hex.
 
