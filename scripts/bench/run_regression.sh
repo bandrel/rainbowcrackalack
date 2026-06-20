@@ -56,6 +56,15 @@ ensure_venv() {
     fi
 }
 
+build_repo() {  # build_repo <ref> <dir>
+    local ref="$1" dir="$2"
+    if [[ ! -d "$dir/.git" ]]; then git clone "$THIS_REPO" "$dir"; fi
+    git -C "$dir" fetch "$THIS_REPO" 2>/dev/null || true
+    git -C "$dir" fetch origin 2>/dev/null || true
+    git -C "$dir" checkout -f "$ref"
+    ( cd "$dir" && make clean >/dev/null 2>&1 || true && make "$MAKE_TARGET" )
+}
+
 phase_prepare() {
     log "PREPARE: root=$REG_ROOT backend=$BACKEND target=$MAKE_TARGET"
     mkdir -p "$REG_ROOT" "$RESULTS"
@@ -151,6 +160,42 @@ phase_roundtrip() {
     echo "" >> "$json"; echo "}" >> "$json"
     log "wrote $json"
     cat "$json" >&2
+}
+
+phase_crackdiff() {
+    log "CRACKDIFF: BASE=$BASE_REF CAND=$CAND_REF tables=$REAL_TABLES"
+    if [[ ! -d "$REAL_TABLES" ]]; then
+        log "WARN: real tables dir '$REAL_TABLES' not found — skipping crackdiff"
+        echo '{"base_cracked":0,"cand_cracked":0,"regressions":[],"improvements":[],"skipped":true}' \
+            > "$RESULTS/crackdiff.json"
+        return
+    fi
+    mkdir -p "$RESULTS"
+    local base_dir="$REG_ROOT/base" cand_dir="$REG_ROOT/cand"
+    log "building BASE"; build_repo "$BASE_REF" "$base_dir"
+    log "building CANDIDATE"; build_repo "$CAND_REF" "$cand_dir"
+
+    # Generate a shared hash set (NetNTLMv1-7, default challenge) once.
+    local hashes="$REG_ROOT/diff_hashes.txt"
+    "$PY" "$SCRIPT_DIR/gen_netntlmv1_hashes.py" --seed "$HASH_SEED" --count "$HASH_COUNT" --out "$hashes"
+
+    # Run each build against the SAME real tables with the SAME hashes, clearing
+    # the precompute cache between runs so a stale *.index can't mask a diff.
+    local role dir pot
+    for role in base cand; do
+        dir="$base_dir"; [[ "$role" == cand ]] && dir="$cand_dir"
+        pot="$RESULTS/${role}.pot"
+        rm -f "$pot" "$pot.hashcat"
+        ( cd "$dir" && rm -f ./*.index rcracki.precalc.* \
+            && with_gpu_lock ./crackalack_lookup "$REAL_TABLES" "$hashes" "$pot" >/dev/null 2>&1 ) || true
+        log "$role cracked: $(wc -l < "$pot.hashcat" 2>/dev/null || echo 0)"
+    done
+
+    export PYTHONPATH="$SCRIPT_DIR"
+    "$PY" "$SCRIPT_DIR/crack_diff.py" \
+        --base-pot "$RESULTS/base.pot.hashcat" \
+        --cand-pot "$RESULTS/cand.pot.hashcat" \
+        --out "$RESULTS/crackdiff.json" || log "crackdiff: regressions detected"
 }
 
 main() {
