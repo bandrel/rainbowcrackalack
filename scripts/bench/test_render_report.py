@@ -37,3 +37,11 @@ def test_build_report_lists_regressed_hashes():
     assert "bb" in md
     assert "FAIL" in md
     assert "ntlm8" in md
+
+
+def test_build_report_marks_skipped_differential():
+    roundtrips = {"metal": {"ntlm8": {"cracked": True, "expected": "ab", "got": "ab"}}}
+    crackdiff = {"base_cracked": 0, "cand_cracked": 0, "regressions": [],
+                 "improvements": [], "skipped": True}
+    md = build_report(roundtrips, crackdiff)
+    assert "Skipped" in md or "skipped" in md
