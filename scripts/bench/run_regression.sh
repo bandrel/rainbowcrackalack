@@ -198,6 +198,23 @@ phase_crackdiff() {
         --out "$RESULTS/crackdiff.json" || log "crackdiff: regressions detected"
 }
 
+phase_report() {
+    log "REPORT"
+    export PYTHONPATH="$SCRIPT_DIR"
+    local args=()
+    local f
+    for f in "$RESULTS"/roundtrip_*.json; do
+        [[ -e "$f" ]] || continue
+        local backend; backend="$(basename "$f" .json)"; backend="${backend#roundtrip_}"
+        args+=(--roundtrip "$backend=$f")
+    done
+    [[ -f "$RESULTS/crackdiff.json" ]] && args+=(--crackdiff "$RESULTS/crackdiff.json")
+    local rc=0
+    "$PY" "$SCRIPT_DIR/render_report.py" "${args[@]}" --out "$RESULTS/regression_summary.md" || rc=$?
+    log "summary at $RESULTS/regression_summary.md (exit $rc)"
+    return $rc
+}
+
 main() {
     local phase="${1:-all}"
     case "$phase" in
