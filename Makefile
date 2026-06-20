@@ -1,4 +1,11 @@
-BUILD ?= linux
+# Default BUILD to the host platform so on-demand targets (e.g. `make
+# gen_known_hash`) pick the right toolchain/dirs without an explicit BUILD=.
+# The linux:/macos:/windows: aliases still override this via the command line.
+ifeq ($(shell uname -s),Darwin)
+  BUILD ?= macos
+else
+  BUILD ?= linux
+endif
 BUILD_DIR := build/$(BUILD)
 OBJDIR := $(BUILD_DIR)/obj
 INCDIR := $(BUILD_DIR)/include
@@ -87,6 +94,7 @@ PERFECTIFY    := perfectify$(EXE)
 ENUMERATE     := enumerate_chain$(EXE)
 SORT_PROG     := crackalack_sort$(EXE)
 PLAN_PROG     := crackalack_plan$(EXE)
+GENKNOWN_PROG := gen_known_hash$(EXE)
 
 BINARIES := \
 	$(OUTDIR)/$(GEN_PROG) \
@@ -102,7 +110,18 @@ BINARIES := \
 
 .PHONY: all linux linux-opencl macos windows clean strip \
         prep_opencl_headers prep_none \
-        bundle_windows
+        bundle_windows gen_known_hash
+
+# On-demand convenience target.  NOT part of the default `all`/BINARIES list
+# because gen_known_hash needs OpenSSL (-lssl -lcrypto), an extra dependency the
+# other tools don't have.  Build it explicitly: `make macos && make gen_known_hash`.
+#
+# Re-invoke make with the platform's BUILD so the object/output dirs and toolchain
+# match the rest of the build (mirrors the linux:/macos: aliases).  Detect macOS
+# vs Linux unless the caller already set BUILD on the command line.
+# Depend on the absolute binary path so the phony name (gen_known_hash) does not
+# normalize to the same target as ./gen_known_hash (which would be circular).
+gen_known_hash: $(abspath $(OUTDIR)/$(GENKNOWN_PROG))
 
 all: $(PREP) $(BINARIES)
 
@@ -275,6 +294,13 @@ $(OUTDIR)/$(PLAN_PROG): \
 	$(OBJDIR)/markov.o \
 	$(OBJDIR)/misc.o
 	$(CC) $(LDFLAGS) $^ -o $@ -lgcrypt -lm
+
+$(abspath $(OUTDIR)/$(GENKNOWN_PROG)): \
+	$(OBJDIR)/gen_known_hash.o \
+	$(OBJDIR)/cpu_rt_functions.o \
+	$(OBJDIR)/charset.o \
+	$(OBJDIR)/markov.o
+	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS) -lssl -lcrypto
 
 bundle_windows:
 	@echo "Bundling runtime DLLs into $(OUTDIR)..."
