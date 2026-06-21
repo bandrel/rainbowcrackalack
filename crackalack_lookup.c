@@ -348,6 +348,16 @@ unsigned int fa_batch_threshold = 16384;
  * docs/superpowers/specs/2026-05-24-bloom-filter-tightening-design.md. */
 double bloom_target_fpr = 0.01;
 
+/* Set to 1 when --bloom-fpr was given an explicit value > 0, which forces the
+ * bloom on (skips the auto break-even decision). */
+int bloom_fpr_forced = 0;
+
+/* Per-run decision: 1 = build per-table blooms, 0 = skip them.  Computed once in
+ * streaming_lookup() before the preloader thread spawns; read by
+ * load_single_table().  Defaults to 1 so any path that doesn't set it keeps the
+ * historical always-build behavior. */
+int g_build_bloom = 1;
+
 /* If non-zero, search_tables() routes per-table endpoint binary search through
  * the GPU (gpu_binary_search_streaming) instead of CPU rt_binary_search.
  * Off by default while still under validation; toggle with --gpu-search. */
@@ -2373,10 +2383,14 @@ static int load_single_table(const char *filepath, preloaded_table *pt) {
   pt->filepath = strdup(filepath);
   pt->rainbow_table = rainbow_table;
   pt->num_chains = num_chains;
-  pt->bf = bloom_create(num_chains, bloom_target_fpr);
-  if (pt->bf != NULL) {
-    for (uint64_t c = 0; c < num_chains; c++)
-      bloom_insert(pt->bf, rainbow_table[(c * 2) + 1]);
+  if (g_build_bloom) {
+    pt->bf = bloom_create(num_chains, bloom_target_fpr);
+    if (pt->bf != NULL) {
+      for (uint64_t c = 0; c < num_chains; c++)
+        bloom_insert(pt->bf, rainbow_table[(c * 2) + 1]);
+    }
+  } else {
+    pt->bf = NULL;   /* auto-skip: search treats NULL bf as "no pre-filter" */
   }
   pt->next = NULL;
   return 0;
@@ -2654,6 +2668,24 @@ void streaming_lookup(char *rt_dir, const rt_parameters *filter,
   if (pargs == NULL) { fprintf(stderr, "streaming_lookup: calloc failed\n"); return; }
   pargs->paths = all_paths;
   pargs->num_paths = total_paths;
+
+  /* Decide once whether per-table blooms are worth building for this config
+   * group.  Few queries (few hashes) against huge tables => the per-table bloom
+   * build costs more than it saves, so skip it (the search handles bf==NULL).
+   * Estimate queries as total_hashes * chain_len (known now; the actual
+   * precompute runs after the preloader starts). */
+  if (bloom_fpr_forced) {
+    g_build_bloom = (bloom_target_fpr > 0.0);
+  } else {
+    uint64_t est_queries = (uint64_t)total_hashes * (uint64_t)filter->chain_len;
+    g_build_bloom = (bloom_target_fpr > 0.0) &&
+                    bloom_is_worthwhile(est_queries, filter->num_chains, bloom_target_fpr);
+  }
+  printf("Bloom filter: %s (fpr=%g, ~%u hashes vs %"PRIu64" chains/table).\n",
+         g_build_bloom ? "enabled" :
+           (bloom_target_fpr <= 0.0 ? "disabled (--bloom-fpr 0)" : "auto-skipped (too few hashes to amortize build)"),
+         bloom_target_fpr, total_hashes, filter->num_chains);
+  fflush(stdout);
 
   pthread_t preloader_tid;
   if (pthread_create(&preloader_tid, NULL, streaming_preloading_thread, pargs) != 0) {
@@ -3755,6 +3787,7 @@ int main(int ac, char **av) {
         print_usage_and_exit(av[0], -1);
       }
       bloom_target_fpr = v;
+      bloom_fpr_forced = (v > 0.0);   /* explicit positive fpr forces the bloom on */
     } else if (strcmp(av[i], "--gpu-search") == 0) {
       gpu_search_enabled = 1;
     } else if (strcmp(av[i], "--challenge") == 0) {
