@@ -40,6 +40,18 @@ typedef struct {
  * NULL as "bloom disabled" and skip queries. */
 bloom_filter *bloom_create(uint64_t num_elements, double target_fpr);
 
+/* Optimal hash count k for a bloom over num_elements at target_fpr, computed
+ * identically to bloom_create (k derived from the power-of-two-rounded bit
+ * count).  Returns 0 when no bloom would be built (num_elements==0, target_fpr
+ * outside (0,1), or the bit count would exceed bloom_create's cap). */
+unsigned int bloom_optimal_k(uint64_t num_elements, double target_fpr);
+
+/* Returns 1 if building a per-table bloom is expected to save more search work
+ * than it costs to build, else 0.  num_queries = total precomputed endpoint
+ * lookups across all uncracked hashes; num_chains = endpoints in the table;
+ * target_fpr = configured FPR (<=0 always returns 0). */
+int bloom_is_worthwhile(uint64_t num_queries, uint64_t num_chains, double target_fpr);
+
 /* Insert a 64-bit key. NOT thread-safe. */
 void bloom_insert(bloom_filter *bf, uint64_t key);
 
