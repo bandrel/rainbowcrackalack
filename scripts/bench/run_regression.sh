@@ -33,17 +33,20 @@ log() { echo "[regression $(date -u +%H:%M:%S)] $*" >&2; }
 # Round-trip configs: name|gen_args|gkh_flags|chain_len
 #
 # chain_len MUST match what each optimized precompute kernel walks.  The
-# precompute_ntlm8 / precompute_ntlm9 Metal/CL/CUDA kernels HARDCODE the
-# published-table chain lengths (422000 and 803000 respectively) and ignore the
-# host's chain_len argument, so a round-trip table generated at any other length
-# is never reconstructed by precompute (the hash is in the table but lookup
-# reports 0 confirmations).  precompute_netntlmv1_7 was fixed to honor the host
-# chain_len, so it works at any length (we use a short one to keep gen fast).
-# Keep chain_count modest so a single thread can still surface the chain.
+# Each optimized precompute kernel only engages for a specific HARDCODED chain
+# length, and the lookup has no generic fallback kernel for these algos -- so a
+# round-trip MUST use the published chain length or the lookup can't reconstruct
+# the chain (the hash is in the table but lookup reports 0 confirmations, or the
+# generic kernel file simply doesn't exist):
+#   precompute_ntlm8      -> 422000   (is_ntlm8)
+#   precompute_ntlm9      -> 803000   (is_ntlm9)
+#   precompute_netntlmv1_7 -> 881689  (is_netntlmv1_7, misc.c)
+# Chain length dominates per-hash precompute cost; keep chain_count modest so a
+# single thread can still surface the chain and gen stays fast.
 ROUNDTRIP_CONFIGS=(
   "ntlm8|ntlm ascii-32-95 8 8 0 422000 256 0|--algo ntlm --charset ascii-32-95 --plaintext-len 8|422000"
   "ntlm9|ntlm ascii-32-95 9 9 0 803000 256 0|--algo ntlm --charset ascii-32-95 --plaintext-len 9|803000"
-  "netntlmv1_7|netntlmv1 byte 7 7 0 1000 1024 0||1000"
+  "netntlmv1_7|netntlmv1 byte 7 7 0 881689 1024 0||881689"
 )
 REDUCTION_OFFSET=0
 
@@ -93,6 +96,11 @@ run_one_roundtrip() {
     for kdir in Metal CL CUDA; do
         [[ -d "$bin/$kdir" ]] && ln -sfn "$bin/$kdir" "$work/$kdir"
     done
+    # shared.h (and other root headers the generic kernels #include via rt.cu)
+    # lives in the repo root, not CUDA/.  The binaries now resolve it relative to
+    # their own location too, but symlink it so the round-trip is robust even if
+    # the exe-dir lookup is unavailable.
+    [[ -f "$bin/shared.h" ]] && ln -sfn "$bin/shared.h" "$work/shared.h"
 
     # 1. Generate + sort a tiny table in the work dir.
     ( cd "$work" && with_gpu_lock "$bin/crackalack_gen" $gen_args >/dev/null 2>&1 )
