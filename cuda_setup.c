@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <cuda.h>
 #include <nvrtc.h>
@@ -195,28 +196,9 @@ void print_device_info(gpu_device *devices, gpu_uint num_devices) {
 }
 void gpu_release_device(gpu_device d)                                 { (void)d; /* no-op: CUDA does not require release */ }
 
-/* Read entire file into a malloc'd, NUL-terminated buffer.  Returns NULL on error. */
-static char *cuda_read_file(const char *path) {
-  FILE *f = fopen(path, "rb");
-  if (!f) {
-    fprintf(stderr, "cuda_setup: failed to open '%s': %s\n", path, strerror(errno));
-    return NULL;
-  }
-  fseek(f, 0, SEEK_END);
-  long n = ftell(f);
-  fseek(f, 0, SEEK_SET);
-  if (n < 0) { fclose(f); return NULL; }
-  char *buf = malloc((size_t)n + 1);
-  if (!buf) { fclose(f); return NULL; }
-  if (fread(buf, 1, (size_t)n, f) != (size_t)n) { free(buf); fclose(f); return NULL; }
-  buf[n] = '\0';
-  fclose(f);
-  return buf;
-}
-
-/* Silent variant: same as cuda_read_file but returns NULL without printing
- * on missing file.  Used for speculative first-probe lookups where a
- * fallback path will be tried next. */
+/* Read entire file into a malloc'd, NUL-terminated buffer.  Returns NULL
+ * (without printing) on error -- callers probe several candidate paths and
+ * report failure themselves once all candidates are exhausted. */
 static char *cuda_read_file_silent(const char *path) {
   FILE *f = fopen(path, "rb");
   if (!f) return NULL;
@@ -230,6 +212,20 @@ static char *cuda_read_file_silent(const char *path) {
   buf[n] = '\0';
   fclose(f);
   return buf;
+}
+
+/* Directory containing the running executable (the repo root, where the CUDA/
+ * kernel dir and shared.h live).  Lets kernel/include lookups succeed no matter
+ * what the current working directory is.  Returns 1 on success, 0 if
+ * unavailable (caller then falls back to CWD-relative lookup only). */
+static int cuda_exe_dir(char *buf, size_t buf_size) {
+  ssize_t n = readlink("/proc/self/exe", buf, buf_size - 1);
+  if (n <= 0) return 0;
+  buf[n] = '\0';
+  char *slash = strrchr(buf, '/');
+  if (!slash) return 0;
+  *slash = '\0';   /* strip the executable basename, leaving its directory */
+  return 1;
 }
 
 /* Recursively resolve #include "foo.cu" / "foo.cl" lines by inlining the
@@ -261,19 +257,33 @@ static char *cuda_resolve_includes(const char *src, const char *dir) {
     memcpy(inc_name, q1, name_len);
     inc_name[name_len] = '\0';
 
-    char inc_path[512];
+    /* Search, in order: the kernel dir and the project root relative to CWD
+     * (fast path when run from the repo root), then both anchored at the
+     * executable's directory so generation/lookup also work from any other
+     * working dir (e.g. a table-output dir).  shared.h lives in the project
+     * root, sibling kernels (rt.cu, string.cu) live in `dir`. */
+    char inc_path[1024];
+    char exedir[512];
+    int have_exe = cuda_exe_dir(exedir, sizeof(exedir));
+
     snprintf(inc_path, sizeof(inc_path), "%s/%s", dir, inc_name);
     char *inc_src = cuda_read_file_silent(inc_path);
-    if (!inc_src) {
-      /* Fall back to project root (for shared.h and other host-shared headers). */
-      char *inc_src_root = cuda_read_file_silent(inc_name);
-      if (!inc_src_root) {
-        fprintf(stderr, "cuda_setup: cannot resolve #include \"%s\" (tried %s and %s)\n",
-                inc_name, inc_path, inc_name);
-        free(out);
-        return NULL;
+    if (!inc_src)
+      inc_src = cuda_read_file_silent(inc_name);
+    if (!inc_src && have_exe) {
+      char p[1024];
+      snprintf(p, sizeof(p), "%s/%s/%s", exedir, dir, inc_name);
+      inc_src = cuda_read_file_silent(p);
+      if (!inc_src) {
+        snprintf(p, sizeof(p), "%s/%s", exedir, inc_name);
+        inc_src = cuda_read_file_silent(p);
       }
-      inc_src = inc_src_root;
+    }
+    if (!inc_src) {
+      fprintf(stderr, "cuda_setup: cannot resolve #include \"%s\" (tried %s, %s, and exe dir %s)\n",
+              inc_name, inc_path, inc_name, have_exe ? exedir : "(unavailable)");
+      free(out);
+      return NULL;
     }
 
     /* Replace the #include line with the inlined source. */
@@ -333,9 +343,23 @@ void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *de
   char resolved_path[512];
   cuda_rewrite_cl_path(path, resolved_path, sizeof(resolved_path));
 
-  /* Read kernel source and resolve includes. */
-  char *src = cuda_read_file(resolved_path);
-  if (!src) exit(-1);
+  /* Read kernel source and resolve includes.  Try CWD-relative first (fast
+   * path / repo root), then anchored at the executable's directory so the
+   * kernel loads regardless of the working directory. */
+  char *src = cuda_read_file_silent(resolved_path);
+  if (!src) {
+    char exedir[512];
+    if (cuda_exe_dir(exedir, sizeof(exedir))) {
+      char p[1024];
+      snprintf(p, sizeof(p), "%s/%s", exedir, resolved_path);
+      src = cuda_read_file_silent(p);
+    }
+  }
+  if (!src) {
+    fprintf(stderr, "cuda_setup: failed to open kernel '%s' (tried CWD and exe dir): %s\n",
+            resolved_path, strerror(errno));
+    exit(-1);
+  }
 
   char dir[512];
   cuda_dirname(resolved_path, dir, sizeof(dir));
