@@ -62,7 +62,16 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *
   }
 
   /*printf("Total chains in table: %u\n", total_chains_in_table);*/
-  uncompressed_table = calloc((size_t)num_chains, sizeof(uint64_t) * 2);
+  /* The decode loop below writes both the start and end point for every chain,
+   * fully overwriting this buffer, so we use malloc (not calloc) to avoid
+   * needlessly zeroing hundreds of MB on the load path. */
+  size_t out_bytes = (size_t)num_chains * (sizeof(uint64_t) * 2);
+  if (num_chains != 0 && out_bytes / (sizeof(uint64_t) * 2) != num_chains) {
+    fprintf(stderr, "Error: uncompressed table size overflow (num_chains=%"PRIu64").\n", num_chains);
+    ret = -7;
+    goto done;
+  }
+  uncompressed_table = malloc(out_bytes);
   if (uncompressed_table == NULL) {
     fprintf(stderr, "Error: could not allocate %"PRIu64" bytes in memory for uncompressed table.\n", num_chains * sizeof(uint64_t) * 2);
     ret = -2;
