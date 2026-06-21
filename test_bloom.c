@@ -139,6 +139,15 @@ static int test_bloom_worthwhile(void) {
   if (bloom_is_worthwhile(1000000ULL, 0ULL, 0.01) != 0) {
     printf("worthwhile(num_chains=0) should be 0\n"); return 0;
   }
+  /* Exact break-even boundary (log2(33554432)=25; build=33554432*11=369098752;
+   * threshold queries = 369098752/25 = 14763950.08).  '>=' semantics: 14763951
+   * just clears the bar (build the bloom), 14763950 just misses it (skip). */
+  if (bloom_is_worthwhile(14763951ULL, 33554432ULL, 0.01) != 1) {
+    printf("worthwhile(threshold+) should be 1\n"); return 0;
+  }
+  if (bloom_is_worthwhile(14763950ULL, 33554432ULL, 0.01) != 0) {
+    printf("worthwhile(threshold-) should be 0\n"); return 0;
+  }
   return 1;
 }
 
