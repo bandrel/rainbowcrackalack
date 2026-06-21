@@ -2100,11 +2100,35 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
 
     ppi->username = usernames[h];
     ppi->hash = hashes[h];
-    ppi->num_precomputed_end_indices = count;
-    ppi->precomputed_end_indices = calloc(count, sizeof(gpu_ulong));
+
+    /* NetNTLMv1 batched-precompute off-by-one fix.
+     *
+     * The search records a matched endpoint's POSITION as its index in
+     * precomputed_end_indices, and the false-alarm kernel reconstructs the
+     * chain to exactly that depth.  For NetNTLMv1-7 the batched precompute
+     * stores the endpoint for chain column C at hash_output[C-1] (one lower
+     * than the column), whereas the non-batch (single-hash) path is
+     * column-aligned.  Uncorrected, the false-alarm walk stops one step short
+     * of the real match and every batched (>=2-hash) NetNTLMv1 crack is
+     * silently dropped.  Shifting each endpoint up by one slot makes its array
+     * index equal the true column; index 0 holds a sentinel that never matches
+     * a real endpoint (all endpoints are < 2^56).  Nonzero outputs are
+     * contiguous (only the final position is zeroed), so the shifted index
+     * equals the original position + 1.
+     *
+     * Scoped to NetNTLMv1: that is the path verified end-to-end (a provably
+     * in-table hash that cracks alone now also cracks as one of two).
+     * NTLM8/markov_ntlm8 batched multi-hash lookups also fail but with a
+     * different root cause this shift does not fix -- left untouched and
+     * tracked separately (see the multi-hash round-trip regression test). */
+    int nv1_shift = (args[0].hash_type == HASH_NETNTLMV1) ? 1 : 0;
+    ppi->num_precomputed_end_indices = count + nv1_shift;
+    ppi->precomputed_end_indices = calloc(count + nv1_shift, sizeof(gpu_ulong));
     if (ppi->precomputed_end_indices == NULL) { fprintf(stderr, "Error allocating ppi indices.\n"); exit(-1); }
 
     unsigned int idx = 0;
+    if (nv1_shift)
+      ppi->precomputed_end_indices[idx++] = UINT64_MAX;
     for (p = 0; p < positions_per_hash; p++) {
       if (hash_output[p] != 0)
         ppi->precomputed_end_indices[idx++] = hash_output[p];
