@@ -45,6 +45,29 @@ static inline uint64_t next_pow2(uint64_t v) {
 }
 
 
+unsigned int bloom_optimal_k(uint64_t num_elements, double target_fpr) {
+  if (num_elements == 0)                         return 0;
+  if (target_fpr <= 0.0 || target_fpr >= 1.0)    return 0;
+  const double LN2 = 0.6931471805599453;
+  double m_raw = -((double)num_elements) * log(target_fpr) / (LN2 * LN2);
+  if (m_raw < 64.0) m_raw = 64.0;
+  uint64_t m_pow2 = next_pow2((uint64_t)m_raw);
+  if (m_pow2 > (1ULL << 36))                     return 0;   /* matches bloom_create cap */
+  double k_raw = ((double)m_pow2 / (double)num_elements) * LN2;
+  int k = (int)(k_raw + 0.5);
+  if (k < 1)  k = 1;
+  if (k > 64) k = 64;
+  return (unsigned int)k;
+}
+
+int bloom_is_worthwhile(uint64_t num_queries, uint64_t num_chains, double target_fpr) {
+  unsigned int k = bloom_optimal_k(num_chains, target_fpr);
+  if (k == 0 || num_chains == 0) return 0;
+  double build = (double)num_chains * (double)k;
+  double save  = (double)num_queries * log2((double)num_chains);
+  return (save >= build) ? 1 : 0;
+}
+
 bloom_filter *bloom_create(uint64_t num_elements, double target_fpr) {
   if (num_elements == 0)                 return NULL;
   if (target_fpr <= 0.0 || target_fpr >= 1.0) {
@@ -67,11 +90,10 @@ bloom_filter *bloom_create(uint64_t num_elements, double target_fpr) {
     return NULL;
   }
 
-  /* k = round((m/n) * ln 2), clamped to [1, 64]. */
-  double k_raw = ((double)m_pow2 / (double)num_elements) * LN2;
-  int k = (int)(k_raw + 0.5);
-  if (k < 1)  k = 1;
-  if (k > 64) k = 64;
+  /* k computed by the shared helper so bloom_is_worthwhile estimates the exact
+   * same build cost. */
+  int k = (int)bloom_optimal_k(num_elements, target_fpr);
+  if (k < 1) k = 1;   /* defensive: inputs already validated above */
 
   bloom_filter *bf = calloc(1, sizeof(bloom_filter));
   if (!bf) return NULL;
