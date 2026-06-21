@@ -113,10 +113,41 @@ static int test_bloom_guards(void) {
 }
 
 
+/* Break-even decision: build the bloom only when it saves more search work
+ * than it costs to build.  Few queries against a huge table => skip. */
+static int test_bloom_worthwhile(void) {
+  /* k must match bloom_create's power-of-two-rounded sizing (observed k=11
+   * for ~33.5M elements at fpr 0.01). */
+  if (bloom_optimal_k(33554432ULL, 0.01) != 11) {
+    printf("bloom_optimal_k(33.5M, 0.01)=%u, expected 11\n",
+           bloom_optimal_k(33554432ULL, 0.01));
+    return 0;
+  }
+  /* 2 hashes x 881689 positions vs 33.5M-endpoint table => NOT worthwhile. */
+  if (bloom_is_worthwhile(2ULL * 881689ULL, 33554432ULL, 0.01) != 0) {
+    printf("worthwhile(2 hashes) should be 0\n"); return 0;
+  }
+  /* 100 hashes => worthwhile. */
+  if (bloom_is_worthwhile(100ULL * 881689ULL, 33554432ULL, 0.01) != 1) {
+    printf("worthwhile(100 hashes) should be 1\n"); return 0;
+  }
+  /* fpr<=0 (disabled) => never worthwhile. */
+  if (bloom_is_worthwhile(100ULL * 881689ULL, 33554432ULL, 0.0) != 0) {
+    printf("worthwhile(fpr=0) should be 0\n"); return 0;
+  }
+  /* num_chains==0 => never worthwhile (no table). */
+  if (bloom_is_worthwhile(1000000ULL, 0ULL, 0.01) != 0) {
+    printf("worthwhile(num_chains=0) should be 0\n"); return 0;
+  }
+  return 1;
+}
+
+
 int test_bloom(void) {
   if (!test_bloom_roundtrip()) return 0;
   if (!test_bloom_counters())  return 0;
   if (!test_bloom_sizing())    return 0;
   if (!test_bloom_guards())    return 0;
+  if (!test_bloom_worthwhile()) return 0;
   return 1;
 }
