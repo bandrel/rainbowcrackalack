@@ -16,6 +16,11 @@ set -euo pipefail
 : "${THIS_REPO:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 : "${BACKEND:=$(uname -s | grep -qi darwin && echo metal || echo cuda)}"
 : "${MAKE_TARGET:=$([[ "$BACKEND" == metal ]] && echo macos || echo linux)}"
+# Number of distinct in-table hashes the multi-hash round-trip looks up
+# together (>=2 to exercise the batched precompute + multi-candidate
+# false-alarm path).  Per-hash precompute cost scales with this, so keep it
+# modest; must be <= the per-table chain count of the smallest config.
+: "${REG_MULTI_COUNT:=4}"
 # Differential (crackdiff) tunables:
 : "${BASE_REF:=origin/bench-base-preinnerloop}"
 : "${CAND_REF:=$(git -C "$THIS_REPO" rev-parse --abbrev-ref HEAD)}"
@@ -144,15 +149,18 @@ PY
     echo "$cracked $exp_hash $storedpt|$exp_pt"
 }
 
-# Multi-hash round-trip: look up TWO provably-in-table hashes together so the
-# lookup takes the batched precompute + multi-candidate false-alarm path (used
-# whenever >=2 hashes are loaded for ntlm8 / netntlmv1_7 / markov_ntlm8).  A
-# regression here (e.g. the batched-precompute off-by-one that dropped every
-# multi-hash crack) is invisible to the single-hash round-trip above.  Prints
-# "<cracked_count>" (expect 2).
+# Multi-hash round-trip: look up REG_MULTI_COUNT (>=2) provably-in-table hashes
+# together so the lookup takes the batched precompute + multi-candidate
+# false-alarm path (used whenever >=2 hashes are loaded for ntlm8 /
+# netntlmv1_7 / markov_ntlm8).  A regression here (e.g. the batched-precompute
+# off-by-one that dropped every multi-hash crack) is invisible to the
+# single-hash round-trip above.  Each hash is taken from a distinct chain so
+# all REG_MULTI_COUNT are provably in the table.  Prints "<cracked>/<total>".
 run_one_roundtrip_multi() {
     local name="$1" gen_args="$2" gkh_flags="$3" chain_len="$4"
     local target_pos=$(( chain_len / 2 ))
+    local count="$REG_MULTI_COUNT"
+    (( count >= 2 )) || count=2
     local work="$REG_ROOT/rtm/$name"
     rm -rf "$work"; mkdir -p "$work"
     local bin="$THIS_REPO"
@@ -164,19 +172,19 @@ run_one_roundtrip_multi() {
 
     ( cd "$work" && with_gpu_lock "$bin/crackalack_gen" $gen_args >/dev/null 2>&1 )
     local table; table="$(ls "$work"/*.rt 2>/dev/null | head -n1)"
-    [[ -n "$table" ]] || { log "$name(multi): gen produced no .rt"; echo "0"; return; }
+    [[ -n "$table" ]] || { log "$name(multi): gen produced no .rt"; echo "0/$count"; return; }
     ( cd "$work" && with_gpu_lock "$bin/crackalack_sort" "$table" >/dev/null 2>&1 )
     table="$(ls "$work"/*.rt 2>/dev/null | head -n1)"
 
-    # Two provably-in-table hashes from distinct chains (0 and 1).
+    # One provably-in-table hash per distinct chain (0 .. count-1).
     local hashfile="$work/hashes.txt"; : > "$hashfile"
-    local c gkh h
-    for c in 0 1; do
-        local si; si="$("$bin/get_chain" "$table" "$c" | awk '/Start index:/ {print $3}')"
-        [[ -n "$si" ]] || { log "$name(multi): get_chain $c failed"; echo "0"; return; }
+    local c gkh h si
+    for (( c = 0; c < count; c++ )); do
+        si="$("$bin/get_chain" "$table" "$c" | awk '/Start index:/ {print $3}')"
+        [[ -n "$si" ]] || { log "$name(multi): get_chain $c failed"; echo "0/$count"; return; }
         gkh="$("$bin/gen_known_hash" "$chain_len" "$REDUCTION_OFFSET" "$si" "$target_pos" $gkh_flags)"
         h="$(awk -F= '/^hash=/{print $2}' <<<"$gkh")"
-        [[ -n "$h" ]] || { log "$name(multi): gen_known_hash $c failed"; echo "0"; return; }
+        [[ -n "$h" ]] || { log "$name(multi): gen_known_hash $c failed"; echo "0/$count"; return; }
         echo "$h" >> "$hashfile"
     done
 
@@ -185,34 +193,41 @@ run_one_roundtrip_multi() {
         && with_gpu_lock "$bin/crackalack_lookup" "$work" "$hashfile" >/dev/null 2>&1 ) || true
 
     # Count how many of the input hashes reached the (hashcat) pot.
-    "$PY" - "$work/rainbowcrackalack_hashcat.pot" "$hashfile" <<'PY'
+    local cracked
+    cracked="$("$PY" - "$work/rainbowcrackalack_hashcat.pot" "$hashfile" <<'PY'
 import sys
 from crack_diff import parse_pot
 d = parse_pot(sys.argv[1])
 wanted = [l.strip().lower() for l in open(sys.argv[2]) if l.strip()]
 print(sum(1 for h in wanted if h in d))
 PY
+)"
+    echo "${cracked:-0}/$count"
 }
 
 phase_roundtrip_multi() {
-    log "ROUNDTRIP-MULTI (batched multi-hash path): backend=$BACKEND"
+    log "ROUNDTRIP-MULTI (batched multi-hash path, $REG_MULTI_COUNT hashes): backend=$BACKEND"
     mkdir -p "$RESULTS"
     local json="$RESULTS/roundtrip_multi_$BACKEND.json"
     export PYTHONPATH="$SCRIPT_DIR"
+    "$PY" -c "from crack_diff import parse_pot" 2>/dev/null \
+        || { log "ERROR: crack_diff not importable (PYTHONPATH=$PYTHONPATH)"; exit 1; }
     echo "{" > "$json"
     local first=1 fail=0
     for cfg in "${ROUNDTRIP_CONFIGS[@]}"; do
         IFS='|' read -r name gen_args gkh_flags chain_len <<<"$cfg"
         log "round-trip-multi: $name"
-        local n; n="$(run_one_roundtrip_multi "$name" "$gen_args" "$gkh_flags" "$chain_len")"
-        [[ "$n" == "2" ]] || fail=1
+        local res cracked total
+        res="$(run_one_roundtrip_multi "$name" "$gen_args" "$gkh_flags" "$chain_len")"
+        cracked="${res%%/*}"; total="${res##*/}"
+        [[ "$cracked" == "$total" ]] || { fail=1; log "round-trip-multi: $name cracked $res (expected all)"; }
         [[ $first -eq 1 ]] || echo "," >> "$json"; first=0
-        printf '  "%s": {"cracked": %s, "expected": 2}' "$name" "${n:-0}" >> "$json"
+        printf '  "%s": {"cracked": %s, "expected": %s}' "$name" "${cracked:-0}" "${total:-0}" >> "$json"
     done
     echo "" >> "$json"; echo "}" >> "$json"
     log "wrote $json"
     cat "$json" >&2
-    [[ $fail -eq 0 ]] || log "ROUNDTRIP-MULTI: at least one config did not crack both hashes"
+    [[ $fail -eq 0 ]] || log "ROUNDTRIP-MULTI: at least one config did not crack all $REG_MULTI_COUNT hashes"
 }
 
 phase_roundtrip() {
