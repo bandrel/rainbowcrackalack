@@ -2087,13 +2087,6 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     if (index_data_array != NULL && index_data_array[h] != NULL)
       save_precompute_cache(index_data_array[h], hash_output, positions_per_hash);
 
-    /* Count non-zero entries (valid precomputed endpoints). */
-    unsigned int count = 0;
-    for (p = 0; p < positions_per_hash; p++) {
-      if (hash_output[p] != 0)
-        count++;
-    }
-
     /* Create ppi node. */
     precomputed_and_potential_indices *ppi = calloc(1, sizeof(precomputed_and_potential_indices));
     if (ppi == NULL) { fprintf(stderr, "Error allocating ppi.\n"); exit(-1); }
@@ -2101,37 +2094,32 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     ppi->username = usernames[h];
     ppi->hash = hashes[h];
 
-    /* NetNTLMv1 batched-precompute off-by-one fix.
+    /* Batched-precompute reverse-order fix (all batched hash types: ntlm8 /
+     * netntlmv1_7 / markov_ntlm8).
      *
      * The search records a matched endpoint's POSITION as its index in
      * precomputed_end_indices, and the false-alarm kernel reconstructs the
-     * chain to exactly that depth.  For NetNTLMv1-7 the batched precompute
-     * stores the endpoint for chain column C at hash_output[C-1] (one lower
-     * than the column), whereas the non-batch (single-hash) path is
-     * column-aligned.  Uncorrected, the false-alarm walk stops one step short
-     * of the real match and every batched (>=2-hash) NetNTLMv1 crack is
-     * silently dropped.  Shifting each endpoint up by one slot makes its array
-     * index equal the true column; index 0 holds a sentinel that never matches
-     * a real endpoint (all endpoints are < 2^56).  Nonzero outputs are
-     * contiguous (only the final position is zeroed), so the shifted index
-     * equals the original position + 1.
-     *
-     * Scoped to NetNTLMv1: that is the path verified end-to-end (a provably
-     * in-table hash that cracks alone now also cracks as one of two).
-     * NTLM8/markov_ntlm8 batched multi-hash lookups also fail but with a
-     * different root cause this shift does not fix -- left untouched and
-     * tracked separately (see the multi-hash round-trip regression test). */
-    int nv1_shift = (args[0].hash_type == HASH_NETNTLMV1) ? 1 : 0;
-    ppi->num_precomputed_end_indices = count + nv1_shift;
-    ppi->precomputed_end_indices = calloc(count + nv1_shift, sizeof(gpu_ulong));
+     * chain to exactly that depth (pos < endpoint+1) -- so the array must be
+     * indexed by chain column.  The single-hash (non-batch) path reverse-
+     * collates its GPU results to achieve this, but the batched path wrote
+     * hash_output[p] straight through, and the batch kernels compute the
+     * endpoint for chain column (positions_per_hash - 2 - p) at output index p
+     * -- i.e. REVERSE column order.  Uncorrected, the false-alarm walk targets
+     * the mirrored depth and every batched (>=2-hash) crack is silently
+     * dropped (a +constant shift cannot fix it -- the index is mirrored, not
+     * merely offset).  Rebuild the array in column order:
+     *   precomputed_end_indices[C] = hash_output[positions_per_hash - 2 - C].
+     * Slots with no source (the last column, and the trailing zeroed position)
+     * hold a UINT64_MAX sentinel that never matches a real endpoint (endpoints
+     * are < the plaintext space). */
+    ppi->num_precomputed_end_indices = positions_per_hash;
+    ppi->precomputed_end_indices = malloc((size_t)positions_per_hash * sizeof(gpu_ulong));
     if (ppi->precomputed_end_indices == NULL) { fprintf(stderr, "Error allocating ppi indices.\n"); exit(-1); }
-
-    unsigned int idx = 0;
-    if (nv1_shift)
-      ppi->precomputed_end_indices[idx++] = UINT64_MAX;
-    for (p = 0; p < positions_per_hash; p++) {
+    for (p = 0; p < positions_per_hash; p++)
+      ppi->precomputed_end_indices[p] = UINT64_MAX;
+    for (p = 0; p + 2 <= positions_per_hash; p++) {   /* p <= positions_per_hash-2 -> col >= 0 */
       if (hash_output[p] != 0)
-        ppi->precomputed_end_indices[idx++] = hash_output[p];
+        ppi->precomputed_end_indices[positions_per_hash - 2 - p] = hash_output[p];
     }
 
     /* Append to linked list. */
