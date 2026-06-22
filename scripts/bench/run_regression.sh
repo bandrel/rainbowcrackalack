@@ -158,7 +158,6 @@ PY
 # all REG_MULTI_COUNT are provably in the table.  Prints "<cracked>/<total>".
 run_one_roundtrip_multi() {
     local name="$1" gen_args="$2" gkh_flags="$3" chain_len="$4"
-    local target_pos=$(( chain_len / 2 ))
     local count="$REG_MULTI_COUNT"
     (( count >= 2 )) || count=2
     local work="$REG_ROOT/rtm/$name"
@@ -176,13 +175,20 @@ run_one_roundtrip_multi() {
     ( cd "$work" && with_gpu_lock "$bin/crackalack_sort" "$table" >/dev/null 2>&1 )
     table="$(ls "$work"/*.rt 2>/dev/null | head -n1)"
 
-    # One provably-in-table hash per distinct chain (0 .. count-1).
+    # One provably-in-table hash per distinct chain (0 .. count-1), each placed
+    # at a DIFFERENT chain position spread across the chain (not all mid-chain):
+    # hash c sits at column (c+1)*chain_len/(count+1).  Varied positions are
+    # essential -- a position-dependent precompute bug (e.g. reversed column
+    # order) can be invisible at the symmetric mid-chain column yet drop every
+    # off-center hash, so a mid-chain-only test gives false confidence.
     local hashfile="$work/hashes.txt"; : > "$hashfile"
-    local c gkh h si
+    local c gkh h si tp
     for (( c = 0; c < count; c++ )); do
+        tp=$(( (c + 1) * chain_len / (count + 1) ))
+        (( tp >= 1 )) || tp=1
         si="$("$bin/get_chain" "$table" "$c" | awk '/Start index:/ {print $3}')"
         [[ -n "$si" ]] || { log "$name(multi): get_chain $c failed"; echo "0/$count"; return; }
-        gkh="$("$bin/gen_known_hash" "$chain_len" "$REDUCTION_OFFSET" "$si" "$target_pos" $gkh_flags)"
+        gkh="$("$bin/gen_known_hash" "$chain_len" "$REDUCTION_OFFSET" "$si" "$tp" $gkh_flags)"
         h="$(awk -F= '/^hash=/{print $2}' <<<"$gkh")"
         [[ -n "$h" ]] || { log "$name(multi): gen_known_hash $c failed"; echo "0/$count"; return; }
         echo "$h" >> "$hashfile"
