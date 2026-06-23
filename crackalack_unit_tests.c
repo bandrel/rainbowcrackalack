@@ -48,6 +48,7 @@
 #include "test_bloom.h"
 #include "test_sort.h"
 #include "test_decompress.h"
+#include "test_precompute_collate.h"
 #include "version.h"
 
 
@@ -160,6 +161,18 @@ int main(int ac, char **av) {
   /* Decompression tests (CPU-only, no kernel needed). */
   printf("Running decompress tests... "); fflush(stdout);
   if (!test_decompress()) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+
+  /* Batched-precompute collation tests (CPU-only, no kernel needed).
+   * Regression guard for the multi-hash lookup off-by-one/reverse-order bug
+   * that silently dropped every batched (>=2-hash) crack. */
+  printf("Running batched-precompute collation tests... "); fflush(stdout);
+  if (!test_precompute_collate()) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
