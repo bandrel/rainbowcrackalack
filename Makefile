@@ -213,6 +213,8 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_chain_markov_ntlm9.o \
 	$(OBJDIR)/test_markov.o \
 	$(OBJDIR)/test_misc.o \
+	$(OBJDIR)/precompute_collate.o \
+	$(OBJDIR)/test_precompute_collate.o \
 	$(OBJDIR)/test_sort.o \
 	$(OBJDIR)/test_decompress.o \
 	$(OBJDIR)/test_shared.o \
@@ -256,6 +258,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/markov.o \
 	$(OBJDIR)/misc.o \
+	$(OBJDIR)/precompute_collate.o \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/rti2_decompress.o \
