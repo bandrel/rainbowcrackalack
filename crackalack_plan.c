@@ -126,7 +126,8 @@ static int cmd_estimate(int argc, char **argv) {
     if (argc < 6) {
         fprintf(stderr,
                 "Usage: crackalack_plan estimate <hash> <charset_or_mask> "
-                "<min_len> <max_len> <chain_len> <num_chains>\n");
+                "<min_len> <max_len> <chain_len> <num_chains> "
+                "[--markov-keyspace N]\n");
         return 1;
     }
 
@@ -156,11 +157,36 @@ static int cmd_estimate(int argc, char **argv) {
         return 1;
     }
 
+    /* Optional flags. */
+    uint64_t markov_keyspace = 0;  /* 0 = use full charset keyspace */
+    for (int i = 6; i < argc; i++) {
+        if (strcmp(argv[i], "--markov-keyspace") == 0 && i + 1 < argc) {
+            char *endp;
+            errno = 0;
+            markov_keyspace = (uint64_t)strtoull(argv[++i], &endp, 10);
+            if (errno != 0 || endp == argv[i] || *endp != '\0' ||
+                markov_keyspace == 0) {
+                fprintf(stderr, "Error: --markov-keyspace must be a positive "
+                        "integer, got '%s'.\n", argv[i]);
+                return 1;
+            }
+        } else {
+            fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+            return 1;
+        }
+    }
+
     uint64_t keyspace = 0;
-    uint64_t dummy_clen;
-    if (charset_keyspace(charset_or_mask, min_len, max_len,
-                         &keyspace, &dummy_clen) != 0)
-        return 1;
+    if (markov_keyspace > 0) {
+        /* Markov-reduced keyspace: cover only the top-N most probable
+         * plaintexts.  N is the keyspace for all coverage math. */
+        keyspace = markov_keyspace;
+    } else {
+        uint64_t dummy_clen;
+        if (charset_keyspace(charset_or_mask, min_len, max_len,
+                             &keyspace, &dummy_clen) != 0)
+            return 1;
+    }
 
     if (keyspace == 0) {
         fprintf(stderr, "Error: computed keyspace is 0.\n");
@@ -172,7 +198,11 @@ static int cmd_estimate(int argc, char **argv) {
     printf("=== Table estimate ===\n");
     printf("Hash:         %s\n", hash_name);
     printf("Mask/Charset: %s\n", charset_or_mask);
-    printf("Keyspace:     %llu plaintexts\n", (unsigned long long)keyspace);
+    if (markov_keyspace > 0)
+        printf("Keyspace:     %llu plaintexts (Markov-reduced top-N)\n",
+               (unsigned long long)keyspace);
+    else
+        printf("Keyspace:     %llu plaintexts\n", (unsigned long long)keyspace);
     printf("Chains:       %llu\n", (unsigned long long)num_chains);
     printf("Chain length: %llu\n", (unsigned long long)chain_len);
     printf("File size:    %.2f MB\n", file_size_mb(num_chains));
@@ -219,7 +249,7 @@ static int cmd_recommend(int argc, char **argv) {
         fprintf(stderr,
                 "Usage: crackalack_plan recommend <hash> <charset_or_mask> "
                 "<min_len> <max_len> <target_pct> [--tables N] "
-                "[--chain-len L]\n");
+                "[--chain-len L] [--markov-keyspace N] [--markov FILE]\n");
         return 1;
     }
 
@@ -235,8 +265,22 @@ static int cmd_recommend(int argc, char **argv) {
     /* Parse optional flags. */
     unsigned int num_tables = 1;
     uint64_t user_chain_len = 0;  /* 0 = auto */
+    uint64_t markov_keyspace = 0; /* 0 = use full charset keyspace */
+    const char *markov_path = NULL;
     for (int i = 5; i < argc; i++) {
-        if (strcmp(argv[i], "--tables") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--markov-keyspace") == 0 && i + 1 < argc) {
+            char *endp;
+            errno = 0;
+            markov_keyspace = (uint64_t)strtoull(argv[++i], &endp, 10);
+            if (errno != 0 || endp == argv[i] || *endp != '\0' ||
+                markov_keyspace == 0) {
+                fprintf(stderr, "Error: --markov-keyspace must be a positive "
+                        "integer, got '%s'\n", argv[i]);
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--markov") == 0 && i + 1 < argc) {
+            markov_path = argv[++i];
+        } else if (strcmp(argv[i], "--tables") == 0 && i + 1 < argc) {
             char *endp;
             errno = 0;
             unsigned long val = strtoul(argv[++i], &endp, 10);
@@ -290,11 +334,23 @@ static int cmd_recommend(int argc, char **argv) {
         return 1;
     }
 
-    uint64_t keyspace = 0;
-    uint64_t dummy_clen;
-    if (charset_keyspace(charset_or_mask, min_len, max_len,
-                         &keyspace, &dummy_clen) != 0)
+    if (markov_keyspace == 0 && markov_path != NULL) {
+        fprintf(stderr, "Error: --markov requires --markov-keyspace to also "
+                "be specified.\n");
         return 1;
+    }
+
+    uint64_t keyspace = 0;
+    if (markov_keyspace > 0) {
+        /* Markov-reduced keyspace: cover only the top-N most probable
+         * plaintexts.  N is the keyspace for all coverage math. */
+        keyspace = markov_keyspace;
+    } else {
+        uint64_t dummy_clen;
+        if (charset_keyspace(charset_or_mask, min_len, max_len,
+                             &keyspace, &dummy_clen) != 0)
+            return 1;
+    }
 
     if (keyspace == 0) {
         fprintf(stderr, "Error: computed keyspace is 0.\n");
@@ -304,7 +360,11 @@ static int cmd_recommend(int argc, char **argv) {
     printf("=== Parameter recommendation ===\n");
     printf("Hash:         %s\n", hash_name);
     printf("Mask/Charset: %s\n", charset_or_mask);
-    printf("Keyspace:     %llu plaintexts\n", (unsigned long long)keyspace);
+    if (markov_keyspace > 0)
+        printf("Keyspace:     %llu plaintexts (Markov-reduced top-N)\n",
+               (unsigned long long)keyspace);
+    else
+        printf("Keyspace:     %llu plaintexts\n", (unsigned long long)keyspace);
     printf("Target:       %s combined coverage", target_str);
     if (num_tables > 1)
         printf(" across %u tables", num_tables);
@@ -365,11 +425,20 @@ static int cmd_recommend(int argc, char **argv) {
     /* Print generation commands. */
     printf("\nGeneration commands:\n");
     for (unsigned int t = 0; t < num_tables; t++) {
-        printf("  ./crackalack_gen %s %s %u %u %u %llu %llu 0\n",
+        printf("  ./crackalack_gen %s %s %u %u %u %llu %llu 0",
                hash_name, charset_or_mask, min_len, max_len,
                t, (unsigned long long)chain_len,
                (unsigned long long)num_chains);
+        if (markov_keyspace > 0) {
+            printf(" --markov %s --markov-keyspace %llu",
+                   markov_path ? markov_path : "<model.markov>",
+                   (unsigned long long)markov_keyspace);
+        }
+        printf("\n");
     }
+    if (markov_keyspace > 0 && markov_path == NULL)
+        printf("\nNote: pass --markov <model.markov> to embed your trained "
+               "model path in the commands above.\n");
     return 0;
 }
 
@@ -450,13 +519,18 @@ static void print_usage(void) {
             "\n"
             "Subcommands:\n"
             "  estimate <hash> <charset_or_mask> <min_len> <max_len> "
-            "<chain_len> <num_chains>\n"
+            "<chain_len> <num_chains> [--markov-keyspace N]\n"
             "  recommend <hash> <charset_or_mask> <min_len> <max_len> "
-            "<target_pct> [--tables N] [--chain-len L]\n"
+            "<target_pct> [--tables N] [--chain-len L] "
+            "[--markov-keyspace N] [--markov FILE]\n"
             "  train <wordlist> [charset] [--max-positions N]\n"
             "\n"
             "The train command creates position-aware Markov models (v1).\n"
-            "Use --max-positions to control the number of position tables.\n");
+            "Use --max-positions to control the number of position tables.\n"
+            "\n"
+            "Pass --markov-keyspace N to estimate/recommend coverage against a\n"
+            "Markov-reduced keyspace (the top-N most probable plaintexts)\n"
+            "instead of the full charset keyspace.\n");
 }
 
 int main(int argc, char **argv) {
