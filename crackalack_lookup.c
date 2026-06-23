@@ -54,6 +54,7 @@
 #include "bloom.h"
 #include "misc.h"
 #include "fa_batch.h"
+#include "precompute_collate.h"
 #include "rtc_decompress.h"
 #include "rti2_decompress.h"
 #include "ppi.h"
@@ -2115,12 +2116,9 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     ppi->num_precomputed_end_indices = positions_per_hash;
     ppi->precomputed_end_indices = malloc((size_t)positions_per_hash * sizeof(gpu_ulong));
     if (ppi->precomputed_end_indices == NULL) { fprintf(stderr, "Error allocating ppi indices.\n"); exit(-1); }
-    for (p = 0; p < positions_per_hash; p++)
-      ppi->precomputed_end_indices[p] = UINT64_MAX;
-    for (p = 0; p + 2 <= positions_per_hash; p++) {   /* p <= positions_per_hash-2 -> col >= 0 */
-      if (hash_output[p] != 0)
-        ppi->precomputed_end_indices[positions_per_hash - 2 - p] = hash_output[p];
-    }
+    collate_batched_precompute_endpoints((const uint64_t *)hash_output,
+                                         positions_per_hash,
+                                         (uint64_t *)ppi->precomputed_end_indices);
 
     /* Append to linked list. */
     if (*ppi_head == NULL) {
