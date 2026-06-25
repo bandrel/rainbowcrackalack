@@ -204,6 +204,7 @@ Then starting the build with:
  - Added position-aware Markov models: position-specific bigram tables capture real password patterns (e.g., capitals at start, numbers at end). Train with `--max-positions N` to control position table count (default: 10).
  - Fixed NetNTLMv1-7 per-hash precompute fallback ignoring the table's chain length (it assumed the standard length); now honors the host-provided value across the CUDA, OpenCL, and Metal backends.
  - Fixed OpenCL NetNTLMv1-7 lookups loading the wrong false-alarm kernel file.
+ - Fixed CUDA build on toolkits >= 13.0: call `cuCtxCreate_v2` explicitly, since CUDA 13+ headers remap the bare `cuCtxCreate` to a 4-arg `cuCtxCreate_v4`. When the installed NVRTC is newer than the GPU driver supports (PTX "unsupported toolchain" at runtime), build against a driver-compatible toolkit, e.g. `make linux CUDA_PATH=/usr/local/cuda-12.8`.
 
 ### v1.3 (February 26, 2021)
  - Improved speed of NTLM9 precomputation by 9.5x and false alarm checks by 4.5x!
