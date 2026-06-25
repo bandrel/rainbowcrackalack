@@ -450,7 +450,11 @@ static void cuda_remember_context(CUcontext c) {
 
 gpu_context gpu_create_context(gpu_device device) {
   CUcontext ctx;
-  CUresult res = cuCtxCreate(&ctx, 0, device);
+  /* Call the stable 3-arg context-create entry point explicitly. CUDA 13+
+     headers remap the bare cuCtxCreate to cuCtxCreate_v4 (4-arg), which breaks
+     the build on newer toolkits (e.g. gpuhost2's CUDA 13.2); cuCtxCreate_v2 keeps
+     the (pctx, flags, dev) signature on every toolkit since CUDA 4.0. */
+  CUresult res = cuCtxCreate_v2(&ctx, 0, device);
   if (res != CUDA_SUCCESS) {
     const char *err = NULL;
     cuGetErrorString(res, &err);
