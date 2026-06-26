@@ -193,6 +193,7 @@ int gpu_set_kernel_arg(gpu_kernel kernel, unsigned int index, size_t size, const
 int gpu_enqueue_kernel(gpu_queue queue, gpu_kernel kernel, unsigned int work_dim, const size_t *global_work_size);
 int gpu_flush(gpu_queue queue);
 int gpu_finish(gpu_queue queue);
+int gpu_get_free_memory(gpu_device device, uint64_t *free_bytes, uint64_t *total_bytes);
 int gpu_get_kernel_work_group_info(gpu_kernel kernel, gpu_device device, unsigned int param, size_t param_size, void *param_value);
 void gpu_release_buffer(gpu_buffer buffer);
 void gpu_release_queue(gpu_queue queue);
@@ -212,6 +213,7 @@ int gpu_set_kernel_arg(gpu_kernel kernel, unsigned int arg_index, size_t arg_siz
 int gpu_enqueue_kernel(gpu_queue queue, gpu_kernel kernel, unsigned int work_dim, size_t *global_work_size);
 int gpu_flush(gpu_queue queue);
 int gpu_finish(gpu_queue queue);
+int gpu_get_free_memory(gpu_device device, uint64_t *free_bytes, uint64_t *total_bytes);
 int gpu_get_kernel_work_group_info(gpu_kernel kernel, gpu_device device, unsigned int param, size_t param_size, void *param_value);
 void gpu_release_buffer(gpu_buffer buffer);
 void gpu_release_queue(gpu_queue queue);
@@ -225,6 +227,7 @@ void *rc_dlopen(char *library_name);
 int rc_dlclose(void *module);
 void *rc_dlsym(void *module, char *function_name);
 char *rc_dlerror(void);
+int gpu_get_free_memory(gpu_device device, uint64_t *free_bytes, uint64_t *total_bytes);
 
 extern cl_int (*rc_clBuildProgram)(cl_program, cl_uint, const cl_device_id *, const char *, void (CL_CALLBACK *)(cl_program, void *), void *);
 extern cl_mem (*rc_clCreateBuffer)(cl_context, cl_mem_flags, size_t, void *, cl_int *);
@@ -252,6 +255,12 @@ extern cl_int (*rc_clReleaseProgram)(cl_program);
 extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 
 #endif /* USE_METAL */
+
+/* Backend-neutral: blocks until at least needed_bytes (+ a safety margin) of GPU
+ * memory is free, polling periodically.  No-op on backends where
+ * gpu_get_free_memory reports "unsupported".  Logs once on entry and once on
+ * resume.  Used to coexist with other GPU processes (e.g. hashcat). */
+void gpu_wait_for_free_vram(gpu_device device, uint64_t needed_bytes);
 
 
 /* --- Per-thread context lifecycle --- */
