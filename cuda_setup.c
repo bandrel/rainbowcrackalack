@@ -609,6 +609,20 @@ int gpu_finish(gpu_queue q) {
   return 0;
 }
 
+/* Reports free/total VRAM in bytes via the current CUDA context.  The device
+ * parameter is unused (cuMemGetInfo operates on the current context).  Returns
+ * 0 on success, non-zero on failure (caller then skips VRAM waiting). */
+int gpu_get_free_memory(gpu_device device, uint64_t *free_bytes, uint64_t *total_bytes) {
+  (void)device;
+  size_t f = 0, t = 0;
+  CUresult res = cuMemGetInfo(&f, &t);
+  if (res != CUDA_SUCCESS)
+    return -1;
+  if (free_bytes)  *free_bytes  = (uint64_t)f;
+  if (total_bytes) *total_bytes = (uint64_t)t;
+  return 0;
+}
+
 int gpu_get_kernel_work_group_info(gpu_kernel k, gpu_device d, unsigned int param, size_t param_size, void *value) {
   (void)d;
   int v = 0;

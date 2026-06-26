@@ -672,6 +672,14 @@ int gpu_finish(gpu_queue queue) {
 }
 
 
+/* VRAM-budget waiting is a CUDA-only feature; report "unsupported" so callers
+ * skip waiting on Metal. */
+int gpu_get_free_memory(gpu_device device, uint64_t *free_bytes, uint64_t *total_bytes) {
+  (void)device; (void)free_bytes; (void)total_bytes;
+  return -1;
+}
+
+
 int gpu_get_kernel_work_group_info(gpu_kernel kernel, gpu_device device, unsigned int param, size_t param_size, void *param_value) {
   metal_kernel *mk = (metal_kernel *)kernel;
   (void)device;
