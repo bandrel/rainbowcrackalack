@@ -1,4 +1,8 @@
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "gpu_backend.h"
 
@@ -256,4 +260,39 @@ unsigned int get_optimal_gws(gpu_device device, const char *kernel_name) {
 #endif
 
   return 0;
+}
+
+/* Safety headroom required on top of the requested allocation. */
+#define GPU_VRAM_SAFETY_MARGIN ((uint64_t)256 * 1024 * 1024)
+/* How long to sleep between free-VRAM polls, in microseconds (2 s). */
+#define GPU_VRAM_POLL_USEC (2 * 1000 * 1000)
+
+void gpu_wait_for_free_vram(gpu_device device, uint64_t needed_bytes) {
+  uint64_t required = needed_bytes + GPU_VRAM_SAFETY_MARGIN;
+  int waited = 0;
+
+  for (;;) {
+    uint64_t free_bytes = 0, total_bytes = 0;
+
+    /* If the backend can't report VRAM, don't wait at all. */
+    if (gpu_get_free_memory(device, &free_bytes, &total_bytes) != 0)
+      return;
+
+    if (free_bytes >= required) {
+      if (waited)
+        printf("GPU memory available again (%"PRIu64" MB free); resuming.\n",
+               free_bytes / (1024 * 1024));
+      return;
+    }
+
+    if (!waited) {
+      printf("Waiting for GPU memory: need %"PRIu64" MB, %"PRIu64" MB free. "
+             "(Is another GPU process running?)\n",
+             required / (1024 * 1024), free_bytes / (1024 * 1024));
+      fflush(stdout);
+      waited = 1;
+    }
+
+    usleep(GPU_VRAM_POLL_USEC);
+  }
 }

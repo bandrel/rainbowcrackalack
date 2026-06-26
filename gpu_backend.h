@@ -256,6 +256,12 @@ extern cl_int (*rc_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 
 #endif /* USE_METAL */
 
+/* Backend-neutral: blocks until at least needed_bytes (+ a safety margin) of GPU
+ * memory is free, polling periodically.  No-op on backends where
+ * gpu_get_free_memory reports "unsupported".  Logs once on entry and once on
+ * resume.  Used to coexist with other GPU processes (e.g. hashcat). */
+void gpu_wait_for_free_vram(gpu_device device, uint64_t needed_bytes);
+
 
 /* --- Per-thread context lifecycle --- */
 /* CUDA requires that each worker thread attach/detach from the context.
