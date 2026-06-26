@@ -20,7 +20,10 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
 
 #include "gpu_backend.h"
 #include "misc.h"
@@ -205,6 +208,61 @@ static char *read_file_to_string(const char *path) {
 }
 
 
+/* Directory containing the running executable (the repo root, where the Metal/
+ * kernel dir and shared.h live).  Lets kernel/include lookups succeed no matter
+ * what the current working directory is.  macOS analogue of cuda_setup.c's
+ * cuda_exe_dir() (which uses /proc/self/exe).  Returns 1 on success, 0 if
+ * unavailable (caller then falls back to CWD-relative lookup only). */
+static int metal_exe_dir(char *buf, size_t buf_size) {
+  char raw[PATH_MAX];
+  uint32_t rawsize = sizeof(raw);
+  if (_NSGetExecutablePath(raw, &rawsize) != 0)
+    return 0;   /* path didn't fit (rawsize now holds the required size) */
+  char resolved[PATH_MAX];
+  if (realpath(raw, resolved) == NULL) {
+    strncpy(resolved, raw, sizeof(resolved) - 1);
+    resolved[sizeof(resolved) - 1] = '\0';
+  }
+  char *slash = strrchr(resolved, '/');
+  if (!slash)
+    return 0;
+  *slash = '\0';   /* strip the executable basename, leaving its directory */
+  if (strlen(resolved) >= buf_size)
+    return 0;
+  strcpy(buf, resolved);
+  return 1;
+}
+
+
+/* Read a kernel/include file, trying the CWD-relative path first (fast path
+ * when run from the repo root), then the same path anchored at the executable's
+ * directory, so binaries work from any working dir (e.g. a table-output dir).
+ * `subdir` is "Metal" or NULL/"" for the project root.  malloc'd, caller frees. */
+static char *read_kernel_file_anydir(const char *subdir, const char *name) {
+  char path[1024];
+  if (subdir && *subdir)
+    filepath_join(path, sizeof(path), subdir, name);
+  else {
+    strncpy(path, name, sizeof(path) - 1);
+    path[sizeof(path) - 1] = '\0';
+  }
+  char *src = read_file_to_string(path);
+  if (src != NULL)
+    return src;
+
+  char exedir[PATH_MAX];
+  if (metal_exe_dir(exedir, sizeof(exedir))) {
+    char p[1024 + PATH_MAX];
+    if (subdir && *subdir)
+      snprintf(p, sizeof(p), "%s/%s/%s", exedir, subdir, name);
+    else
+      snprintf(p, sizeof(p), "%s/%s", exedir, name);
+    src = read_file_to_string(p);
+  }
+  return src;
+}
+
+
 /* Resolve #include "..." directives by inlining file contents.
  * Metal's runtime compiler does not support include paths.
  * Search directories: "Metal/" and "." (project root for shared.h).
@@ -238,13 +296,11 @@ static NSString *resolve_includes(const char *source, NSMutableSet *included) {
 
         [included addObject:key];
 
-        /* Try Metal/ first, then project root. */
-        char inc_path[512] = {0};
-        char *inc_source = NULL;
-        filepath_join(inc_path, sizeof(inc_path), "Metal", filename);
-        inc_source = read_file_to_string(inc_path);
+        /* Try Metal/ first, then project root -- each relative to CWD and then
+         * to the executable's directory (so includes resolve from any CWD). */
+        char *inc_source = read_kernel_file_anydir("Metal", filename);
         if (inc_source == NULL) {
-          inc_source = read_file_to_string(filename);
+          inc_source = read_kernel_file_anydir(NULL, filename);
         }
 
         if (inc_source != NULL) {
@@ -311,11 +367,12 @@ void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *de
       strcpy(dot, ".metal");
     }
 
-    filepath_join(path, sizeof(path), "Metal", metal_filename);
-
-    char *raw_source = read_file_to_string(path);
+    /* Resolve the kernel file relative to CWD first, then to the executable's
+     * directory, so lookup/generation work from any working dir. */
+    char *raw_source = read_kernel_file_anydir("Metal", metal_filename);
     if (raw_source == NULL) {
-      fprintf(stderr, "Failed to open Metal kernel: %s\n", path);
+      filepath_join(path, sizeof(path), "Metal", metal_filename);
+      fprintf(stderr, "Failed to open Metal kernel: %s (tried CWD and executable dir)\n", path);
       exit(-1);
     }
 
