@@ -154,10 +154,23 @@ run_role() {  # role_name
         with_gpu_lock "${cmd[@]}" ) >"$logf" 2>&1 || rc=$?
     local elapsed=$(( SECONDS - start ))
 
-    # Did it crack? Prefer the potfile the fork just wrote; fall back to the log.
-    local cracked=NO plaintext="" potline=""
-    potline="$(grep -i "^$HASH:" "$dir/rainbowcrackalack_jtr.pot" 2>/dev/null | head -1 || true)"
-    if [[ -n "$potline" ]]; then cracked=YES; plaintext="${potline#*:}"; fi
+    # Did it crack? Detect from the LOG, not the potfile -- the two forks write
+    # INCOMPATIBLE potfiles: upstream blurbdust writes "<hash[:8]>:<raw binary
+    # plaintext>", this fork writes "<full hash hex>:<plaintext hex>". The console
+    # output is parseable for both:
+    #   blurbdust:  "HASH CRACKED => <hash>:<challenge>:<plaintext>"
+    #   this fork:  a green line "<hash>  <plaintext>"
+    # Both also print "Cracked N of M hashes."
+    local cracked=NO plaintext="" clean
+    clean="$(sed -E $'s/\x1b\\[[0-9;]*m//g' "$logf" 2>/dev/null)"   # strip ANSI colour codes
+    if printf '%s\n' "$clean" | grep -qiE "HASH CRACKED|Cracked [1-9][0-9]* of|[1-9][0-9]* were cracked"; then
+        cracked=YES
+    fi
+    plaintext="$(printf '%s\n' "$clean" | grep -aiE "HASH CRACKED.*$HASH" | sed -E 's/.*:([0-9a-fA-F]+)[[:space:]]*$/\1/' | tail -1)"
+    if [[ -z "$plaintext" ]]; then
+        plaintext="$(printf '%s\n' "$clean" | grep -aiE "^[[:space:]]*$HASH[[:space:]]+[0-9a-fA-F]+[[:space:]]*$" | awk '{print $NF}' | tail -1)"
+    fi
+    [[ -n "$plaintext" ]] && cracked=YES
     cp -f "$dir/rainbowcrackalack_jtr.pot" "$RESULTS/pot_$name" 2>/dev/null || true
     restore_pots; trap - RETURN
 
