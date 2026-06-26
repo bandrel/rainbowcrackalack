@@ -490,14 +490,24 @@ gpu_buffer gpu_create_buffer(gpu_context context, int flags, size_t size) {
   (void)context;  /* not needed; context is implicit on current thread */
   (void)flags;    /* CUDA doesn't distinguish RO/WO/RW at allocation time */
   CUdeviceptr dptr = 0;
-  CUresult res = cuMemAlloc(&dptr, size);
-  if (res != CUDA_SUCCESS) {
+
+  for (;;) {
+    CUresult res = cuMemAlloc(&dptr, size);
+    if (res == CUDA_SUCCESS)
+      return dptr;
+
+    /* If we ran out of VRAM (likely a co-running GPU process such as hashcat),
+     * wait for memory to free up and retry rather than failing the run. */
+    if (res == CUDA_ERROR_OUT_OF_MEMORY) {
+      gpu_wait_for_free_vram(0, (uint64_t)size);
+      continue;
+    }
+
     const char *err = NULL;
     cuGetErrorString(res, &err);
     fprintf(stderr, "cuMemAlloc(%zu) failed: %s\n", size, err ? err : "(unknown)");
     return 0;
   }
-  return dptr;
 }
 
 gpu_buffer gpu_create_and_fill_buffer(gpu_context context, int flags, size_t size, const void *data) {
