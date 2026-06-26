@@ -600,7 +600,13 @@ int gpu_flush(gpu_queue q) {
 
 int gpu_finish(gpu_queue q) {
   CUresult res = cuStreamSynchronize(q);
-  return (res == CUDA_SUCCESS) ? 0 : -1;
+  if (res != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(res, &err);
+    fprintf(stderr, "cuStreamSynchronize failed: %s (%d)\n", err ? err : "(unknown)", res);
+    return -1;
+  }
+  return 0;
 }
 
 int gpu_get_kernel_work_group_info(gpu_kernel k, gpu_device d, unsigned int param, size_t param_size, void *value) {
