@@ -283,6 +283,7 @@ $(OUTDIR)/$(SORT_PROG): \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/gws.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/parallel_sort.o \
 	$(OBJDIR)/sort_utils.o \
