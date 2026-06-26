@@ -1243,6 +1243,13 @@ void *host_thread_false_alarm(void *ptr) {
   }
   memset(output_block, 0xFF, output_block_len * sizeof(gpu_ulong));
 
+  /* Coexist with other GPU processes: wait for enough VRAM for the dominant
+   * device buffers (start indices + outputs + hash base indices) before
+   * allocating them. */
+  gpu_wait_for_free_vram(gpu->device,
+    ((uint64_t)num_start_indices + (uint64_t)output_block_len +
+     (uint64_t)num_hash_base_indices) * sizeof(gpu_ulong));
+
   CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_len);
   CLCREATEARG(2, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
@@ -1531,6 +1538,10 @@ void *host_thread_precompute(void *ptr) {
 
 
   gpu_ulong chain_len_ulong = args->chain_len;
+
+  /* Coexist with other GPU processes: wait for enough VRAM for the precompute
+   * output buffer before allocating it. */
+  gpu_wait_for_free_vram(gpu->device, (uint64_t)output_block_len * sizeof(gpu_ulong));
 
   CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(1, hash_buffer, CL_RO, hash_binary, hash_binary_len);
