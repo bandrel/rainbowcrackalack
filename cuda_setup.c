@@ -490,14 +490,24 @@ gpu_buffer gpu_create_buffer(gpu_context context, int flags, size_t size) {
   (void)context;  /* not needed; context is implicit on current thread */
   (void)flags;    /* CUDA doesn't distinguish RO/WO/RW at allocation time */
   CUdeviceptr dptr = 0;
-  CUresult res = cuMemAlloc(&dptr, size);
-  if (res != CUDA_SUCCESS) {
+
+  for (;;) {
+    CUresult res = cuMemAlloc(&dptr, size);
+    if (res == CUDA_SUCCESS)
+      return dptr;
+
+    /* If we ran out of VRAM (likely a co-running GPU process such as hashcat),
+     * wait for memory to free up and retry rather than failing the run. */
+    if (res == CUDA_ERROR_OUT_OF_MEMORY) {
+      gpu_wait_for_free_vram(0, (uint64_t)size);
+      continue;
+    }
+
     const char *err = NULL;
     cuGetErrorString(res, &err);
     fprintf(stderr, "cuMemAlloc(%zu) failed: %s\n", size, err ? err : "(unknown)");
     return 0;
   }
-  return dptr;
 }
 
 gpu_buffer gpu_create_and_fill_buffer(gpu_context context, int flags, size_t size, const void *data) {
@@ -600,7 +610,27 @@ int gpu_flush(gpu_queue q) {
 
 int gpu_finish(gpu_queue q) {
   CUresult res = cuStreamSynchronize(q);
-  return (res == CUDA_SUCCESS) ? 0 : -1;
+  if (res != CUDA_SUCCESS) {
+    const char *err = NULL;
+    cuGetErrorString(res, &err);
+    fprintf(stderr, "cuStreamSynchronize failed: %s (%d)\n", err ? err : "(unknown)", res);
+    return -1;
+  }
+  return 0;
+}
+
+/* Reports free/total VRAM in bytes via the current CUDA context.  The device
+ * parameter is unused (cuMemGetInfo operates on the current context).  Returns
+ * 0 on success, non-zero on failure (caller then skips VRAM waiting). */
+int gpu_get_free_memory(gpu_device device, uint64_t *free_bytes, uint64_t *total_bytes) {
+  (void)device;
+  size_t f = 0, t = 0;
+  CUresult res = cuMemGetInfo(&f, &t);
+  if (res != CUDA_SUCCESS)
+    return -1;
+  if (free_bytes)  *free_bytes  = (uint64_t)f;
+  if (total_bytes) *total_bytes = (uint64_t)t;
+  return 0;
 }
 
 int gpu_get_kernel_work_group_info(gpu_kernel k, gpu_device d, unsigned int param, size_t param_size, void *value) {

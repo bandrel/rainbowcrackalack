@@ -440,6 +440,14 @@ void gpu_release_device(gpu_device device) {
 }
 
 
+/* VRAM-budget waiting is a CUDA-only feature; report "unsupported" so callers
+ * skip waiting on OpenCL. */
+int gpu_get_free_memory(gpu_device device, uint64_t *free_bytes, uint64_t *total_bytes) {
+  (void)device; (void)free_bytes; (void)total_bytes;
+  return -1;
+}
+
+
 /* Prints debugging information about platforms. */
 void print_platform_info(cl_platform_id *platforms, cl_uint num_platforms) {
   unsigned int i = 0;
