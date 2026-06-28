@@ -187,6 +187,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/crackalack_unit_tests.o \
 	$(OBJDIR)/fa_batch.o \
+	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
