@@ -595,6 +595,16 @@ void harvest_false_alarm_results(false_alarm_state *state) {
   for (i = 0; i < state->total_devices; i++) {
     unsigned int r;
     for (r = 0; r < args[i].num_results; r++) {
+      /* Defense-in-depth: ppi_refs holds exactly num_potential_start_indices
+       * entries.  If a device ever reports more results than that, indexing
+       * ppi_refs[r] below would read/write out of bounds and corrupt the heap.
+       * Bail loudly instead -- a wrong-but-visible result beats silent
+       * corruption that surfaces as an unrelated crash later. */
+      if (r >= state->num_potential_start_indices) {
+        fprintf(stderr, "BUG: false-alarm result index %u from device %u exceeds candidate count %u; stopping harvest for this device to avoid heap corruption.\n",
+                r, i, state->num_potential_start_indices);
+        break;
+      }
       if (args[i].results[r] != UINT64_MAX) {
       	char plaintext[MAX_PLAINTEXT_LEN] = {0};
       	unsigned int plaintext_len = 0;
