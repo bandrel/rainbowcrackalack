@@ -108,6 +108,37 @@ size_t rt_log(rc_file f, const char *fmt, ...);
 int str_ends_with(const char *str, const char *suffix);
 void str_to_lowercase(char *s);
 
+/* Hash file format constants used by parse_hash_file_data(). */
+#define HASH_FILE_FORMAT_PLAIN  1
+#define HASH_FILE_FORMAT_PWDUMP 2
+
+/* Parse hash-file CONTENTS (NUL-terminated, mutated by tokenization) into
+ * newly-allocated hashes[]/usernames[] arrays.
+ *
+ * file_data       - NUL-terminated buffer of the hash file content.  Will be
+ *                   mutated in place by strtok (caller must not use it after).
+ *                   Embedded NULs are not expected in a hash file.
+ * pot_contents    - NUL-terminated string of already-cracked entries.  Any
+ *                   line/hash found via strstr is skipped and counted as
+ *                   previously-cracked.  If NULL, treated as empty (no matches).
+ * out_hashes      - On success, set to calloc'd array of strdup'd hashes.
+ * out_usernames   - On success, set to calloc'd array of strdup'd usernames
+ *                   (entries may be NULL for PLAIN format).
+ * out_num_hashes  - Set to the count of hashes stored.
+ * out_num_previously_cracked - Set to the count of skipped already-cracked hashes.
+ * out_file_format - Set to HASH_FILE_FORMAT_PLAIN or HASH_FILE_FORMAT_PWDUMP.
+ *
+ * Returns 0 on success, non-zero on parse/format/alloc error.
+ * On error, out_hashes and out_usernames may be partially allocated.
+ * The function does NOT call exit(). */
+int parse_hash_file_data(char *file_data,
+                         const char *pot_contents,
+                         char ***out_hashes,
+                         char ***out_usernames,
+                         unsigned int *out_num_hashes,
+                         unsigned int *out_num_previously_cracked,
+                         int *out_file_format);
+
 #ifdef _WIN32
 void windows_print_error(char *func_name);
 #endif

@@ -152,10 +152,6 @@
 #define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.cl"
 #endif
 
-#define HASH_FILE_FORMAT_PLAIN 1
-#define HASH_FILE_FORMAT_PWDUMP 2
-
-
 /* precomputed_and_potential_indices definition lives in ppi.h. */
 
 
@@ -3777,8 +3773,9 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
 
 
 int main(int ac, char **av) {
-  char *rt_dir = NULL, *single_hash = NULL, *filename = NULL, *file_data = NULL, **usernames = NULL, **hashes = NULL, *line = NULL, *pot_file_data = NULL;
-  unsigned int i = 0, j = 0, max_num_hashes = 0, num_colons = 0, file_format = 0, err = 0;
+  char *rt_dir = NULL, *single_hash = NULL, *filename = NULL, *file_data = NULL, **usernames = NULL, **hashes = NULL, *pot_file_data = NULL;
+  unsigned int i = 0, j = 0;
+  int file_format = 0;
   FILE *f = NULL;
   struct stat st = {0};
   thread_args *args = NULL;
@@ -3957,136 +3954,9 @@ int main(int ac, char **av) {
 
     FCLOSE(f);
 
-    /* Count the number of newlines in the file so we know how large to make the
-     * hash array. */
-    for (i = 0; i < st.st_size; i++) {
-      if (file_data[i] == '\n')
-	max_num_hashes++;
-    }
-    max_num_hashes++;  /* In case the last line doesn't end with an LF. */
-
-    num_colons = 0;
-    for (i = 0; i < st.st_size; i++) {
-      if (file_data[i] == ':')
-        num_colons++;
-      else if (file_data[i] == '\n')
-        break;
-    }
-
-    if (num_colons == 0) {
-      file_format = HASH_FILE_FORMAT_PLAIN;
-      printf("Hash file contains plain hashes.\n");
-    } else if (num_colons == 6) {
-      file_format = HASH_FILE_FORMAT_PWDUMP;
-      printf("Hash file is pwdump format.\n");
-    } else {
-      fprintf(stderr, "Error: hash file format is not recognized (number of colons in first line is %u, instead of 0 or 6).\n", num_colons);
+    if (parse_hash_file_data(file_data, pot_file_data, &hashes, &usernames,
+                             &num_hashes, &previously_cracked, &file_format) != 0)
       goto err;
-    }
-
-    usernames = calloc(max_num_hashes, sizeof(char *));
-    hashes = calloc(max_num_hashes, sizeof(char *));
-    if ((usernames == NULL) || (hashes == NULL)) {
-      fprintf(stderr, "Error while allocating buffer for hashes.\n");
-      goto err;
-    }
-
-    /* Tokenize the hash file by line.  Store each hash in the array. */
-    num_hashes = 0;
-    line = strtok(file_data, "\n");
-    while (line && (num_hashes < max_num_hashes)) {
-
-      /* Skip empty lines.  */
-      if (strlen(line) > 0) {
-
-	/* Skip previously-cracked hashes. */
-	if (strstr(pot_file_data, line) != NULL)
-	  previously_cracked++;
-	else {
-          /* If we're dealing with CRLF line endings, cut off the trailing CR. */
-          if (line[strlen(line) - 1] == '\r')
-            line[strlen(line) - 1] = '\0';
-
-          if (file_format == HASH_FILE_FORMAT_PLAIN) {
-            /* Ensure that hash is lowercase. */
-            str_to_lowercase(line);
-
-            hashes[num_hashes] = strdup(line);
-            if (hashes[num_hashes] == NULL) {
-              fprintf(stderr, "Error while allocating buffer for hashes.\n");
-              goto err;
-            }
-            num_hashes++;
-          } else {  /* HASH_FILE_FORMAT_PWDUMP */
-            char *line_copy = strdup(line);
-            char *hash = NULL;
-            unsigned int line_copy_len = strlen(line_copy);
-            unsigned int hash_start = 0, hash_end = 0;
-
-
-            /* Get the username from position zero until the first colon. */
-            for (i = 0; i < line_copy_len; i++) {
-              if (line_copy[i] == ':') {
-                line_copy[i] = '\0';
-                usernames[num_hashes] = strdup(line_copy);
-                if (usernames[num_hashes] == NULL) {
-                  fprintf(stderr, "Error while allocating buffer for usernames.\n");
-                  goto err;
-                }
-                break;
-              }
-            }
-
-            /* Find the start and end positions of the hash, based on the number of colons. */
-            num_colons = 1;
-            hash_start = 0;
-            hash_end = 0;
-            for (i = i + 1; i < line_copy_len; i++) {
-              if (line_copy[i] == ':')
-                num_colons++;
-
-              if ((num_colons == 3) && (hash_start == 0))
-                hash_start = i + 1;
-              else if (num_colons == 4) {
-                hash_end = i;
-                break;
-              }
-            }
-
-            if ((hash_start == 0) || (hash_end == 0)) {
-              fprintf(stderr, "Error: failed to extract hash from line: [%s]\n", line);
-              goto err;
-            }
-
-            *(line_copy + hash_end) = '\0';
-            hash = line_copy + hash_start;
-            /*printf("Found hash at %u:%u: [%s]\n", hash_start, hash_end, hash);*/
-
-            /* Make sure the hash is 32 bytes. */
-            if (strlen(hash) != 32) {
-              fprintf(stderr, "Error: hash is length %u instead of 32: [%s]\n", (unsigned int)strlen(hash), hash);
-              goto err;
-            }
-
-            str_to_lowercase(hash);  /* Ensure hash is lowercase. */
-
-            if (strstr(pot_file_data, hash) != NULL) {
-              previously_cracked++;
-            } else {
-              hashes[num_hashes] = strdup(hash);
-              if (hashes[num_hashes] == NULL) {
-                fprintf(stderr, "Error while allocating buffer for hashes.\n");
-                goto err;
-              }
-              num_hashes++;
-            }
-            FREE(line_copy);
-
-          }
-        }
-	line = strtok(NULL, "\n");
-      }
-    }
 
     FREE(file_data);
 
