@@ -205,6 +205,9 @@ Then starting the build with:
  - Fixed NetNTLMv1-7 per-hash precompute fallback ignoring the table's chain length (it assumed the standard length); now honors the host-provided value across the CUDA, OpenCL, and Metal backends.
  - Fixed OpenCL NetNTLMv1-7 lookups loading the wrong false-alarm kernel file.
  - Fixed CUDA build on toolkits >= 13.0: call `cuCtxCreate_v2` explicitly, since CUDA 13+ headers remap the bare `cuCtxCreate` to a 4-arg `cuCtxCreate_v4`. When the installed NVRTC is newer than the GPU driver supports (PTX "unsupported toolchain" at runtime), build against a driver-compatible toolkit, e.g. `make linux CUDA_PATH=/usr/local/cuda-12.8`.
+ - Fixed a heap-buffer-overflow in lookup: the JTR pot file was read into a buffer with no room for a NUL terminator, then scanned as a C string, reading past the allocation. Besides the over-read, it could spuriously flag an uncracked hash as already-cracked (silent false negative). This is the likely cause of intermittent "double free or corruption" crashes during NetNTLMv1 lookups.
+ - Fixed an out-of-bounds write in the multi-GPU false-alarm result harvest: results were indexed by a running counter across devices instead of by candidate position, overrunning the candidate array once more than one GPU was used. Added a defensive bounds guard so any future mismatch fails loudly instead of corrupting the heap.
+ - Added an AddressSanitizer smoke test (`scripts/bench/asan_smoke_test.sh`) and wired it into the regression harness (`run_regression.sh asan-smoke`) to catch heap-safety regressions across the gen/sort/lookup pipeline.
 
 ### v1.3 (February 26, 2021)
  - Improved speed of NTLM9 precomputation by 9.5x and false alarm checks by 4.5x!
