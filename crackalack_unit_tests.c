@@ -44,6 +44,7 @@
 #include "test_chain_markov_ntlm8.h"
 #include "test_chain_markov_ntlm9.h"
 #include "test_markov.h"
+#include "test_challenge_host.h"
 #include "test_misc.h"
 #include "test_bloom.h"
 #include "test_sort.h"
@@ -125,6 +126,16 @@ int main(int ac, char **av) {
   CLRELEASEKERNEL(kernel);
   CLRELEASEPROGRAM(program);
   */
+
+
+  /* Challenge host tests (CPU-only, no kernel needed). */
+  printf("Running challenge host tests... "); fflush(stdout);
+  if (!test_challenge_host()) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
 
 
   /* Misc tests (CPU-only, no kernel needed). */
