@@ -7,8 +7,9 @@
 #   run_regression.sh roundtrip       # single-hash crack round-trip (non-batch path)
 #   run_regression.sh roundtrip-multi # 2-hash crack round-trip (batched multi-hash path)
 #   run_regression.sh crackdiff       # BASE-vs-CANDIDATE differential
+#   run_regression.sh asan-smoke      # ASan memory-safety smoke test (gen->sort->lookup)
 #   run_regression.sh report          # write regression_summary.md
-#   run_regression.sh all             # prepare + roundtrip + roundtrip-multi + crackdiff + report
+#   run_regression.sh all             # prepare + roundtrip + roundtrip-multi + crackdiff + asan-smoke + report
 set -euo pipefail
 
 # ---- Tunables (override via env) ----
@@ -301,6 +302,35 @@ phase_crackdiff() {
         --out "$RESULTS/crackdiff.json" || log "crackdiff: regressions detected"
 }
 
+# ASan memory-safety smoke test.  Rebuilds $THIS_REPO under AddressSanitizer and
+# runs the gen->sort->lookup pipeline with a NON-EMPTY pot file present (the
+# condition that triggers the fix/lookup-heap-corruption pot-file over-read),
+# asserting zero ASan findings + a successful crack.  Guards the whole host
+# pipeline against heap overflow / use-after-free / double-free regressions --
+# the round-trip/crackdiff phases verify correctness but run uninstrumented and
+# would sail past a latent heap bug.
+#
+# The smoke build is ASan-instrumented, so we ALWAYS restore a normal build
+# afterward; otherwise the repo's binaries would be left needing the ASan
+# runtime (and far slower) for any later real lookups.  CUDA_PATH is inherited
+# from the environment (same as phase_prepare).
+phase_asan_smoke() {
+    log "ASAN-SMOKE: backend=$BACKEND target=$MAKE_TARGET"
+    mkdir -p "$RESULTS"
+    local json="$RESULTS/asan_smoke_$BACKEND.json"
+    local rc=0
+    with_gpu_lock bash "$SCRIPT_DIR/asan_smoke_test.sh" "$THIS_REPO" >&2 || rc=$?
+    log "ASAN-SMOKE: restoring normal (non-ASan) build"
+    ( cd "$THIS_REPO" && make clean >/dev/null 2>&1 && make "$MAKE_TARGET" >/dev/null 2>&1 && make gen_known_hash >/dev/null 2>&1 ) \
+        || log "WARN: normal rebuild after asan-smoke failed -- repo binaries may be stale, run 'prepare'"
+    if [[ $rc -eq 0 ]]; then
+        echo '{"passed": true}' > "$json";  log "ASAN-SMOKE: PASS"
+    else
+        echo '{"passed": false}' > "$json"; log "ASAN-SMOKE: FAIL (rc=$rc) -- ASan found a memory error or the crack failed"
+    fi
+    return $rc
+}
+
 phase_report() {
     log "REPORT"
     export PYTHONPATH="$SCRIPT_DIR"
@@ -325,8 +355,9 @@ main() {
         roundtrip)      phase_roundtrip ;;
         roundtrip-multi) phase_roundtrip_multi ;;
         crackdiff)      phase_crackdiff ;;
+        asan-smoke)     phase_asan_smoke ;;
         report)         phase_report ;;
-        all)            phase_prepare; phase_roundtrip; phase_roundtrip_multi; phase_crackdiff; phase_report ;;
+        all)            phase_prepare; phase_roundtrip; phase_roundtrip_multi; phase_crackdiff; phase_asan_smoke || true; phase_report ;;
         *) echo "Unknown phase: $phase" >&2; exit 2 ;;
     esac
 }

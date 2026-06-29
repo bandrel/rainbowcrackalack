@@ -546,7 +546,7 @@ void launch_false_alarm_kernel(fa_batch_t *batch, thread_args *args, false_alarm
  * results, and clear state pointers.  No-op if state->active is 0. */
 void harvest_false_alarm_results(false_alarm_state *state) {
   char time_str[128] = {0};
-  unsigned int i = 0, j = 0;
+  unsigned int i = 0;
   double time_delta = 0.0;
   thread_args *args;
   gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
@@ -581,11 +581,30 @@ void harvest_false_alarm_results(false_alarm_state *state) {
     fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
   }
 
-  /* Search for valid results, and update the ppi with the plaintext. */
-  j = 0;
+  /* Search for valid results, and update the ppi with the plaintext.
+   *
+   * Each device writes results at ABSOLUTE candidate positions: the FA kernel
+   * computes index_pos from num_start_indices/device_num/total_devices and
+   * writes g_plaintext_indices[index_pos], leaving positions outside its
+   * stride at UINT64_MAX.  So results[r] always corresponds to candidate r for
+   * EVERY device.  ppi_refs must therefore be indexed by r -- not by a running
+   * counter across devices, which would climb to total_devices * n and overrun
+   * the n-entry ppi_refs snapshot once total_devices > 1, corrupting the heap
+   * ("double free or corruption").  For total_devices == 1 this is identical to
+   * the old running counter (r == j), so single-GPU behavior is unchanged. */
   for (i = 0; i < state->total_devices; i++) {
     unsigned int r;
-    for (r = 0; r < args[i].num_results; r++, j++) {
+    for (r = 0; r < args[i].num_results; r++) {
+      /* Defense-in-depth: ppi_refs holds exactly num_potential_start_indices
+       * entries.  If a device ever reports more results than that, indexing
+       * ppi_refs[r] below would read/write out of bounds and corrupt the heap.
+       * Bail loudly instead -- a wrong-but-visible result beats silent
+       * corruption that surfaces as an unrelated crash later. */
+      if (r >= state->num_potential_start_indices) {
+        fprintf(stderr, "BUG: false-alarm result index %u from device %u exceeds candidate count %u; stopping harvest for this device to avoid heap corruption.\n",
+                r, i, state->num_potential_start_indices);
+        break;
+      }
       if (args[i].results[r] != UINT64_MAX) {
       	char plaintext[MAX_PLAINTEXT_LEN] = {0};
       	unsigned int plaintext_len = 0;
@@ -606,7 +625,7 @@ void harvest_false_alarm_results(false_alarm_state *state) {
 
       	  ntlm_hash(plaintext, plaintext_len, hash);
       	  if (!bytes_to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex)) || \
-      	      (strcmp(hash_hex, state->ppi_refs[j]->hash) != 0)) {
+      	      (strcmp(hash_hex, state->ppi_refs[r]->hash) != 0)) {
       	    continue;
       	  }
       	} else if (args[i].hash_type == HASH_MD5) {
@@ -615,7 +634,7 @@ void harvest_false_alarm_results(false_alarm_state *state) {
 
       	  md5_hash(plaintext, plaintext_len, hash);
       	  if (!bytes_to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex)) || \
-      	      (strcmp(hash_hex, state->ppi_refs[j]->hash) != 0)) {
+      	      (strcmp(hash_hex, state->ppi_refs[r]->hash) != 0)) {
       	    continue;
       	  }
       	} else if (args[i].hash_type == HASH_NETNTLMV1) {
@@ -629,9 +648,9 @@ void harvest_false_alarm_results(false_alarm_state *state) {
           netntlmv1_hash(real_key, 8, hash);
 
           if (!bytes_to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex)) || \
-              (strncmp(hash_hex, state->ppi_refs[j]->hash, 16) != 0)) {
+              (strncmp(hash_hex, state->ppi_refs[r]->hash, 16) != 0)) {
                 bytes_to_hex(real_key, sizeof(real_key), rkey_hex, sizeof(rkey_hex));
-                printf("Found super false positive!: (Net-NTLMv1('%s') == %s) != %s\n", rkey_hex, hash_hex, state->ppi_refs[j]->hash);
+                printf("Found super false positive!: (Net-NTLMv1('%s') == %s) != %s\n", rkey_hex, hash_hex, state->ppi_refs[r]->hash);
             continue;
           }
         } else {
@@ -641,7 +660,7 @@ void harvest_false_alarm_results(false_alarm_state *state) {
       	/* Its official: we cracked a hash! */
 
         /* Skip if this ppi was already cracked by a previous match in this loop. */
-        if (state->ppi_refs[j]->plaintext != NULL)
+        if (state->ppi_refs[r]->plaintext != NULL)
           continue;
 
       	/* Save the plaintext, clear the precomputed end indices list (since its
@@ -650,19 +669,19 @@ void harvest_false_alarm_results(false_alarm_state *state) {
       	if (args[i].hash_type == HASH_NETNTLMV1) {
           char ptxt_hex[(7 * 2) + 1] = {0};
           bytes_to_hex((unsigned char*)plaintext, 7, ptxt_hex, sizeof(ptxt_hex));
-          state->ppi_refs[j]->plaintext = strdup(ptxt_hex);
+          state->ppi_refs[r]->plaintext = strdup(ptxt_hex);
         } else {
-          state->ppi_refs[j]->plaintext = strdup(plaintext);
+          state->ppi_refs[r]->plaintext = strdup(plaintext);
         }
-      	state->ppi_refs[j]->num_precomputed_end_indices = 0;
-      	FREE(state->ppi_refs[j]->precomputed_end_indices);
+      	state->ppi_refs[r]->num_precomputed_end_indices = 0;
+      	FREE(state->ppi_refs[r]->precomputed_end_indices);
 
-      	save_cracked_hash(state->ppi_refs[j], args[i].hash_type);
+      	save_cracked_hash(state->ppi_refs[r], args[i].hash_type);
         if (args[i].hash_type == HASH_NETNTLMV1) {
-          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, state->ppi_refs[j]->hash, chalhex, state->ppi_refs[j]->plaintext, CLR);
+          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, state->ppi_refs[r]->hash, chalhex, state->ppi_refs[r]->plaintext, CLR);
           fflush(stdout);
         } else {
-          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, (state->ppi_refs[j]->username != NULL) ? state->ppi_refs[j]->username : state->ppi_refs[j]->hash, chalhex, plaintext, CLR);  fflush(stdout);
+          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, (state->ppi_refs[r]->username != NULL) ? state->ppi_refs[r]->username : state->ppi_refs[r]->hash, chalhex, plaintext, CLR);  fflush(stdout);
         }
       }
     }
@@ -3873,7 +3892,12 @@ int main(int ac, char **av) {
   if (f) {
     int64_t file_size = get_file_size(f);
 
-    pot_file_data = calloc(file_size, sizeof(char));
+    /* +1 so the buffer is NUL-terminated after fread fills file_size bytes:
+     * pot_file_data is consumed by strstr() below as a C string.  Without the
+     * extra (calloc-zeroed) byte, strstr reads past the end of the allocation
+     * (heap-buffer-overflow) and can spuriously match into adjacent heap,
+     * silently flagging an uncracked hash as already-cracked. */
+    pot_file_data = calloc(file_size + 1, sizeof(char));
     if (pot_file_data == NULL) {
       fprintf(stderr, "Failed to allocate buffer for pot file.\n");
       exit(-1);
