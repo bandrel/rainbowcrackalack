@@ -43,13 +43,7 @@
 #include "test_chain_markov.h"
 #include "test_chain_markov_ntlm8.h"
 #include "test_chain_markov_ntlm9.h"
-#include "test_markov.h"
-#include "test_challenge_host.h"
-#include "test_misc.h"
-#include "test_bloom.h"
-#include "test_sort.h"
-#include "test_decompress.h"
-#include "test_precompute_collate.h"
+#include "cpu_tests_common.h"
 #include "version.h"
 
 
@@ -128,77 +122,11 @@ int main(int ac, char **av) {
   */
 
 
-  /* Challenge host tests (CPU-only, no kernel needed). */
-  printf("Running challenge host tests... "); fflush(stdout);
-  if (!test_challenge_host()) {
+  /* CPU-only tests (no kernel needed). */
+  if (!run_cpu_only_tests()) {
     ret = -1;
     all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
-
-
-  /* Misc tests (CPU-only, no kernel needed). */
-  printf("Running misc tests... "); fflush(stdout);
-  if (!test_misc()) {
-    ret = -1;
-    all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
-
-
-  /* Bloom tests (CPU-only, no kernel needed). */
-  printf("Running bloom tests... "); fflush(stdout);
-  if (!test_bloom()) {
-    ret = -1;
-    all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
-
-
-  /* Mask tests (CPU-only, no kernel needed). */
-  /* Sort utility tests (CPU-only, no kernel needed). */
-  printf("Running sort utility tests... "); fflush(stdout);
-  if (!test_sort()) {
-    ret = -1;
-    all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
-
-
-  /* Decompression tests (CPU-only, no kernel needed). */
-  printf("Running decompress tests... "); fflush(stdout);
-  if (!test_decompress()) {
-    ret = -1;
-    all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
-
-
-  /* Batched-precompute collation tests (CPU-only, no kernel needed).
-   * Regression guard for the multi-hash lookup off-by-one/reverse-order bug
-   * that silently dropped every batched (>=2-hash) crack. */
-  printf("Running batched-precompute collation tests... "); fflush(stdout);
-  if (!test_precompute_collate()) {
-    ret = -1;
-    all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
-
-
-  /* Markov tests (CPU-only, no kernel needed). */
-  printf("Running Markov tests... "); fflush(stdout);
-  if (!test_markov()) {
-    ret = -1;
-    all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
+  }
 
 
   /* index_to_plaintext() tests. */
