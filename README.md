@@ -157,6 +157,18 @@ The following command shows how to look up a file of NTLM hashes (one per line) 
 
     # ./crackalack_lookup /export/ntlm8_tables/ /home/user/hashes.txt
 
+#### Optional lookup flags
+
+`crackalack_lookup` accepts several optional flags, given after the table directory and the hash/hash-file arguments:
+
+|Flag             |Purpose                                                                                          |
+|------------------|-------------------------------------------------------------------------------------------------|
+|`--challenge HEX` |Net-NTLMv1 server challenge as 16 hex digits (default `1122334455667788`). Normally adopted automatically from the loaded tables.|
+|`--bloom-fpr X`   |Bloom filter target false-positive rate (default `0.01`; `0` disables the bloom filter).         |
+|`--fa-batch N`    |False-alarm batch flush threshold (default `16384`; `1` disables batching).                      |
+|`--gpu-search`    |Offload per-table endpoint binary search to the GPU (off by default).                            |
+|`-gws GWS`        |Set the GPU global work size.                                                                    |
+
 ## Recommended Hardware
 
 The NVIDIA GTX & RTX lines of GPU hardware has been well-tested with the Rainbow Crackalack software, and offer an excellent price/performance ratio.  Specifically, the GTX 1660 Ti or RTX 2060 are the best choices for building a new cracking machine.  [This document](https://docs.google.com/spreadsheets/d/1jigNGvt9SUur_SNH7QDEACapJbrdL_wKYtprM23IDpM/edit?usp=sharing) contains the raw data that backs this recommendation.
@@ -189,16 +201,23 @@ However, if you prefer to build a complete package (which is useful for testing 
 
 ## Linux Build
 
-A 64-bit build can be achieved on an Ubuntu host machine by installing the following prerequisites:
+On Linux the GPU backend is **CUDA** (NVIDIA only); kernels are compiled at runtime via NVRTC. A 64-bit build can be achieved on an Ubuntu host machine by installing the following prerequisites:
 
-    # apt install opencl-c-headers libgcrypt20-dev
+    # apt install nvidia-cuda-toolkit libgcrypt20-dev
 
 Then starting the build with:
 
     # make clean; make linux
 
+The `nvidia-cuda-toolkit` package from the Ubuntu repositories may lag behind the installed NVIDIA driver. If you hit an NVRTC version mismatch or a PTX "unsupported toolchain" error at runtime, install a newer toolkit from NVIDIA's apt repository (e.g. `cuda-toolkit-13-x`) and point the build at it:
+
+    # make clean; make linux CUDA_PATH=/opt/cuda
+
+(Earlier releases used OpenCL on Linux; the Linux backend has since been ported to CUDA. Windows still uses OpenCL — see above.)
+
 ## Change Log
 ### v1.4
+ - Ported the Linux GPU backend from OpenCL to CUDA (runtime kernel compilation via NVRTC; NVIDIA-only). Linux builds now require `nvidia-cuda-toolkit` instead of OpenCL headers. Windows continues to use OpenCL.
  - Added macOS Apple Silicon support via Metal GPU backend.
  - Added `crackalack_sort` tool for sorting tables by end index before lookup, with parallel multi-file sorting and automatic worker-count tuning.
  - Added `crackalack_plan` tool with `estimate`, `recommend`, and `train` subcommands.
