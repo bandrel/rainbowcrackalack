@@ -11,6 +11,7 @@
 
 #include "charset.h"
 #include "cpu_rt_functions.h"
+#include "fa_batch.h"
 #include "hash_validate.h"
 #include "misc.h"
 #include "shared.h"
@@ -301,8 +302,6 @@ static int group_i(void)
     return ok;
 }
 
-
-#include "fa_batch.h"
 
 /* Construct a minimal ppi node for testing.  Caller frees. */
 static precomputed_and_potential_indices *mk_ppi(const char *hash_hex,
@@ -733,24 +732,36 @@ static int group_n(void)
         }
     }
 
-    /* N-06: out of bounds: r==5, num_candidates=5 -> returns 0 */
+    /* N-06: out of bounds: r==5, num_candidates=5 -> returns 0, out untouched */
     out = 0xdeadbeef;
     if (fa_harvest_candidate_index(5, 5, &out) != 0) {
         fprintf(stderr, "FAIL N-06: expected return 0 for r=5 num_candidates=5\n");
         ok = 0;
     }
+    if (out != 0xdeadbeef) {
+        fprintf(stderr, "FAIL N-06: out_index overwritten on failure path (got 0x%x)\n", out);
+        ok = 0;
+    }
 
-    /* N-07: out of bounds: r==100, num_candidates=5 -> returns 0 */
+    /* N-07: out of bounds: r==100, num_candidates=5 -> returns 0, out untouched */
     out = 0xdeadbeef;
     if (fa_harvest_candidate_index(100, 5, &out) != 0) {
         fprintf(stderr, "FAIL N-07: expected return 0 for r=100 num_candidates=5\n");
         ok = 0;
     }
+    if (out != 0xdeadbeef) {
+        fprintf(stderr, "FAIL N-07: out_index overwritten on failure path (got 0x%x)\n", out);
+        ok = 0;
+    }
 
-    /* N-08: num_candidates==0: any r returns 0 */
+    /* N-08: num_candidates==0: any r returns 0, out untouched */
     out = 0xdeadbeef;
     if (fa_harvest_candidate_index(0, 0, &out) != 0) {
         fprintf(stderr, "FAIL N-08: expected return 0 for r=0 num_candidates=0\n");
+        ok = 0;
+    }
+    if (out != 0xdeadbeef) {
+        fprintf(stderr, "FAIL N-08: out_index overwritten on failure path (got 0x%x)\n", out);
         ok = 0;
     }
 
