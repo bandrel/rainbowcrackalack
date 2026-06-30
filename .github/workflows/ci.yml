@@ -1,0 +1,23 @@
+name: CPU unit tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  cpu-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libgcrypt20-dev opencl-headers
+
+      - name: Build CPU tests
+        run: make cpu-tests
+
+      - name: Run CPU tests
+        run: ./crackalack_cpu_tests
