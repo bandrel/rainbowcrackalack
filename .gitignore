@@ -22,3 +22,7 @@ build/
 /generate_ntlm_8char_50-75.sh
 .worktrees/
 scripts/pipeline.conf
+coverage/
+*.gcno
+*.gcda
+*.gcov

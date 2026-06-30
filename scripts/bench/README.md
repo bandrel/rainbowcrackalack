@@ -152,3 +152,22 @@ via `make gen_known_hash`.)
 length and hardcode 422000 / 803000. Lookups against NTLM-8/9 tables built at a
 non-standard chain length will silently fail to crack (false negatives). The
 NetNTLMv1-7 precompute path was fixed to honor the host chain length.
+
+## Code coverage
+
+`coverage.sh` builds `crackalack_unit_tests` with gcov-style instrumentation,
+runs the tests on the local GPU, and reports per-file line coverage for the key
+host modules (`misc.c`, `fa_batch.c`, `cpu_rt_functions.c`, `bloom.c`,
+`markov.c`).  `crackalack_lookup.c` is not linked into the unit-test binary and
+will show *no data*.
+
+```bash
+# macOS (Metal GPU required):
+scripts/bench/coverage.sh
+
+# Linux (CUDA GPU required, non-default toolkit path):
+CUDA_PATH=/usr/local/cuda-12.8 scripts/bench/coverage.sh
+```
+
+Raw `.gcov` files and a summary are written to `coverage/` at the repo root
+(gitignored).  A plain `make macos` (or `make linux`) is restored at the end.
