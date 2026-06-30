@@ -138,7 +138,7 @@ clean_log="$(sed -E $'s/\x1b\\[[0-9;]*m//g' "$log")"
 our_src_pattern='crackalack_lookup\.c|fa_batch\.c|gws\.c|cpu_rt_functions\.c|parallel_sort\.c|sort_utils\.c|precompute_collate\.c|bloom\.c|misc\.c|verify\.c'
 
 tsan_our_races="$(printf '%s\n' "$clean_log" \
-  | grep -E "WARNING: ThreadSanitizer" -A 60 \
+  | awk '/WARNING: ThreadSanitizer/{f=1} f{print} /^={10,}$/{f=0}' \
   | grep -E "$our_src_pattern" || true)"
 
 # Also collect the full TSan summary line if any.
