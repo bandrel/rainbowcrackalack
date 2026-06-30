@@ -1,5 +1,7 @@
 # Rainbow Crackalack
 
+[![CPU unit tests](https://github.com/bandrel/rainbowcrackalack/actions/workflows/ci.yml/badge.svg)](https://github.com/bandrel/rainbowcrackalack/actions/workflows/ci.yml)
+
 Author: [Joe Testa](https://www.positronsecurity.com/company/) ([@therealjoetesta](https://twitter.com/therealjoetesta))
 
 ## About
