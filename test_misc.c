@@ -656,6 +656,58 @@ static int group_m(void)
         if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
     }
 
+    /* M-09: Error path — PWDUMP first line valid, second line malformed (hash
+     * cannot be extracted: fewer than 4 colons so hash_start/hash_end stay 0).
+     * Expects non-zero return AND out-params NULLed/zeroed. */
+    {
+        /* First line is well-formed PWDUMP (6 colons); second line has only 2
+         * colons so the colon-scanning loop cannot reach the 3rd/4th colon. */
+        char input[] =
+            "Administrator:500:AABBCCDDEEFF00112233445566778899:aabbccddeeff00112233445566778899:::\n"
+            "BADLINE:oops\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) == 0)
+            { fprintf(stderr, "FAIL PHF-M09: expected error, got success\n"); ok = 0; }
+        if (hashes != NULL)
+            { fprintf(stderr, "FAIL PHF-M09: out_hashes not NULL on error\n"); ok = 0; }
+        if (usernames != NULL)
+            { fprintf(stderr, "FAIL PHF-M09: out_usernames not NULL on error\n"); ok = 0; }
+        if (num_hashes != 0)
+            { fprintf(stderr, "FAIL PHF-M09: out_num_hashes not 0 on error (got %u)\n", num_hashes); ok = 0; }
+        /* Nothing to free: function must have self-cleaned. */
+    }
+
+    /* M-10: Error path — PWDUMP line with NT-hash field that is not 32 chars.
+     * Expects non-zero return AND out-params NULLed/zeroed. */
+    {
+        /* The NT-hash field (4th field) is only 8 characters. */
+        char input[] = "Administrator:500:AABBCCDD:SHORT:::\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) == 0)
+            { fprintf(stderr, "FAIL PHF-M10: expected error, got success\n"); ok = 0; }
+        if (hashes != NULL)
+            { fprintf(stderr, "FAIL PHF-M10: out_hashes not NULL on error\n"); ok = 0; }
+        if (usernames != NULL)
+            { fprintf(stderr, "FAIL PHF-M10: out_usernames not NULL on error\n"); ok = 0; }
+        if (num_hashes != 0)
+            { fprintf(stderr, "FAIL PHF-M10: out_num_hashes not 0 on error (got %u)\n", num_hashes); ok = 0; }
+    }
+
+    /* M-11: Error path — unrecognized format (2 colons in first line, neither
+     * 0 nor 6).  Expects non-zero return AND out-params NULLed/zeroed. */
+    {
+        char input[] = "foo:bar:baz\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) == 0)
+            { fprintf(stderr, "FAIL PHF-M11: expected error, got success\n"); ok = 0; }
+        if (hashes != NULL)
+            { fprintf(stderr, "FAIL PHF-M11: out_hashes not NULL on error\n"); ok = 0; }
+        if (usernames != NULL)
+            { fprintf(stderr, "FAIL PHF-M11: out_usernames not NULL on error\n"); ok = 0; }
+        if (num_hashes != 0)
+            { fprintf(stderr, "FAIL PHF-M11: out_num_hashes not 0 on error (got %u)\n", num_hashes); ok = 0; }
+    }
+
     return ok;
 }
 
