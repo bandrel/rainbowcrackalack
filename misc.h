@@ -129,8 +129,8 @@ void str_to_lowercase(char *s);
  * out_file_format - Set to HASH_FILE_FORMAT_PLAIN or HASH_FILE_FORMAT_PWDUMP.
  *
  * Returns 0 on success, non-zero on parse/format/alloc error.
- * On error, out_hashes and out_usernames may be partially allocated.
- * The function does NOT call exit(). */
+ * On error, all internal allocations are freed and the out-params are set to
+ * NULL/0.  The function does NOT call exit(). */
 int parse_hash_file_data(char *file_data,
                          const char *pot_contents,
                          char ***out_hashes,

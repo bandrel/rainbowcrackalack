@@ -619,7 +619,9 @@ void str_to_lowercase(char *s) {
 
 
 /* Parse hash-file contents into newly-allocated hashes/usernames arrays.
- * See misc.h for full parameter documentation. */
+ * See misc.h for full parameter documentation.
+ * On error, all internal allocations are freed and the out-params are set to
+ * NULL/0 before returning non-zero. */
 int parse_hash_file_data(char *file_data,
                          const char *pot_contents,
                          char ***out_hashes,
@@ -636,6 +638,7 @@ int parse_hash_file_data(char *file_data,
   char **hashes = NULL;
   char **usernames = NULL;
   char *line = NULL;
+  char *line_copy = NULL;  /* PWDUMP per-line scratch; freed at cleanup_err */
   size_t file_data_len = strlen(file_data);
 
   /* Count newlines to determine array size. */
@@ -662,16 +665,14 @@ int parse_hash_file_data(char *file_data,
     printf("Hash file is pwdump format.\n");
   } else {
     fprintf(stderr, "Error: hash file format is not recognized (number of colons in first line is %u, instead of 0 or 6).\n", num_colons);
-    return -1;
+    goto cleanup_err;
   }
 
   usernames = calloc(max_num_hashes, sizeof(char *));
   hashes = calloc(max_num_hashes, sizeof(char *));
   if ((usernames == NULL) || (hashes == NULL)) {
     fprintf(stderr, "Error while allocating buffer for hashes.\n");
-    free(usernames);
-    free(hashes);
-    return -1;
+    goto cleanup_err;
   }
 
   /* Tokenize the hash file by line.  Store each hash in the array. */
@@ -697,16 +698,20 @@ int parse_hash_file_data(char *file_data,
           hashes[num_hashes] = strdup(line);
           if (hashes[num_hashes] == NULL) {
             fprintf(stderr, "Error while allocating buffer for hashes.\n");
-            *out_hashes = hashes;
-            *out_usernames = usernames;
-            return -1;
+            goto cleanup_err;
           }
           num_hashes++;
         } else {  /* HASH_FILE_FORMAT_PWDUMP */
-          char *line_copy = strdup(line);
           char *hash = NULL;
-          unsigned int line_copy_len = strlen(line_copy);
+          unsigned int line_copy_len = 0;
           unsigned int hash_start = 0, hash_end = 0;
+
+          line_copy = strdup(line);
+          if (line_copy == NULL) {
+            fprintf(stderr, "Error while allocating buffer for hashes.\n");
+            goto cleanup_err;
+          }
+          line_copy_len = strlen(line_copy);
 
           /* Get the username from position zero until the first colon. */
           for (i = 0; i < line_copy_len; i++) {
@@ -715,10 +720,7 @@ int parse_hash_file_data(char *file_data,
               usernames[num_hashes] = strdup(line_copy);
               if (usernames[num_hashes] == NULL) {
                 fprintf(stderr, "Error while allocating buffer for usernames.\n");
-                FREE(line_copy);
-                *out_hashes = hashes;
-                *out_usernames = usernames;
-                return -1;
+                goto cleanup_err;
               }
               break;
             }
@@ -742,10 +744,7 @@ int parse_hash_file_data(char *file_data,
 
           if ((hash_start == 0) || (hash_end == 0)) {
             fprintf(stderr, "Error: failed to extract hash from line: [%s]\n", line);
-            FREE(line_copy);
-            *out_hashes = hashes;
-            *out_usernames = usernames;
-            return -1;
+            goto cleanup_err;
           }
 
           *(line_copy + hash_end) = '\0';
@@ -754,10 +753,7 @@ int parse_hash_file_data(char *file_data,
           /* Make sure the hash is 32 bytes. */
           if (strlen(hash) != 32) {
             fprintf(stderr, "Error: hash is length %u instead of 32: [%s]\n", (unsigned int)strlen(hash), hash);
-            FREE(line_copy);
-            *out_hashes = hashes;
-            *out_usernames = usernames;
-            return -1;
+            goto cleanup_err;
           }
 
           str_to_lowercase(hash);  /* Ensure hash is lowercase. */
@@ -768,18 +764,15 @@ int parse_hash_file_data(char *file_data,
             hashes[num_hashes] = strdup(hash);
             if (hashes[num_hashes] == NULL) {
               fprintf(stderr, "Error while allocating buffer for hashes.\n");
-              FREE(line_copy);
-              *out_hashes = hashes;
-              *out_usernames = usernames;
-              return -1;
+              goto cleanup_err;
             }
             num_hashes++;
           }
           FREE(line_copy);
         }
       }
-      line = strtok(NULL, "\n");
     }
+    line = strtok(NULL, "\n");
   }
 
   *out_hashes = hashes;
@@ -788,6 +781,27 @@ int parse_hash_file_data(char *file_data,
   *out_num_previously_cracked = previously_cracked;
   *out_file_format = file_format;
   return 0;
+
+cleanup_err:
+  /* Free the PWDUMP scratch buffer if we were mid-line when the error hit. */
+  FREE(line_copy);
+  /* Free all hashes and usernames allocated so far (slots 0..num_hashes-1),
+   * plus the just-allocated username in slot num_hashes if present. */
+  if (hashes != NULL) {
+    for (i = 0; i <= num_hashes; i++)
+      free(hashes[i]);
+    free(hashes);
+  }
+  if (usernames != NULL) {
+    for (i = 0; i <= num_hashes; i++)
+      free(usernames[i]);
+    free(usernames);
+  }
+  *out_hashes = NULL;
+  *out_usernames = NULL;
+  *out_num_hashes = 0;
+  *out_num_previously_cracked = 0;
+  return -1;
 }
 
 
