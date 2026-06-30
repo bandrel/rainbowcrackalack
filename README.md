@@ -151,6 +151,18 @@ Looking up captured Net-NTLMv1 hashes works the same as NTLM:
 
 The hash file should contain 16-hex-character DES fragments (one per line). A full 48-character Net-NTLMv1 response must be split into three 16-character fragments before lookup.
 
+#### Net-NTLMv1 server challenges
+
+Net-NTLMv1 responses are computed against a server challenge, so a rainbow table is only valid for the specific challenge it was generated with. The default challenge is `1122334455667788` (the fixed value commonly forced by relay/downgrade tooling). To target a different captured challenge, pass `--challenge` (16 hex digits) to `crackalack_gen`:
+
+    # ./crackalack_gen netntlmv1 byte 7 7 0 803000 67108864 0 --challenge aabbccddeeff0011
+
+The challenge is encoded into the table filename — non-default challenges get a `-chal<16-hex>` suffix on the charset segment, e.g. `netntlmv1_byte-chalaabbccddeeff0011#7-7_0_803000x67108864_0.rt`. At lookup time `crackalack_lookup` adopts the challenge from the loaded tables automatically, so the same command works regardless of challenge:
+
+    # ./crackalack_lookup /export/netntlmv1_chal_tables/ /home/user/hashes.txt
+
+If you need to override it (e.g. tables without the challenge in their names), pass `--challenge aabbccddeeff0011` to `crackalack_lookup` as well. Note that the precompute cache key includes a non-default challenge, so switching challenges will not produce stale cross-challenge false negatives.
+
 #### Table lookups against NTLM 8-character hashes
 
 The following command shows how to look up a file of NTLM hashes (one per line) against the NTLM 8-character tables:
@@ -214,6 +226,34 @@ The `nvidia-cuda-toolkit` package from the Ubuntu repositories may lag behind th
     # make clean; make linux CUDA_PATH=/opt/cuda
 
 (Earlier releases used OpenCL on Linux; the Linux backend has since been ported to CUDA. Windows still uses OpenCL — see above.)
+
+## Testing
+
+The test suite has two tiers — a GPU-accelerated suite and a CPU-only suite that needs no GPU — plus sanitizer and regression harnesses under `scripts/bench/`.
+
+**GPU unit tests** (require a GPU; CUDA on Linux, OpenCL on Windows, Metal on macOS):
+
+    # ./crackalack_unit_tests
+
+These cover the GPU kernels — hashing (NTLM/NTLM9/MD5/Net-NTLMv1), hash-to-index reduction, index-to-plaintext, and chain generation — plus the CPU-only tests below.
+
+**CPU-only unit tests** (no GPU required) build a separate binary and run the host-side logic — hash/pot-file parsing, false-alarm batching, bloom filters, table sorting, decompression, Markov models, Net-NTLMv1 challenge parsing, and the golden vectors:
+
+    # make cpu-tests && ./crackalack_cpu_tests
+
+This is what runs in **CI**: a GitHub Actions workflow builds and runs `crackalack_cpu_tests` on every push and pull request (`build-essential`, `libgcrypt20-dev`, `opencl-headers` — no GPU), so CPU-logic regressions are caught automatically.
+
+**Golden vectors** (`test_golden.c`) pin committed input→output pairs for the rainbow-table primitives (independently-verified NTLM/MD5 vectors plus regression-pinned reductions), giving every GPU backend a fixed ground truth to validate against. They run in both test binaries.
+
+**Sanitizers and regression harness** (`scripts/bench/`, require a GPU):
+
+|Command                                  |Purpose                                                        |
+|------------------------------------------|---------------------------------------------------------------|
+|`scripts/bench/asan_smoke_test.sh`        |AddressSanitizer smoke over gen → sort → lookup (heap safety).  |
+|`scripts/bench/tsan_smoke_test.sh`        |ThreadSanitizer over the threaded lookup pipeline (data races). |
+|`make tsan-sort`                          |ThreadSanitizer over the multi-threaded sort (CPU-only).        |
+|`scripts/bench/coverage.sh` / `make COVERAGE=1`|gcov/llvm-cov line-coverage report for the host code.      |
+|`scripts/bench/run_regression.sh`         |Crack round-trip + differential (false-negative) regression checks, including an `asan-smoke` phase.|
 
 ## Change Log
 ### v1.4
