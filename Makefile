@@ -102,7 +102,8 @@ PERFECTIFY    := perfectify$(EXE)
 ENUMERATE     := enumerate_chain$(EXE)
 SORT_PROG     := crackalack_sort$(EXE)
 PLAN_PROG     := crackalack_plan$(EXE)
-GENKNOWN_PROG := gen_known_hash$(EXE)
+GENKNOWN_PROG    := gen_known_hash$(EXE)
+CPU_TESTS_PROG   := crackalack_cpu_tests$(EXE)
 
 BINARIES := \
 	$(OUTDIR)/$(GEN_PROG) \
@@ -118,7 +119,7 @@ BINARIES := \
 
 .PHONY: all linux linux-opencl macos windows clean strip \
         prep_opencl_headers prep_none \
-        bundle_windows gen_known_hash
+        bundle_windows gen_known_hash cpu-tests
 
 # On-demand convenience target.  NOT part of the default `all`/BINARIES list
 # because gen_known_hash needs OpenSSL (-lssl -lcrypto), an extra dependency the
@@ -130,6 +131,64 @@ BINARIES := \
 # Depend on the absolute binary path so the phony name (gen_known_hash) does not
 # normalize to the same target as ./gen_known_hash (which would be circular).
 gen_known_hash: $(abspath $(OUTDIR)/$(GENKNOWN_PROG))
+
+# cpu-tests: build crackalack_cpu_tests with no GPU backend.
+# Uses a dedicated build directory (build/cpu-tests/obj) so it never clobbers
+# the normal platform build.  Object files are recompiled from scratch with
+# CPU-tests-specific CPPFLAGS (no USE_CUDA, no USE_METAL on Linux; USE_METAL
+# on macOS so gpu_backend.h resolves types as void* without needing Metal libs).
+#
+# Linux requirements: build-essential libgcrypt20-dev opencl-headers
+# macOS requirements: brew install libgcrypt  (Xcode CLT already on PATH)
+CPU_TESTS_OBJDIR := build/cpu-tests/obj
+ifeq ($(shell uname -s),Darwin)
+  CPU_TESTS_CC       := clang
+  CPU_TESTS_CPPFLAGS := -DUSE_METAL -I/opt/homebrew/include
+  CPU_TESTS_CFLAGS   := -Wall -O3 -g
+  CPU_TESTS_LDFLAGS  := -L/opt/homebrew/lib
+  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm
+else
+  CPU_TESTS_CC       := gcc
+  CPU_TESTS_CPPFLAGS := -I/usr/include
+  CPU_TESTS_CFLAGS   := -Wall -O3 -g
+  CPU_TESTS_LDFLAGS  :=
+  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm
+endif
+
+CPU_TESTS_OBJS := \
+	$(CPU_TESTS_OBJDIR)/crackalack_cpu_tests.o \
+	$(CPU_TESTS_OBJDIR)/cpu_tests_common.o \
+	$(CPU_TESTS_OBJDIR)/test_challenge_host.o \
+	$(CPU_TESTS_OBJDIR)/test_misc.o \
+	$(CPU_TESTS_OBJDIR)/test_bloom.o \
+	$(CPU_TESTS_OBJDIR)/test_sort.o \
+	$(CPU_TESTS_OBJDIR)/test_decompress.o \
+	$(CPU_TESTS_OBJDIR)/test_precompute_collate.o \
+	$(CPU_TESTS_OBJDIR)/test_markov.o \
+	$(CPU_TESTS_OBJDIR)/test_shared.o \
+	$(CPU_TESTS_OBJDIR)/misc.o \
+	$(CPU_TESTS_OBJDIR)/fa_batch.o \
+	$(CPU_TESTS_OBJDIR)/bloom.o \
+	$(CPU_TESTS_OBJDIR)/cpu_rt_functions.o \
+	$(CPU_TESTS_OBJDIR)/charset.o \
+	$(CPU_TESTS_OBJDIR)/markov.o \
+	$(CPU_TESTS_OBJDIR)/sort_utils.o \
+	$(CPU_TESTS_OBJDIR)/parallel_sort.o \
+	$(CPU_TESTS_OBJDIR)/precompute_collate.o \
+	$(CPU_TESTS_OBJDIR)/rtc_decompress.o \
+	$(CPU_TESTS_OBJDIR)/rti2_decompress.o \
+	$(CPU_TESTS_OBJDIR)/file_lock.o \
+	$(CPU_TESTS_OBJDIR)/hash_validate.o
+
+$(CPU_TESTS_OBJDIR):
+	mkdir -p $@
+
+$(CPU_TESTS_OBJDIR)/%.o: %.c | $(CPU_TESTS_OBJDIR)
+	$(CPU_TESTS_CC) $(CPU_TESTS_CPPFLAGS) $(CPU_TESTS_CFLAGS) -c $< -o $@
+
+cpu-tests: $(CPU_TESTS_OBJS)
+	$(CPU_TESTS_CC) $(CPU_TESTS_LDFLAGS) $^ -o $(OUTDIR)/$(CPU_TESTS_PROG) $(CPU_TESTS_LIBS)
+	@echo "Built $(OUTDIR)/$(CPU_TESTS_PROG)"
 
 all: $(PREP) $(BINARIES)
 
@@ -193,6 +252,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/bloom.o \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/cpu_rt_functions.o \
+	$(OBJDIR)/cpu_tests_common.o \
 	$(OBJDIR)/crackalack_unit_tests.o \
 	$(OBJDIR)/fa_batch.o \
 	$(OBJDIR)/gws.o \
@@ -350,5 +410,5 @@ bundle_windows:
 clean:
 	rm -rf build
 	rm -f *.exe \
-	      crackalack_gen crackalack_unit_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_lookup perfectify enumerate_chain crackalack_sort crackalack_plan \
+	      crackalack_gen crackalack_unit_tests crackalack_cpu_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_lookup perfectify enumerate_chain crackalack_sort crackalack_plan \
 	      libgcrypt-20.dll libgpg-error-0.dll libwinpthread-1.dll
