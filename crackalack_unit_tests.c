@@ -43,13 +43,6 @@
 #include "test_chain_markov.h"
 #include "test_chain_markov_ntlm8.h"
 #include "test_chain_markov_ntlm9.h"
-#include "test_markov.h"
-#include "test_challenge_host.h"
-#include "test_misc.h"
-#include "test_bloom.h"
-#include "test_sort.h"
-#include "test_decompress.h"
-#include "test_precompute_collate.h"
 #include "cpu_tests_common.h"
 #include "version.h"
 
