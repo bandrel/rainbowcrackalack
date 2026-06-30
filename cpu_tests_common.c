@@ -17,6 +17,7 @@
 #include "test_decompress.h"
 #include "test_precompute_collate.h"
 #include "test_markov.h"
+#include "test_golden.h"
 
 /* terminal_color.h defines these as globals; declare them extern here to
  * avoid duplicate-symbol errors at link time when multiple TUs include it. */
@@ -81,6 +82,16 @@ int run_cpu_only_tests(void) {
   /* Markov tests (CPU-only, no kernel needed). */
   printf("Running Markov tests... "); fflush(stdout);
   if (!test_markov()) {
+    all_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  /* Golden-vector tests (CPU-only, no kernel needed).
+   * Pins the canonical math for ntlm_hash, md5_hash, netntlmv1_hash,
+   * hash_to_index, and index_to_plaintext so backend drift is caught. */
+  printf("Running golden vector tests... "); fflush(stdout);
+  if (!test_golden()) {
     all_passed = 0;
     PRINT_FAILED();
   } else

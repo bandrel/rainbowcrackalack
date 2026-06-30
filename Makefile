@@ -172,6 +172,7 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/test_decompress.o \
 	$(CPU_TESTS_OBJDIR)/test_precompute_collate.o \
 	$(CPU_TESTS_OBJDIR)/test_markov.o \
+	$(CPU_TESTS_OBJDIR)/test_golden.o \
 	$(CPU_TESTS_OBJDIR)/test_shared.o \
 	$(CPU_TESTS_OBJDIR)/misc.o \
 	$(CPU_TESTS_OBJDIR)/fa_batch.o \
@@ -319,6 +320,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_markov.o \
 	$(OBJDIR)/test_challenge_host.o \
 	$(OBJDIR)/test_misc.o \
+	$(OBJDIR)/test_golden.o \
 	$(OBJDIR)/precompute_collate.o \
 	$(OBJDIR)/test_precompute_collate.o \
 	$(OBJDIR)/test_sort.o \
