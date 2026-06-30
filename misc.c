@@ -801,6 +801,7 @@ cleanup_err:
   *out_usernames = NULL;
   *out_num_hashes = 0;
   *out_num_previously_cracked = 0;
+  *out_file_format = 0;
   return -1;
 }
 
