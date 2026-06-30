@@ -24,15 +24,32 @@ fail() {
   exit 1
 }
 
+# Install a trap to always restore the normal build on exit (covers build
+# failures, test failures, and successful runs alike).
+_restore_build() {
+  echo "==> Restoring normal build ($PLATFORM)..." >&2
+  if [[ "$PLATFORM" == "linux" && -n "${CUDA_PATH:-}" ]]; then
+    ( cd "$REPO" && make clean >/dev/null 2>&1 && make "$PLATFORM" CUDA_PATH="$CUDA_PATH" >/tmp/coverage_restore.log 2>&1 ) \
+      || echo "WARN: normal build restore failed (see /tmp/coverage_restore.log)" >&2
+  else
+    ( cd "$REPO" && make clean >/dev/null 2>&1 && make "$PLATFORM" >/tmp/coverage_restore.log 2>&1 ) \
+      || echo "WARN: normal build restore failed (see /tmp/coverage_restore.log)" >&2
+  fi
+}
+trap _restore_build EXIT
+
 # Build with coverage instrumentation
 echo "==> Building crackalack_unit_tests with COVERAGE=1 ($PLATFORM)..."
-BUILD_CMD="make clean && make $PLATFORM COVERAGE=1"
 if [[ "$PLATFORM" == "linux" && -n "${CUDA_PATH:-}" ]]; then
-  BUILD_CMD="make clean && make $PLATFORM COVERAGE=1 CUDA_PATH=$CUDA_PATH"
-fi
-if ! eval "$BUILD_CMD" > /tmp/coverage_build.log 2>&1; then
-  tail -40 /tmp/coverage_build.log >&2
-  fail "Coverage build failed. See /tmp/coverage_build.log"
+  if ! ( cd "$REPO" && make clean && make "$PLATFORM" COVERAGE=1 CUDA_PATH="$CUDA_PATH" ) > /tmp/coverage_build.log 2>&1; then
+    tail -40 /tmp/coverage_build.log >&2
+    fail "Coverage build failed. See /tmp/coverage_build.log"
+  fi
+else
+  if ! ( cd "$REPO" && make clean && make "$PLATFORM" COVERAGE=1 ) > /tmp/coverage_build.log 2>&1; then
+    tail -40 /tmp/coverage_build.log >&2
+    fail "Coverage build failed. See /tmp/coverage_build.log"
+  fi
 fi
 
 # Determine object directory
@@ -45,25 +62,25 @@ if ! "$REPO/crackalack_unit_tests" > /tmp/coverage_run.log 2>&1; then
   fail "crackalack_unit_tests exited nonzero. See /tmp/coverage_run.log"
 fi
 
-# Find gcov tool
+# Find gcov tool — on macOS prefer xcrun llvm-cov gcov (Apple's gcov stub
+# exits 0 on --version but fails on real .gcda files).
 GCOV_CMD=""
-if command -v gcov > /dev/null 2>&1; then
-  if [[ "$PLATFORM" == "macos" ]]; then
-    # On macOS, gcov may be Apple's stub — verify it actually works
-    if gcov --version > /dev/null 2>&1; then
-      GCOV_CMD="gcov"
-    fi
-  else
-    GCOV_CMD="gcov"
-  fi
-fi
-
-if [[ -z "$GCOV_CMD" ]]; then
-  # Fall back to xcrun llvm-cov gcov on macOS
-  if command -v xcrun > /dev/null 2>&1 && xcrun llvm-cov gcov --version > /dev/null 2>&1; then
+if [[ "$PLATFORM" == "macos" ]]; then
+  if command -v xcrun >/dev/null 2>&1 && xcrun llvm-cov gcov --version >/dev/null 2>&1; then
     GCOV_CMD="xcrun llvm-cov gcov"
+  elif command -v gcov >/dev/null 2>&1 && gcov --version 2>&1 | grep -qv "Apple"; then
+    GCOV_CMD="gcov"
   else
-    fail "No working gcov found. Install llvm or ensure xcrun llvm-cov gcov is available."
+    fail "no usable gcov / llvm-cov gcov found"
+  fi
+else
+  # Linux: plain gcov (gcc), fallback to llvm-cov gcov
+  if command -v gcov >/dev/null 2>&1; then
+    GCOV_CMD="gcov"
+  elif command -v llvm-cov >/dev/null 2>&1; then
+    GCOV_CMD="llvm-cov gcov"
+  else
+    fail "no usable gcov found"
   fi
 fi
 
@@ -138,17 +155,7 @@ SUMMARY_FILE="$REPO/coverage/summary.txt"
 echo ""
 echo "Coverage report written to $REPO/coverage/"
 
-# Restore normal build
-echo "==> Restoring normal build ($PLATFORM)..."
-RESTORE_CMD="make clean && make $PLATFORM"
-if [[ "$PLATFORM" == "linux" && -n "${CUDA_PATH:-}" ]]; then
-  RESTORE_CMD="make clean && make $PLATFORM CUDA_PATH=$CUDA_PATH"
-fi
-if ! eval "$RESTORE_CMD" > /tmp/coverage_restore.log 2>&1; then
-  echo "WARN: normal build restore failed. See /tmp/coverage_restore.log" >&2
-fi
-
-# Print headline
+# Print headline (restore happens via trap on EXIT)
 misc_pct="${FILE_PCT[misc.c]}"
 fabatch_pct="${FILE_PCT[fa_batch.c]}"
 echo "misc.c: ${misc_pct} | fa_batch.c: ${fabatch_pct}"
