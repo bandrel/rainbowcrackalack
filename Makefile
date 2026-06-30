@@ -206,9 +206,15 @@ TSAN_SORT_BIN    := $(CURDIR)/build/tsan-sort/test_parallel_sort_tsan
 ifeq ($(shell uname -s),Darwin)
   TSAN_SORT_CC    := clang
   TSAN_SORT_INC   := -I/opt/homebrew/include
+  TSAN_RUN_PREFIX :=
 else
   TSAN_SORT_CC    := gcc
   TSAN_SORT_INC   :=
+  # On Linux, high-entropy ASLR collides with TSan's fixed shadow mapping
+  # ("FATAL: ThreadSanitizer: unexpected memory mapping").  Run under
+  # `setarch -R` to disable ASLR for the process.  (setarch is util-linux;
+  # not present/needed on macOS.)
+  TSAN_RUN_PREFIX := setarch $(shell uname -m) -R
 endif
 TSAN_SORT_CFLAGS  := -Wall -O1 -g -fsanitize=thread
 TSAN_SORT_LDFLAGS := -fsanitize=thread
@@ -225,7 +231,7 @@ $(TSAN_SORT_OBJDIR)/parallel_sort.o: parallel_sort.c | $(TSAN_SORT_OBJDIR)
 tsan-sort: $(TSAN_SORT_OBJDIR)/test_parallel_sort_tsan.o $(TSAN_SORT_OBJDIR)/parallel_sort.o
 	$(TSAN_SORT_CC) $(TSAN_SORT_LDFLAGS) $^ -o $(TSAN_SORT_BIN) -lpthread
 	@echo "==> Running TSan sort test..."
-	$(TSAN_SORT_BIN)
+	$(TSAN_RUN_PREFIX) $(TSAN_SORT_BIN)
 
 all: $(PREP) $(BINARIES)
 
