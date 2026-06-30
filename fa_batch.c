@@ -128,6 +128,15 @@ static int fa_batch_entry_cmp(const void *a, const void *b) {
   return 0;
 }
 
+int fa_harvest_candidate_index(unsigned int result_index,
+                               unsigned int num_candidates,
+                               unsigned int *out_index) {
+  if (result_index >= num_candidates)
+    return 0;
+  *out_index = result_index;
+  return 1;
+}
+
 void fa_batch_sort_by_position(fa_batch_t *b) {
   if (b->num_candidates < 2) return;
 

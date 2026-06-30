@@ -591,12 +591,8 @@ void harvest_false_alarm_results(false_alarm_state *state) {
   for (i = 0; i < state->total_devices; i++) {
     unsigned int r;
     for (r = 0; r < args[i].num_results; r++) {
-      /* Defense-in-depth: ppi_refs holds exactly num_potential_start_indices
-       * entries.  If a device ever reports more results than that, indexing
-       * ppi_refs[r] below would read/write out of bounds and corrupt the heap.
-       * Bail loudly instead -- a wrong-but-visible result beats silent
-       * corruption that surfaces as an unrelated crash later. */
-      if (r >= state->num_potential_start_indices) {
+      unsigned int cand;
+      if (!fa_harvest_candidate_index(r, state->num_potential_start_indices, &cand)) {
         fprintf(stderr, "BUG: false-alarm result index %u from device %u exceeds candidate count %u; stopping harvest for this device to avoid heap corruption.\n",
                 r, i, state->num_potential_start_indices);
         break;
@@ -621,7 +617,7 @@ void harvest_false_alarm_results(false_alarm_state *state) {
 
       	  ntlm_hash(plaintext, plaintext_len, hash);
       	  if (!bytes_to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex)) || \
-      	      (strcmp(hash_hex, state->ppi_refs[r]->hash) != 0)) {
+      	      (strcmp(hash_hex, state->ppi_refs[cand]->hash) != 0)) {
       	    continue;
       	  }
       	} else if (args[i].hash_type == HASH_MD5) {
@@ -630,7 +626,7 @@ void harvest_false_alarm_results(false_alarm_state *state) {
 
       	  md5_hash(plaintext, plaintext_len, hash);
       	  if (!bytes_to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex)) || \
-      	      (strcmp(hash_hex, state->ppi_refs[r]->hash) != 0)) {
+      	      (strcmp(hash_hex, state->ppi_refs[cand]->hash) != 0)) {
       	    continue;
       	  }
       	} else if (args[i].hash_type == HASH_NETNTLMV1) {
@@ -644,9 +640,9 @@ void harvest_false_alarm_results(false_alarm_state *state) {
           netntlmv1_hash(real_key, 8, hash);
 
           if (!bytes_to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex)) || \
-              (strncmp(hash_hex, state->ppi_refs[r]->hash, 16) != 0)) {
+              (strncmp(hash_hex, state->ppi_refs[cand]->hash, 16) != 0)) {
                 bytes_to_hex(real_key, sizeof(real_key), rkey_hex, sizeof(rkey_hex));
-                printf("Found super false positive!: (Net-NTLMv1('%s') == %s) != %s\n", rkey_hex, hash_hex, state->ppi_refs[r]->hash);
+                printf("Found super false positive!: (Net-NTLMv1('%s') == %s) != %s\n", rkey_hex, hash_hex, state->ppi_refs[cand]->hash);
             continue;
           }
         } else {
@@ -656,7 +652,7 @@ void harvest_false_alarm_results(false_alarm_state *state) {
       	/* Its official: we cracked a hash! */
 
         /* Skip if this ppi was already cracked by a previous match in this loop. */
-        if (state->ppi_refs[r]->plaintext != NULL)
+        if (state->ppi_refs[cand]->plaintext != NULL)
           continue;
 
       	/* Save the plaintext, clear the precomputed end indices list (since its
@@ -665,19 +661,19 @@ void harvest_false_alarm_results(false_alarm_state *state) {
       	if (args[i].hash_type == HASH_NETNTLMV1) {
           char ptxt_hex[(7 * 2) + 1] = {0};
           bytes_to_hex((unsigned char*)plaintext, 7, ptxt_hex, sizeof(ptxt_hex));
-          state->ppi_refs[r]->plaintext = strdup(ptxt_hex);
+          state->ppi_refs[cand]->plaintext = strdup(ptxt_hex);
         } else {
-          state->ppi_refs[r]->plaintext = strdup(plaintext);
+          state->ppi_refs[cand]->plaintext = strdup(plaintext);
         }
-      	state->ppi_refs[r]->num_precomputed_end_indices = 0;
-      	FREE(state->ppi_refs[r]->precomputed_end_indices);
+      	state->ppi_refs[cand]->num_precomputed_end_indices = 0;
+      	FREE(state->ppi_refs[cand]->precomputed_end_indices);
 
-      	save_cracked_hash(state->ppi_refs[r], args[i].hash_type);
+      	save_cracked_hash(state->ppi_refs[cand], args[i].hash_type);
         if (args[i].hash_type == HASH_NETNTLMV1) {
-          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, state->ppi_refs[r]->hash, chalhex, state->ppi_refs[r]->plaintext, CLR);
+          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, state->ppi_refs[cand]->hash, chalhex, state->ppi_refs[cand]->plaintext, CLR);
           fflush(stdout);
         } else {
-          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, (state->ppi_refs[r]->username != NULL) ? state->ppi_refs[r]->username : state->ppi_refs[r]->hash, chalhex, plaintext, CLR);  fflush(stdout);
+          printf("%sHASH CRACKED => %s:%s:%s%s\n", GREENB, (state->ppi_refs[cand]->username != NULL) ? state->ppi_refs[cand]->username : state->ppi_refs[cand]->hash, chalhex, plaintext, CLR);  fflush(stdout);
         }
       }
     }

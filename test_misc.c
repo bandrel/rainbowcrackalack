@@ -712,6 +712,102 @@ static int group_m(void)
 }
 
 
+/* --- Group N: fa_harvest_candidate_index --- */
+static int group_n(void)
+{
+    int ok = 1;
+    unsigned int out = 0xdeadbeef;
+
+    /* N-01..05: in-bounds cases for num_candidates=5, r=0..4 */
+    {
+        unsigned int r;
+        for (r = 0; r < 5; r++) {
+            out = 0xdeadbeef;
+            if (fa_harvest_candidate_index(r, 5, &out) != 1) {
+                fprintf(stderr, "FAIL N-0%u: expected return 1 for r=%u num_candidates=5\n", r+1, r);
+                ok = 0;
+            } else if (out != r) {
+                fprintf(stderr, "FAIL N-0%u: expected out_index=%u got %u\n", r+1, r, out);
+                ok = 0;
+            }
+        }
+    }
+
+    /* N-06: out of bounds: r==5, num_candidates=5 -> returns 0 */
+    out = 0xdeadbeef;
+    if (fa_harvest_candidate_index(5, 5, &out) != 0) {
+        fprintf(stderr, "FAIL N-06: expected return 0 for r=5 num_candidates=5\n");
+        ok = 0;
+    }
+
+    /* N-07: out of bounds: r==100, num_candidates=5 -> returns 0 */
+    out = 0xdeadbeef;
+    if (fa_harvest_candidate_index(100, 5, &out) != 0) {
+        fprintf(stderr, "FAIL N-07: expected return 0 for r=100 num_candidates=5\n");
+        ok = 0;
+    }
+
+    /* N-08: num_candidates==0: any r returns 0 */
+    out = 0xdeadbeef;
+    if (fa_harvest_candidate_index(0, 0, &out) != 0) {
+        fprintf(stderr, "FAIL N-08: expected return 0 for r=0 num_candidates=0\n");
+        ok = 0;
+    }
+
+    /* N-09: multi-device invariant -- the key regression guard.
+     * Simulate the harvest loop for total_devices=3, each with num_results=5,
+     * num_candidates=5.  Walk device=0,1,2 and r=0..4, collecting out_index for
+     * every in-bounds call.  Assert:
+     *   (a) every returned index is < 5, and
+     *   (b) for the same r across different devices, the mapping is IDENTICAL
+     *       (== r), NOT a running counter that would climb to 14 and overrun
+     *       the 5-entry ppi_refs snapshot -- that is precisely the multi-GPU OOB
+     *       heap corruption this helper prevents.
+     */
+    {
+        unsigned int total_devices = 3;
+        unsigned int num_results   = 5;
+        unsigned int num_candidates = 5;
+        unsigned int dev, r;
+        /* Store the first device's out_index for each r to compare later. */
+        unsigned int first_dev_out[5] = {0};
+
+        for (dev = 0; dev < total_devices; dev++) {
+            for (r = 0; r < num_results; r++) {
+                out = 0xdeadbeef;
+                int ret = fa_harvest_candidate_index(r, num_candidates, &out);
+
+                /* (a) every result is in-bounds and < num_candidates */
+                if (ret != 1) {
+                    fprintf(stderr, "FAIL N-09a: device=%u r=%u expected in-bounds\n", dev, r);
+                    ok = 0;
+                    continue;
+                }
+                if (out >= num_candidates) {
+                    fprintf(stderr, "FAIL N-09b: device=%u r=%u out_index=%u >= num_candidates=%u\n",
+                            dev, r, out, num_candidates);
+                    ok = 0;
+                }
+
+                /* (b) same r on a different device yields the same index */
+                if (dev == 0) {
+                    first_dev_out[r] = out;
+                } else {
+                    if (out != first_dev_out[r]) {
+                        fprintf(stderr, "FAIL N-09c: device=%u r=%u out_index=%u != device0 out_index=%u "
+                                "(running-counter bug would give device*n+r here)\n",
+                                dev, r, out, first_dev_out[r]);
+                        ok = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    return ok;
+}
+
+
 int test_misc(void)
 {
     int ok = 1;
@@ -729,6 +825,7 @@ int test_misc(void)
     ok &= group_k();
     ok &= group_l();
     ok &= group_m();
+    ok &= group_n();
 
     return ok;
 }
