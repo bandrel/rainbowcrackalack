@@ -201,6 +201,7 @@ cpu-tests: $(CPU_TESTS_OBJS)
 # Uses a dedicated build directory (build/tsan-sort/obj) so it never clobbers
 # the normal platform build.
 TSAN_SORT_OBJDIR := build/tsan-sort/obj
+TSAN_SORT_BIN    := $(CURDIR)/build/tsan-sort/test_parallel_sort_tsan
 ifeq ($(shell uname -s),Darwin)
   TSAN_SORT_CC    := clang
   TSAN_SORT_INC   := -I/opt/homebrew/include
@@ -221,9 +222,9 @@ $(TSAN_SORT_OBJDIR)/parallel_sort.o: parallel_sort.c | $(TSAN_SORT_OBJDIR)
 	$(TSAN_SORT_CC) $(TSAN_SORT_INC) $(TSAN_SORT_CFLAGS) -c $< -o $@
 
 tsan-sort: $(TSAN_SORT_OBJDIR)/test_parallel_sort_tsan.o $(TSAN_SORT_OBJDIR)/parallel_sort.o
-	$(TSAN_SORT_CC) $(TSAN_SORT_LDFLAGS) $^ -o build/tsan-sort/test_parallel_sort_tsan -lpthread
+	$(TSAN_SORT_CC) $(TSAN_SORT_LDFLAGS) $^ -o $(TSAN_SORT_BIN) -lpthread
 	@echo "==> Running TSan sort test..."
-	./build/tsan-sort/test_parallel_sort_tsan
+	$(TSAN_SORT_BIN)
 
 all: $(PREP) $(BINARIES)
 
