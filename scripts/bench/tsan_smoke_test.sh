@@ -40,6 +40,18 @@ case "$(uname -s)" in
   *) echo "SKIP: unsupported platform $(uname -s)"; exit 0 ;;
 esac
 
+# On Linux, high-entropy ASLR collides with TSan's fixed shadow mapping
+# ("FATAL: ThreadSanitizer: unexpected memory mapping").  Run the TSan-
+# instrumented binaries under `setarch -R` to disable ASLR.  Empty on macOS.
+TSAN_RUN=""
+if [[ "$PLATFORM" == "linux" ]]; then
+  if command -v setarch >/dev/null 2>&1; then
+    TSAN_RUN="setarch $(uname -m) -R"
+  else
+    echo "[tsan-smoke] WARNING: setarch not found; TSan may abort on ASLR mapping" >&2
+  fi
+fi
+
 GEN="$REPO/crackalack_gen"
 LOOKUP="$REPO/crackalack_lookup"
 GKH="$REPO/gen_known_hash"
@@ -99,17 +111,17 @@ export TSAN_OPTIONS="suppressions=${SUPP} halt_on_error=0 history_size=4"
 genname="ntlm_ascii-32-95#8-8_0_${CHAIN_LEN}x${NUM_CHAINS}_0.rt"
 echo "[tsan-smoke] generating tiny NTLM8 table (${NUM_CHAINS} chains x ${CHAIN_LEN} steps)..."
 # Metal loads kernels relative to the executable dir; gen from repo root then move.
-( cd "$REPO" && "$GEN" ntlm ascii-32-95 8 8 0 "$CHAIN_LEN" "$NUM_CHAINS" 0 >/dev/null 2>&1 )
+( cd "$REPO" && $TSAN_RUN "$GEN" ntlm ascii-32-95 8 8 0 "$CHAIN_LEN" "$NUM_CHAINS" 0 >/dev/null 2>&1 )
 [[ -f "$REPO/$genname" ]] || fail "no table generated ($genname)"
 mv -f "$REPO/$genname" "$work/"
 rm -f "$REPO/$genname.state"
 table="$work/$genname"
 
 echo "[tsan-smoke] sorting table..."
-"$SORT" "$table" >/dev/null 2>&1 || fail "crackalack_sort failed"
+$TSAN_RUN "$SORT" "$table" >/dev/null 2>&1 || fail "crackalack_sort failed"
 
 echo "[tsan-smoke] minting in-table known hash..."
-out="$("$GKH" "$CHAIN_LEN" 0 0 "$TARGET_POS" --algo ntlm --charset ascii-32-95 --plaintext-len 8)"
+out="$($TSAN_RUN "$GKH" "$CHAIN_LEN" 0 0 "$TARGET_POS" --algo ntlm --charset ascii-32-95 --plaintext-len 8)"
 hash="$(awk -F= '/^hash=/{print $2}' <<<"$out")"
 pt="$(awk -F= '/^plaintext=/{print $2}' <<<"$out")"
 [[ -n "$hash" ]] || fail "gen_known_hash produced no hash"
@@ -123,7 +135,7 @@ printf '%s\n' "$hash" > "$work/hashes.txt"
 # ---- run lookup under TSan --------------------------------------------------
 echo "[tsan-smoke] running crackalack_lookup under ThreadSanitizer..."
 log="$work/tsan_lookup.log"
-( cd "$REPO" && "$LOOKUP" "$work" "$work/hashes.txt" "$potfile" --bloom-fpr 0 ) >"$log" 2>&1
+( cd "$REPO" && $TSAN_RUN "$LOOKUP" "$work" "$work/hashes.txt" "$potfile" --bloom-fpr 0 ) >"$log" 2>&1
 rc=$?
 
 echo "--- TSan/lookup output (tail) ---"
