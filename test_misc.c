@@ -11,6 +11,7 @@
 
 #include "charset.h"
 #include "cpu_rt_functions.h"
+#include "fa_batch.h"
 #include "hash_validate.h"
 #include "misc.h"
 #include "shared.h"
@@ -302,8 +303,6 @@ static int group_i(void)
 }
 
 
-#include "fa_batch.h"
-
 /* Construct a minimal ppi node for testing.  Caller frees. */
 static precomputed_and_potential_indices *mk_ppi(const char *hash_hex,
                                                  const uint64_t *starts,
@@ -520,6 +519,306 @@ static int group_l(void)
 }
 
 
+/* --- Group M: parse_hash_file_data --- */
+static int group_m(void)
+{
+    int ok = 1;
+    char **hashes = NULL;
+    char **usernames = NULL;
+    unsigned int num_hashes = 0, previously_cracked = 0;
+    int file_format = 0;
+    unsigned int i;
+
+    /* M-01: PLAIN format, 3 hashes, uppercase input → lowercased output. */
+    {
+        char input[] = "AABBCCDDEEFF00112233445566778899\nBBCCDDEEFF00112233445566778899AA\nCCDDEEFF00112233445566778899AABB\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+            { fprintf(stderr, "FAIL PHF-M01: parse returned error\n"); ok = 0; }
+        else {
+            if (num_hashes != 3)
+                { fprintf(stderr, "FAIL PHF-M01: expected 3 hashes, got %u\n", num_hashes); ok = 0; }
+            if (file_format != HASH_FILE_FORMAT_PLAIN)
+                { fprintf(stderr, "FAIL PHF-M01: wrong format %d\n", file_format); ok = 0; }
+            if (hashes && num_hashes >= 1 && strcmp(hashes[0], "aabbccddeeff00112233445566778899") != 0)
+                { fprintf(stderr, "FAIL PHF-M01: hashes[0]=\"%s\"\n", hashes[0]); ok = 0; }
+        }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-02: CRLF line endings → no trailing \r in stored hash. */
+    {
+        char input[] = "AABBCCDDEEFF00112233445566778899\r\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+            { fprintf(stderr, "FAIL PHF-M02: parse returned error\n"); ok = 0; }
+        else {
+            if (num_hashes != 1)
+                { fprintf(stderr, "FAIL PHF-M02: expected 1 hash, got %u\n", num_hashes); ok = 0; }
+            if (hashes && num_hashes >= 1 && strcmp(hashes[0], "aabbccddeeff00112233445566778899") != 0)
+                { fprintf(stderr, "FAIL PHF-M02: hashes[0]=\"%s\"\n", hashes[0]); ok = 0; }
+        }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-03: Empty lines interspersed → skipped. */
+    {
+        char input[] = "aabbccddeeff00112233445566778899\n\nbbccddeeff00112233445566778899aa\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+            { fprintf(stderr, "FAIL PHF-M03: parse returned error\n"); ok = 0; }
+        else if (num_hashes != 2)
+            { fprintf(stderr, "FAIL PHF-M03: expected 2 hashes, got %u\n", num_hashes); ok = 0; }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-04: Already-cracked skip (PLAIN). */
+    {
+        char input[] = "aabbccddeeff00112233445566778899\nbbccddeeff00112233445566778899aa\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "aabbccddeeff00112233445566778899", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+            { fprintf(stderr, "FAIL PHF-M04: parse returned error\n"); ok = 0; }
+        else {
+            if (num_hashes != 1)
+                { fprintf(stderr, "FAIL PHF-M04: expected 1 hash, got %u\n", num_hashes); ok = 0; }
+            if (previously_cracked != 1)
+                { fprintf(stderr, "FAIL PHF-M04: expected previously_cracked=1, got %u\n", previously_cracked); ok = 0; }
+            if (hashes && num_hashes >= 1 && strcmp(hashes[0], "bbccddeeff00112233445566778899aa") != 0)
+                { fprintf(stderr, "FAIL PHF-M04: hashes[0]=\"%s\"\n", hashes[0]); ok = 0; }
+        }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-05: PWDUMP format. */
+    {
+        char input[] = "Administrator:500:AABBCCDDEEFF00112233445566778899:aabbccddeeff00112233445566778899:::\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+            { fprintf(stderr, "FAIL PHF-M05: parse returned error\n"); ok = 0; }
+        else {
+            if (num_hashes != 1)
+                { fprintf(stderr, "FAIL PHF-M05: expected 1 hash, got %u\n", num_hashes); ok = 0; }
+            if (file_format != HASH_FILE_FORMAT_PWDUMP)
+                { fprintf(stderr, "FAIL PHF-M05: wrong format %d\n", file_format); ok = 0; }
+            if (usernames && num_hashes >= 1 && strcmp(usernames[0], "Administrator") != 0)
+                { fprintf(stderr, "FAIL PHF-M05: usernames[0]=\"%s\"\n", usernames[0]); ok = 0; }
+            if (hashes && num_hashes >= 1 && strcmp(hashes[0], "aabbccddeeff00112233445566778899") != 0)
+                { fprintf(stderr, "FAIL PHF-M05: hashes[0]=\"%s\"\n", hashes[0]); ok = 0; }
+        }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-06: NULL pot_contents treated as empty (no matches). */
+    {
+        char input[] = "aabbccddeeff00112233445566778899\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, NULL, &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+            { fprintf(stderr, "FAIL PHF-M06: parse returned error\n"); ok = 0; }
+        else if (num_hashes != 1)
+            { fprintf(stderr, "FAIL PHF-M06: expected 1 hash, got %u\n", num_hashes); ok = 0; }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-07: pot_contents=="" (empty string, valid pointer) — no false match. */
+    {
+        char input[] = "aabbccddeeff00112233445566778899\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+            { fprintf(stderr, "FAIL PHF-M07: parse returned error\n"); ok = 0; }
+        else if (num_hashes != 1)
+            { fprintf(stderr, "FAIL PHF-M07: expected 1 hash, got %u\n", num_hashes); ok = 0; }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-08: Regression for NUL-termination — pot_contents is exactly strlen+1 bytes. */
+    {
+        char input[] = "aabbccddeeff00112233445566778899\n";
+        char *pot = strdup("deadbeefdeadbeefdeadbeefdeadbeef");
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, pot, &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+            { fprintf(stderr, "FAIL PHF-M08: parse returned error\n"); ok = 0; }
+        else {
+            if (num_hashes != 1)
+                { fprintf(stderr, "FAIL PHF-M08: expected 1 hash, got %u\n", num_hashes); ok = 0; }
+            if (previously_cracked != 0)
+                { fprintf(stderr, "FAIL PHF-M08: expected previously_cracked=0, got %u\n", previously_cracked); ok = 0; }
+        }
+        free(pot);
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-09: Error path — PWDUMP first line valid, second line malformed (hash
+     * cannot be extracted: fewer than 4 colons so hash_start/hash_end stay 0).
+     * Expects non-zero return AND out-params NULLed/zeroed. */
+    {
+        /* First line is well-formed PWDUMP (6 colons); second line has only 2
+         * colons so the colon-scanning loop cannot reach the 3rd/4th colon. */
+        char input[] =
+            "Administrator:500:AABBCCDDEEFF00112233445566778899:aabbccddeeff00112233445566778899:::\n"
+            "BADLINE:oops\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) == 0)
+            { fprintf(stderr, "FAIL PHF-M09: expected error, got success\n"); ok = 0; }
+        if (hashes != NULL)
+            { fprintf(stderr, "FAIL PHF-M09: out_hashes not NULL on error\n"); ok = 0; }
+        if (usernames != NULL)
+            { fprintf(stderr, "FAIL PHF-M09: out_usernames not NULL on error\n"); ok = 0; }
+        if (num_hashes != 0)
+            { fprintf(stderr, "FAIL PHF-M09: out_num_hashes not 0 on error (got %u)\n", num_hashes); ok = 0; }
+        /* Nothing to free: function must have self-cleaned. */
+    }
+
+    /* M-10: Error path — PWDUMP line with NT-hash field that is not 32 chars.
+     * Expects non-zero return AND out-params NULLed/zeroed. */
+    {
+        /* The NT-hash field (4th field) is only 8 characters. */
+        char input[] = "Administrator:500:AABBCCDD:SHORT:::\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) == 0)
+            { fprintf(stderr, "FAIL PHF-M10: expected error, got success\n"); ok = 0; }
+        if (hashes != NULL)
+            { fprintf(stderr, "FAIL PHF-M10: out_hashes not NULL on error\n"); ok = 0; }
+        if (usernames != NULL)
+            { fprintf(stderr, "FAIL PHF-M10: out_usernames not NULL on error\n"); ok = 0; }
+        if (num_hashes != 0)
+            { fprintf(stderr, "FAIL PHF-M10: out_num_hashes not 0 on error (got %u)\n", num_hashes); ok = 0; }
+    }
+
+    /* M-11: Error path — unrecognized format (2 colons in first line, neither
+     * 0 nor 6).  Expects non-zero return AND out-params NULLed/zeroed. */
+    {
+        char input[] = "foo:bar:baz\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) == 0)
+            { fprintf(stderr, "FAIL PHF-M11: expected error, got success\n"); ok = 0; }
+        if (hashes != NULL)
+            { fprintf(stderr, "FAIL PHF-M11: out_hashes not NULL on error\n"); ok = 0; }
+        if (usernames != NULL)
+            { fprintf(stderr, "FAIL PHF-M11: out_usernames not NULL on error\n"); ok = 0; }
+        if (num_hashes != 0)
+            { fprintf(stderr, "FAIL PHF-M11: out_num_hashes not 0 on error (got %u)\n", num_hashes); ok = 0; }
+    }
+
+    return ok;
+}
+
+
+/* --- Group N: fa_harvest_candidate_index --- */
+static int group_n(void)
+{
+    int ok = 1;
+    unsigned int out = 0xdeadbeef;
+
+    /* N-01..05: in-bounds cases for num_candidates=5, r=0..4 */
+    {
+        unsigned int r;
+        for (r = 0; r < 5; r++) {
+            out = 0xdeadbeef;
+            if (fa_harvest_candidate_index(r, 5, &out) != 1) {
+                fprintf(stderr, "FAIL N-0%u: expected return 1 for r=%u num_candidates=5\n", r+1, r);
+                ok = 0;
+            } else if (out != r) {
+                fprintf(stderr, "FAIL N-0%u: expected out_index=%u got %u\n", r+1, r, out);
+                ok = 0;
+            }
+        }
+    }
+
+    /* N-06: out of bounds: r==5, num_candidates=5 -> returns 0, out untouched */
+    out = 0xdeadbeef;
+    if (fa_harvest_candidate_index(5, 5, &out) != 0) {
+        fprintf(stderr, "FAIL N-06: expected return 0 for r=5 num_candidates=5\n");
+        ok = 0;
+    }
+    if (out != 0xdeadbeef) {
+        fprintf(stderr, "FAIL N-06: out_index overwritten on failure path (got 0x%x)\n", out);
+        ok = 0;
+    }
+
+    /* N-07: out of bounds: r==100, num_candidates=5 -> returns 0, out untouched */
+    out = 0xdeadbeef;
+    if (fa_harvest_candidate_index(100, 5, &out) != 0) {
+        fprintf(stderr, "FAIL N-07: expected return 0 for r=100 num_candidates=5\n");
+        ok = 0;
+    }
+    if (out != 0xdeadbeef) {
+        fprintf(stderr, "FAIL N-07: out_index overwritten on failure path (got 0x%x)\n", out);
+        ok = 0;
+    }
+
+    /* N-08: num_candidates==0: any r returns 0, out untouched */
+    out = 0xdeadbeef;
+    if (fa_harvest_candidate_index(0, 0, &out) != 0) {
+        fprintf(stderr, "FAIL N-08: expected return 0 for r=0 num_candidates=0\n");
+        ok = 0;
+    }
+    if (out != 0xdeadbeef) {
+        fprintf(stderr, "FAIL N-08: out_index overwritten on failure path (got 0x%x)\n", out);
+        ok = 0;
+    }
+
+    /* N-09: multi-device invariant -- the key regression guard.
+     * Simulate the harvest loop for total_devices=3, each with num_results=5,
+     * num_candidates=5.  Walk device=0,1,2 and r=0..4, collecting out_index for
+     * every in-bounds call.  Assert:
+     *   (a) every returned index is < 5, and
+     *   (b) for the same r across different devices, the mapping is IDENTICAL
+     *       (== r), NOT a running counter that would climb to 14 and overrun
+     *       the 5-entry ppi_refs snapshot -- that is precisely the multi-GPU OOB
+     *       heap corruption this helper prevents.
+     */
+    {
+        unsigned int total_devices = 3;
+        unsigned int num_results   = 5;
+        unsigned int num_candidates = 5;
+        unsigned int dev, r;
+        /* Store the first device's out_index for each r to compare later. */
+        unsigned int first_dev_out[5] = {0};
+
+        for (dev = 0; dev < total_devices; dev++) {
+            for (r = 0; r < num_results; r++) {
+                out = 0xdeadbeef;
+                int ret = fa_harvest_candidate_index(r, num_candidates, &out);
+
+                /* (a) every result is in-bounds and < num_candidates */
+                if (ret != 1) {
+                    fprintf(stderr, "FAIL N-09a: device=%u r=%u expected in-bounds\n", dev, r);
+                    ok = 0;
+                    continue;
+                }
+                if (out >= num_candidates) {
+                    fprintf(stderr, "FAIL N-09b: device=%u r=%u out_index=%u >= num_candidates=%u\n",
+                            dev, r, out, num_candidates);
+                    ok = 0;
+                }
+
+                /* (b) same r on a different device yields the same index */
+                if (dev == 0) {
+                    first_dev_out[r] = out;
+                } else {
+                    if (out != first_dev_out[r]) {
+                        fprintf(stderr, "FAIL N-09c: device=%u r=%u out_index=%u != device0 out_index=%u "
+                                "(running-counter bug would give device*n+r here)\n",
+                                dev, r, out, first_dev_out[r]);
+                        ok = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    return ok;
+}
+
+
 int test_misc(void)
 {
     int ok = 1;
@@ -536,6 +835,8 @@ int test_misc(void)
     ok &= group_j();
     ok &= group_k();
     ok &= group_l();
+    ok &= group_m();
+    ok &= group_n();
 
     return ok;
 }

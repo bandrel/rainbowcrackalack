@@ -618,6 +618,193 @@ void str_to_lowercase(char *s) {
 }
 
 
+/* Parse hash-file contents into newly-allocated hashes/usernames arrays.
+ * See misc.h for full parameter documentation.
+ * On error, all internal allocations are freed and the out-params are set to
+ * NULL/0 before returning non-zero. */
+int parse_hash_file_data(char *file_data,
+                         const char *pot_contents,
+                         char ***out_hashes,
+                         char ***out_usernames,
+                         unsigned int *out_num_hashes,
+                         unsigned int *out_num_previously_cracked,
+                         int *out_file_format) {
+  unsigned int i = 0;
+  unsigned int max_num_hashes = 0;
+  unsigned int num_colons = 0;
+  unsigned int num_hashes = 0;
+  unsigned int previously_cracked = 0;
+  int file_format = 0;
+  char **hashes = NULL;
+  char **usernames = NULL;
+  char *line = NULL;
+  char *line_copy = NULL;  /* PWDUMP per-line scratch; freed at cleanup_err */
+  size_t file_data_len = strlen(file_data);
+
+  /* Count newlines to determine array size. */
+  for (i = 0; i < file_data_len; i++) {
+    if (file_data[i] == '\n')
+      max_num_hashes++;
+  }
+  max_num_hashes++;  /* In case the last line doesn't end with an LF. */
+
+  /* Detect format by counting colons in the first line. */
+  num_colons = 0;
+  for (i = 0; i < file_data_len; i++) {
+    if (file_data[i] == ':')
+      num_colons++;
+    else if (file_data[i] == '\n')
+      break;
+  }
+
+  if (num_colons == 0) {
+    file_format = HASH_FILE_FORMAT_PLAIN;
+    printf("Hash file contains plain hashes.\n");
+  } else if (num_colons == 6) {
+    file_format = HASH_FILE_FORMAT_PWDUMP;
+    printf("Hash file is pwdump format.\n");
+  } else {
+    fprintf(stderr, "Error: hash file format is not recognized (number of colons in first line is %u, instead of 0 or 6).\n", num_colons);
+    goto cleanup_err;
+  }
+
+  usernames = calloc(max_num_hashes, sizeof(char *));
+  hashes = calloc(max_num_hashes, sizeof(char *));
+  if ((usernames == NULL) || (hashes == NULL)) {
+    fprintf(stderr, "Error while allocating buffer for hashes.\n");
+    goto cleanup_err;
+  }
+
+  /* Tokenize the hash file by line.  Store each hash in the array. */
+  num_hashes = 0;
+  line = strtok(file_data, "\n");
+  while (line && (num_hashes < max_num_hashes)) {
+
+    /* Skip empty lines. */
+    if (strlen(line) > 0) {
+
+      /* Skip previously-cracked hashes. */
+      if ((pot_contents != NULL) && strstr(pot_contents, line) != NULL)
+        previously_cracked++;
+      else {
+        /* If we're dealing with CRLF line endings, cut off the trailing CR. */
+        if (line[strlen(line) - 1] == '\r')
+          line[strlen(line) - 1] = '\0';
+
+        if (file_format == HASH_FILE_FORMAT_PLAIN) {
+          /* Ensure that hash is lowercase. */
+          str_to_lowercase(line);
+
+          hashes[num_hashes] = strdup(line);
+          if (hashes[num_hashes] == NULL) {
+            fprintf(stderr, "Error while allocating buffer for hashes.\n");
+            goto cleanup_err;
+          }
+          num_hashes++;
+        } else {  /* HASH_FILE_FORMAT_PWDUMP */
+          char *hash = NULL;
+          unsigned int line_copy_len = 0;
+          unsigned int hash_start = 0, hash_end = 0;
+
+          line_copy = strdup(line);
+          if (line_copy == NULL) {
+            fprintf(stderr, "Error while allocating buffer for hashes.\n");
+            goto cleanup_err;
+          }
+          line_copy_len = strlen(line_copy);
+
+          /* Get the username from position zero until the first colon. */
+          for (i = 0; i < line_copy_len; i++) {
+            if (line_copy[i] == ':') {
+              line_copy[i] = '\0';
+              usernames[num_hashes] = strdup(line_copy);
+              if (usernames[num_hashes] == NULL) {
+                fprintf(stderr, "Error while allocating buffer for usernames.\n");
+                goto cleanup_err;
+              }
+              break;
+            }
+          }
+
+          /* Find the start and end positions of the hash, based on the number of colons. */
+          num_colons = 1;
+          hash_start = 0;
+          hash_end = 0;
+          for (i = i + 1; i < line_copy_len; i++) {
+            if (line_copy[i] == ':')
+              num_colons++;
+
+            if ((num_colons == 3) && (hash_start == 0))
+              hash_start = i + 1;
+            else if (num_colons == 4) {
+              hash_end = i;
+              break;
+            }
+          }
+
+          if ((hash_start == 0) || (hash_end == 0)) {
+            fprintf(stderr, "Error: failed to extract hash from line: [%s]\n", line);
+            goto cleanup_err;
+          }
+
+          *(line_copy + hash_end) = '\0';
+          hash = line_copy + hash_start;
+
+          /* Make sure the hash is 32 bytes. */
+          if (strlen(hash) != 32) {
+            fprintf(stderr, "Error: hash is length %u instead of 32: [%s]\n", (unsigned int)strlen(hash), hash);
+            goto cleanup_err;
+          }
+
+          str_to_lowercase(hash);  /* Ensure hash is lowercase. */
+
+          if ((pot_contents != NULL) && strstr(pot_contents, hash) != NULL) {
+            previously_cracked++;
+          } else {
+            hashes[num_hashes] = strdup(hash);
+            if (hashes[num_hashes] == NULL) {
+              fprintf(stderr, "Error while allocating buffer for hashes.\n");
+              goto cleanup_err;
+            }
+            num_hashes++;
+          }
+          FREE(line_copy);
+        }
+      }
+    }
+    line = strtok(NULL, "\n");
+  }
+
+  *out_hashes = hashes;
+  *out_usernames = usernames;
+  *out_num_hashes = num_hashes;
+  *out_num_previously_cracked = previously_cracked;
+  *out_file_format = file_format;
+  return 0;
+
+cleanup_err:
+  /* Free the PWDUMP scratch buffer if we were mid-line when the error hit. */
+  FREE(line_copy);
+  /* Free all hashes and usernames allocated so far (slots 0..num_hashes-1),
+   * plus the just-allocated username in slot num_hashes if present. */
+  if (hashes != NULL) {
+    for (i = 0; i <= num_hashes; i++)
+      free(hashes[i]);
+    free(hashes);
+  }
+  if (usernames != NULL) {
+    for (i = 0; i <= num_hashes; i++)
+      free(usernames[i]);
+    free(usernames);
+  }
+  *out_hashes = NULL;
+  *out_usernames = NULL;
+  *out_num_hashes = 0;
+  *out_num_previously_cracked = 0;
+  return -1;
+}
+
+
 /* On Windows, prints the last error. */
 #ifdef _WIN32
 void windows_print_error(char *func_name) {
