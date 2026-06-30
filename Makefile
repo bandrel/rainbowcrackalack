@@ -79,6 +79,14 @@ ifeq ($(BUILD),windows)
   PREP := prep_opencl_headers
 endif
 
+# Coverage instrumentation (opt-in: `make <target> COVERAGE=1`).  Strips LTO and
+# -O3 (which break / distort gcov line mapping) and adds gcov-style coverage to
+# both compile and link.  Produces .gcno/.gcda consumable by gcov / llvm-cov gcov.
+ifdef COVERAGE
+  CFLAGS  := $(filter-out -flto -flto=auto -O3 -O2 -O1,$(CFLAGS)) -O0 --coverage
+  LDFLAGS := $(filter-out -flto -flto=auto,$(LDFLAGS)) --coverage
+endif
+
 GPU_BACKEND_OBJ ?= $(OBJDIR)/opencl_setup.o
 
 SRCS := $(wildcard *.c)
@@ -213,6 +221,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_chain_markov_ntlm8.o \
 	$(OBJDIR)/test_chain_markov_ntlm9.o \
 	$(OBJDIR)/test_markov.o \
+	$(OBJDIR)/test_challenge_host.o \
 	$(OBJDIR)/test_misc.o \
 	$(OBJDIR)/precompute_collate.o \
 	$(OBJDIR)/test_precompute_collate.o \
