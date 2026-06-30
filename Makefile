@@ -87,6 +87,13 @@ ifdef COVERAGE
   LDFLAGS := $(filter-out -flto -flto=auto,$(LDFLAGS)) --coverage
 endif
 
+# ThreadSanitizer (opt-in: `make <target> TSAN=1`).  Mutually exclusive with
+# COVERAGE/ASan.  Strips LTO/-O3 (clean TSan reports) and adds -fsanitize=thread.
+ifdef TSAN
+  CFLAGS  := $(filter-out -flto -flto=auto -O3 -O2 -O1,$(CFLAGS)) -O1 -g -fsanitize=thread
+  LDFLAGS := $(filter-out -flto -flto=auto,$(LDFLAGS)) -fsanitize=thread
+endif
+
 GPU_BACKEND_OBJ ?= $(OBJDIR)/opencl_setup.o
 
 SRCS := $(wildcard *.c)
@@ -119,7 +126,7 @@ BINARIES := \
 
 .PHONY: all linux linux-opencl macos windows clean strip \
         prep_opencl_headers prep_none \
-        bundle_windows gen_known_hash cpu-tests
+        bundle_windows gen_known_hash cpu-tests tsan-sort
 
 # On-demand convenience target.  NOT part of the default `all`/BINARIES list
 # because gen_known_hash needs OpenSSL (-lssl -lcrypto), an extra dependency the
@@ -189,6 +196,34 @@ $(CPU_TESTS_OBJDIR)/%.o: %.c | $(CPU_TESTS_OBJDIR)
 cpu-tests: $(CPU_TESTS_OBJS)
 	$(CPU_TESTS_CC) $(CPU_TESTS_LDFLAGS) $^ -o $(OUTDIR)/$(CPU_TESTS_PROG) $(CPU_TESTS_LIBS)
 	@echo "Built $(OUTDIR)/$(CPU_TESTS_PROG)"
+
+# tsan-sort: build and run test_parallel_sort_tsan.c under ThreadSanitizer.
+# Uses a dedicated build directory (build/tsan-sort/obj) so it never clobbers
+# the normal platform build.
+TSAN_SORT_OBJDIR := build/tsan-sort/obj
+ifeq ($(shell uname -s),Darwin)
+  TSAN_SORT_CC    := clang
+  TSAN_SORT_INC   := -I/opt/homebrew/include
+else
+  TSAN_SORT_CC    := gcc
+  TSAN_SORT_INC   :=
+endif
+TSAN_SORT_CFLAGS  := -Wall -O1 -g -fsanitize=thread
+TSAN_SORT_LDFLAGS := -fsanitize=thread
+
+$(TSAN_SORT_OBJDIR):
+	mkdir -p $@
+
+$(TSAN_SORT_OBJDIR)/test_parallel_sort_tsan.o: test_parallel_sort_tsan.c | $(TSAN_SORT_OBJDIR)
+	$(TSAN_SORT_CC) $(TSAN_SORT_INC) $(TSAN_SORT_CFLAGS) -c $< -o $@
+
+$(TSAN_SORT_OBJDIR)/parallel_sort.o: parallel_sort.c | $(TSAN_SORT_OBJDIR)
+	$(TSAN_SORT_CC) $(TSAN_SORT_INC) $(TSAN_SORT_CFLAGS) -c $< -o $@
+
+tsan-sort: $(TSAN_SORT_OBJDIR)/test_parallel_sort_tsan.o $(TSAN_SORT_OBJDIR)/parallel_sort.o
+	$(TSAN_SORT_CC) $(TSAN_SORT_LDFLAGS) $^ -o build/tsan-sort/test_parallel_sort_tsan -lpthread
+	@echo "==> Running TSan sort test..."
+	./build/tsan-sort/test_parallel_sort_tsan
 
 all: $(PREP) $(BINARIES)
 
