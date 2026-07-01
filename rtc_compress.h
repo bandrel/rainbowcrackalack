@@ -18,6 +18,11 @@
 #ifndef RTC_COMPRESS_H
 #define RTC_COMPRESS_H
 
-int rtc_compress(const char *rt_filename, const char *rtc_filename);
+#include <stdint.h>
+
+/* Compresses an RT file to RTC format.  Returns 0 on success, negative on error.
+ * On success, if out_num_chains is not NULL, *out_num_chains is set to the number
+ * of chains written.  out_num_chains is only valid when the return value is 0. */
+int rtc_compress(const char *rt_filename, const char *rtc_filename, uint64_t *out_num_chains);
 
 #endif

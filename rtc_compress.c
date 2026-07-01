@@ -37,8 +37,10 @@ static unsigned int round_up_to_8(unsigned int b) {
   return ((b + 7) / 8) * 8;
 }
 
-/* Compresses an RT file to RTC format.  Returns 0 on success, negative on error. */
-int rtc_compress(const char *rt_filename, const char *rtc_filename) {
+/* Compresses an RT file to RTC format.  Returns 0 on success, negative on error.
+ * On success, if out_num_chains is not NULL, *out_num_chains is set to the number
+ * of chains written.  out_num_chains is only valid when the return value is 0. */
+int rtc_compress(const char *rt_filename, const char *rtc_filename, uint64_t *out_num_chains) {
   FILE *f_in = NULL, *f_out = NULL;
   uint64_t *buf = NULL;
   uint8_t *chain_buf = NULL;
@@ -212,6 +214,9 @@ int rtc_compress(const char *rt_filename, const char *rtc_filename) {
       goto done;
     }
   }
+
+  if (out_num_chains != NULL)
+    *out_num_chains = num_chains;
 
 done:
   if (f_in != NULL) {
