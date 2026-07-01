@@ -157,7 +157,9 @@ int rtc_decompress(char *filename, uint64_t **ret_uncompressed_table, uint64_t *
     memcpy(buf, chain_buf + (size_t)i * chain_size, chain_size);
 
     s = (buf[0] & s_mask) + uIndexSMin;
-    e = uIndexEMin + (uIndexEInterval * i) + ((buf[0] >> uIndexSBits) | (buf[1] << (64 - uIndexSBits)));
+    uint64_t e_frag = (uIndexSBits == 0) ? buf[0]
+                    : ((buf[0] >> uIndexSBits) | (buf[1] << (64 - uIndexSBits)));
+    e = uIndexEMin + (uIndexEInterval * i) + e_frag;
 
     uncompressed_table[table_ptr] = s;
     table_ptr++;
