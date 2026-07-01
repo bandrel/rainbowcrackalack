@@ -15,9 +15,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _RTC_COMPRESS_H
-#define _RTC_COMPRESS_H
+#ifndef RTC_COMPRESS_H
+#define RTC_COMPRESS_H
 
-int rtc_compress(char *rt_filename, char *rtc_filename);
+int rtc_compress(const char *rt_filename, const char *rtc_filename);
 
 #endif
