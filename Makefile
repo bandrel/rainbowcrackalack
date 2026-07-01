@@ -109,6 +109,7 @@ PERFECTIFY    := perfectify$(EXE)
 ENUMERATE     := enumerate_chain$(EXE)
 SORT_PROG     := crackalack_sort$(EXE)
 PLAN_PROG     := crackalack_plan$(EXE)
+RT2RTC_PROG   := crackalack_rt2rtc$(EXE)
 GENKNOWN_PROG    := gen_known_hash$(EXE)
 CPU_TESTS_PROG   := crackalack_cpu_tests$(EXE)
 
@@ -118,6 +119,7 @@ BINARIES := \
 	$(OUTDIR)/$(GETCHAIN_PROG) \
 	$(OUTDIR)/$(VERIFY_PROG) \
 	$(OUTDIR)/$(RTC2RT_PROG) \
+	$(OUTDIR)/$(RT2RTC_PROG) \
 	$(OUTDIR)/$(LOOKUP_PROG) \
 	$(OUTDIR)/$(PERFECTIFY) \
 	$(OUTDIR)/$(ENUMERATE) \
@@ -360,6 +362,11 @@ $(OUTDIR)/$(RTC2RT_PROG): \
 	$(OBJDIR)/crackalack_rtc2rt.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
+$(OUTDIR)/$(RT2RTC_PROG): \
+	$(OBJDIR)/rtc_compress.o \
+	$(OBJDIR)/crackalack_rt2rtc.o
+	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
+
 $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/bloom.o \
 	$(OBJDIR)/charset.o \
@@ -454,5 +461,5 @@ bundle_windows:
 clean:
 	rm -rf build
 	rm -f *.exe \
-	      crackalack_gen crackalack_unit_tests crackalack_cpu_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_lookup perfectify enumerate_chain crackalack_sort crackalack_plan \
+	      crackalack_gen crackalack_unit_tests crackalack_cpu_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_rt2rtc crackalack_lookup perfectify enumerate_chain crackalack_sort crackalack_plan \
 	      libgcrypt-20.dll libgpg-error-0.dll libwinpthread-1.dll
