@@ -28,7 +28,7 @@
 int main(int ac, char **av) {
   char *rt_filename_input = NULL, *rtc_filename_output = NULL;
   int ret = 0;
-  FILE *f = NULL;
+  uint64_t num_chains = 0;
 
   ENABLE_CONSOLE_COLOR();
   PRINT_PROJECT_HEADER();
@@ -41,27 +41,11 @@ int main(int ac, char **av) {
   rt_filename_input   = av[1];
   rtc_filename_output = av[2];
 
-  ret = rtc_compress(rt_filename_input, rtc_filename_output);
+  ret = rtc_compress(rt_filename_input, rtc_filename_output, &num_chains);
   if (ret != 0) {
     fprintf(stderr, "Error while compressing RT file: %s; error code: %d\n", rt_filename_input, ret);
     return -1;
   }
-
-  /* Compute num_chains from input file size. */
-  f = fopen(rt_filename_input, "rb");
-  if (f == NULL) {
-    fprintf(stderr, "Error: could not re-open %s to count chains.\n", rt_filename_input);
-    return -1;
-  }
-  if (fseek(f, 0, SEEK_END) != 0) {
-    fprintf(stderr, "Error: fseek failed on %s.\n", rt_filename_input);
-    fclose(f);
-    return -1;
-  }
-  long filesize = ftell(f);
-  fclose(f);
-
-  uint64_t num_chains = (filesize > 0) ? (uint64_t)filesize / 16 : 0;
 
   printf("Successfully compressed %"PRIu64" chains in RT file \"%s\" to RTC file \"%s\".\n",
          num_chains, rt_filename_input, rtc_filename_output);
