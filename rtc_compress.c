@@ -38,7 +38,7 @@ static unsigned int round_up_to_8(unsigned int b) {
 }
 
 /* Compresses an RT file to RTC format.  Returns 0 on success, negative on error. */
-int rtc_compress(char *rt_filename, char *rtc_filename) {
+int rtc_compress(const char *rt_filename, const char *rtc_filename) {
   FILE *f_in = NULL, *f_out = NULL;
   uint64_t *buf = NULL;
   uint8_t *chain_buf = NULL;
@@ -147,8 +147,9 @@ int rtc_compress(char *rt_filename, char *rtc_filename) {
 
   unsigned int chain_size = (sBits + eBits + 7) / 8;
 
-  /* Guard checks. */
-  if (sBits > 64 || eBits > 64 || chain_size > 16) {
+  /* Guard checks.  sBits == 64 is also rejected: the decoder's right-shift
+   * `buf[0] >> uIndexSBits` is undefined behavior in C when uIndexSBits == 64. */
+  if (sBits >= 64 || eBits > 64 || chain_size > 16) {
     fprintf(stderr, "Error: computed field widths out of range: sBits=%u eBits=%u chain_size=%u\n",
             sBits, eBits, chain_size);
     ret = -8;
