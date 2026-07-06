@@ -252,7 +252,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
 
       /* Compute the expected end point. */
       if (markov)
-        computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start);
+        computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, rt_params.markov_keyspace, start);
       else
         computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
 
@@ -344,7 +344,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
           actual_end = rainbow_table[(random_chain * 2) + 1];
 
           if (markov)
-            computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start);
+            computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, rt_params.markov_keyspace, start);
           else
             computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
 
@@ -362,7 +362,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
           actual_end = rainbow_table[(random_chain * 2) + 1];
 
           if (markov)
-            computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start);
+            computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, rt_params.markov_keyspace, start);
           else
             computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
 

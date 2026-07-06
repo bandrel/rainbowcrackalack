@@ -191,12 +191,23 @@ uint64_t generate_rainbow_chain_markov(
     unsigned int plaintext_len,
     unsigned int reduction_offset,
     unsigned int chain_len,
+    uint64_t markov_keyspace,
     uint64_t start)
 {
   uint64_t index = start;
-  uint64_t pspace_total = 1;
-  for (unsigned int i = 0; i < plaintext_len; i++)
-    pspace_total *= model->charset_len;
+  /* A truncated Markov keyspace (-mk<N> in the filename) reduces the plaintext
+   * space to the N most-probable candidates, so the reduction must modulo by
+   * that keyspace -- exactly as crackalack_gen does via
+   * fill_plaintext_space_markov_keyspace().  A keyspace of 0 means the full
+   * Markov space (charset_len ^ plaintext_len). */
+  uint64_t pspace_total;
+  if (markov_keyspace > 0)
+    pspace_total = markov_keyspace;
+  else {
+    pspace_total = 1;
+    for (unsigned int i = 0; i < plaintext_len; i++)
+      pspace_total *= model->charset_len;
+  }
 
   for (unsigned int pos = 0; pos < chain_len - 1; pos++) {
     unsigned char plaintext[MAX_PLAINTEXT_LEN];

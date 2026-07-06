@@ -1691,6 +1691,18 @@ static void build_precompute_index_data(char *buf, size_t buf_size,
                                         const char *hash) {
   char cs[128];
   build_precompute_cache_charset(cs, sizeof(cs), args->charset_name, args->challenge);
+  /* Markov precompute endpoints depend on the Markov model and the (possibly
+   * truncated) keyspace, so they must NOT share a cache key with standard
+   * tables or with a different -mk keyspace -- otherwise stale endpoints from
+   * one keyspace are silently reused for another, causing false negatives.
+   * parse_rt_params() strips the "-mk<N>" suffix off charset_name into
+   * markov_keyspace, so re-append it here.  blurbdust's rcracki cache has no
+   * Markov mode, so this suffix never conflicts with cache interchange (which
+   * only applies to the standard, non-Markov path). */
+  if (args->use_markov) {
+    size_t l = strlen(cs);
+    snprintf(cs + l, sizeof(cs) - l, "-mk%llu", (unsigned long long)args->markov_keyspace);
+  }
   snprintf(buf, buf_size - 1, "%s_%s#%u-%u_%u_%u:%s\n",
            args->hash_name, cs,
            args->plaintext_len_min, args->plaintext_len_max,

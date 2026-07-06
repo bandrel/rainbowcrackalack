@@ -118,9 +118,10 @@ int main(int ac, char **av) {
     return 1;
   }
 
-  /* Validate markov options: both required together, only with ntlm. */
-  if ((markov_path != NULL) != (markov_keyspace != 0)) {
-    fprintf(stderr, "%s: --markov and --markov-keyspace must be used together\n", av[0]);
+  /* Validate markov options.  --markov alone is valid (full keyspace), matching
+   * crackalack_gen; only reject --markov-keyspace without a model. */
+  if (markov_keyspace != 0 && markov_path == NULL) {
+    fprintf(stderr, "%s: --markov-keyspace requires --markov\n", av[0]);
     return 1;
   }
   if (markov_path != NULL && algo == ALGO_NETNTLMV1) {
@@ -171,10 +172,12 @@ int main(int ac, char **av) {
 
   uint64_t plaintext_space_up_to_index[16] = {0};
   uint64_t plaintext_space_total;
-  if (use_markov) {
+  if (use_markov && markov_keyspace > 0) {
     plaintext_space_total = fill_plaintext_space_markov_keyspace(
         markov_keyspace, plaintext_len, plaintext_space_up_to_index);
   } else {
+    /* Standard, or full-keyspace Markov (markov_keyspace == 0): the plaintext
+     * space is charset_len ^ plaintext_len, matching crackalack_gen. */
     plaintext_space_total =
         fill_plaintext_space_table(charset_len, plaintext_len, plaintext_len, plaintext_space_up_to_index);
   }
