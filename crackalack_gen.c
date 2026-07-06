@@ -448,6 +448,9 @@ void *host_thread(void *ptr) {
 #ifdef USE_METAL
       kernel_path = "crackalack_markov.metal";
       kernel_name = "crackalack_markov";
+#elif defined(USE_CUDA)
+      kernel_path = "CUDA/crackalack_markov.cu";
+      kernel_name = "crackalack_markov";
 #else
       kernel_path = "crackalack_markov.cl";
       kernel_name = "crackalack_markov";

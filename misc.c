@@ -323,31 +323,17 @@ unsigned int is_netntlmv1_7(unsigned int hash_type, char *charset_name, unsigned
 }
 
 
+/* Optimized Markov NTLM8/9/10 path DISABLED: the optimized kernels hardcode keyspace 95^9 (ignoring --markov-keyspace) and their lookup false-alarm check rejects in-table hashes. Returning 0 routes all Markov through the generic crackalack_markov/precompute_markov/false_alarm_check_markov kernels, which honor --markov-keyspace and are verified correct. */
 /* Returns 1 if the parameters form the Markov NTLM 8 set, otherwise 0. */
 unsigned int is_markov_ntlm8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov) {
-  if ((use_markov) && \
-      (hash_type == HASH_NTLM) && \
-      (strcmp(charset, CHARSET_ASCII_32_95) == 0) && \
-      (plaintext_len_min == 8) && \
-      (plaintext_len_max == 8))
-    return 1;
-  else
-    return 0;
+  return 0;
 }
 
 
+/* Optimized Markov NTLM8/9/10 path DISABLED: the optimized kernels hardcode keyspace 95^9 (ignoring --markov-keyspace) and their lookup false-alarm check rejects in-table hashes. Returning 0 routes all Markov through the generic crackalack_markov/precompute_markov/false_alarm_check_markov kernels, which honor --markov-keyspace and are verified correct. */
 /* Returns 1 if the parameters form the Markov NTLM 9 set, otherwise 0. */
 unsigned int is_markov_ntlm9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov) {
-  if ((use_markov) && \
-      (hash_type == HASH_NTLM) && \
-      (strcmp(charset, CHARSET_ASCII_32_95) == 0) && \
-      (plaintext_len_min == 9) && \
-      (plaintext_len_max == 9) && \
-      (reduction_offset == 0) && \
-      (chain_len == 803000))
-    return 1;
-  else
-    return 0;
+  return 0;
 }
 
 
@@ -360,13 +346,10 @@ unsigned int is_ntlm10(unsigned int hash_type, char *charset, unsigned int plain
 }
 
 
+/* Optimized Markov NTLM8/9/10 path DISABLED: the optimized kernels hardcode keyspace 95^9 (ignoring --markov-keyspace) and their lookup false-alarm check rejects in-table hashes. Returning 0 routes all Markov through the generic crackalack_markov/precompute_markov/false_alarm_check_markov kernels, which honor --markov-keyspace and are verified correct. */
 /* Returns 1 if the parameters form the Markov NTLM 10 set, otherwise 0. */
 unsigned int is_markov_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, int use_markov) {
-  return (use_markov)
-      && (hash_type == HASH_NTLM)
-      && (strcmp(charset, CHARSET_ASCII_32_95) == 0)
-      && (plaintext_len_min == 10)
-      && (plaintext_len_max == 10);
+  return 0;
 }
 
 
