@@ -1,0 +1,64 @@
+# CI pipeline for Rainbow Crackalack.
+#
+# Runs on a self-hosted GitLab *shell* runner on gpuhost3 (NVIDIA RTX 3080 Ti,
+# CUDA/NVRTC). GitHub Actions has no GPU, so the GPU unit tests and the crack
+# regression suite (including the Markov end-to-end test) can only run here.
+#
+# One-time runner setup on gpuhost3 (must run as a user with GPU access, e.g.
+# `justin`, so the shell executor's jobs can see the GPU):
+#
+#   sudo gitlab-runner register \
+#     --non-interactive \
+#     --url https://git.example.com \
+#     --token   <PROJECT_RUNNER_AUTH_TOKEN>   \  # GitLab >=16 (Settings > CI/CD > Runners > New project runner)
+#     --executor shell \
+#     --description gpuhost3-gpu \
+#     --tag-list gpuhost3-gpu
+#   # (GitLab <16: use --registration-token <TOKEN> instead of --token.)
+#
+# The runner's `user` should be set to `justin` in /etc/gitlab-runner/config.toml
+# (or run `gitlab-runner run` under that user) so CUDA is reachable.
+
+stages: [cpu, gpu]
+
+default:
+  tags: [gpuhost3-gpu]
+
+variables:
+  GIT_STRATEGY: clone
+  CUDA_PATH: "/usr/local/cuda"
+  # Keep regression scratch/output inside the project dir so results can be
+  # captured as job artifacts (GitLab artifacts must be repo-relative paths).
+  REG_ROOT: "${CI_PROJECT_DIR}/regression-out"
+
+# Fast, GPU-free checks: the no-backend CPU unit tests.  These would also pass in
+# a plain container, but we keep them on the same runner for simplicity.
+cpu-tests:
+  stage: cpu
+  script:
+    - make clean
+    - make cpu-tests
+    - ./crackalack_cpu_tests
+
+# Full GPU suite: build the CUDA backend, run the GPU unit tests, and the crack
+# regression round-trip + Markov end-to-end tests.  resource_group serialises
+# this across pipelines so two runs can't fight over the single GPU; the
+# regression harness additionally takes an internal GPU lock.
+gpu-suite:
+  stage: gpu
+  resource_group: gpuhost3-gpu
+  script:
+    - make clean
+    # prepare builds `make linux` (all binaries incl. crackalack_unit_tests and,
+    # on Markov branches, crackalack_plan), gen_known_hash, and the python venv.
+    - bash scripts/bench/run_regression.sh prepare
+    - ./crackalack_unit_tests
+    - bash scripts/bench/run_regression.sh roundtrip
+    # Markov end-to-end (gen/sort/verify/mint/lookup + negative control). Skips
+    # itself cleanly on branches without crackalack_plan (e.g. master).
+    - bash scripts/bench/run_regression.sh markov
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - regression-out/results/

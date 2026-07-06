@@ -8,8 +8,9 @@
 #   run_regression.sh roundtrip-multi # 2-hash crack round-trip (batched multi-hash path)
 #   run_regression.sh crackdiff       # BASE-vs-CANDIDATE differential
 #   run_regression.sh asan-smoke      # ASan memory-safety smoke test (gen->sort->lookup)
+#   run_regression.sh markov          # Markov end-to-end (gen/sort/verify/mint/lookup)
 #   run_regression.sh report          # write regression_summary.md
-#   run_regression.sh all             # prepare + roundtrip + roundtrip-multi + crackdiff + asan-smoke + report
+#   run_regression.sh all             # prepare + roundtrip + roundtrip-multi + crackdiff + asan-smoke + markov + report
 set -euo pipefail
 
 # ---- Tunables (override via env) ----
@@ -331,6 +332,25 @@ phase_asan_smoke() {
     return $rc
 }
 
+# Markov end-to-end pipeline (gen/sort/verify/mint/lookup + negative control)
+# for full and truncated keyspaces.  Delegates to the self-contained
+# test_markov_lookup.sh (it trains its own throwaway model), wrapped in the GPU
+# lock so it serialises with the other GPU phases.  Skips cleanly if the Markov
+# binaries (crackalack_plan) aren't built.
+phase_markov() {
+    log "MARKOV: end-to-end pipeline backend=$BACKEND"
+    mkdir -p "$RESULTS"
+    local json="$RESULTS/markov_$BACKEND.json"
+    local rc=0
+    with_gpu_lock bash "$SCRIPT_DIR/test_markov_lookup.sh" "$THIS_REPO" >&2 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        echo '{"passed": true}' > "$json";  log "MARKOV: PASS"
+    else
+        echo '{"passed": false}' > "$json"; log "MARKOV: FAIL (rc=$rc)"
+    fi
+    return $rc
+}
+
 phase_report() {
     log "REPORT"
     export PYTHONPATH="$SCRIPT_DIR"
@@ -356,8 +376,9 @@ main() {
         roundtrip-multi) phase_roundtrip_multi ;;
         crackdiff)      phase_crackdiff ;;
         asan-smoke)     phase_asan_smoke ;;
+        markov)         phase_markov ;;
         report)         phase_report ;;
-        all)            phase_prepare; phase_roundtrip; phase_roundtrip_multi; phase_crackdiff; phase_asan_smoke || true; phase_report ;;
+        all)            phase_prepare; phase_roundtrip; phase_roundtrip_multi; phase_crackdiff; phase_asan_smoke || true; phase_markov || true; phase_report ;;
         *) echo "Unknown phase: $phase" >&2; exit 2 ;;
     esac
 }

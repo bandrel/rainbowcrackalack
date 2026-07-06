@@ -121,6 +121,22 @@ run_case() {
     echo "  FAIL[$label]: in-table hash did NOT crack"; strip_ansi <"$log" | tail -8; rc=1
   fi
 
+  # Negative control: a hash that is NOT in the table must NOT crack.  This
+  # guards against a broken false-alarm check that would "confirm" bogus
+  # endpoint candidates (a false positive is as bad as a false negative).
+  # deadbeef... is a fixed 128-bit value that is astronomically unlikely to be
+  # the NTLM of any of this tiny table's plaintexts.
+  local neg="deadbeefdeadbeefdeadbeefdeadbeef"
+  printf '%s\n' "$neg" > "$work/neg.txt"
+  rm -f "$REPO"/rcracki.precalc.* "$REPO"/*.index 2>/dev/null || true
+  local nlog="$work/neg_${label}.log"
+  ( cd "$REPO" && "$LOOKUP" "$casedir" "$work/neg.txt" --markov "$MODEL" ) >"$nlog" 2>&1 || true
+  if grep -qiE "Cracked [1-9][0-9]* of|HASH CRACKED" <(strip_ansi <"$nlog"); then
+    echo "  FAIL[$label]: negative-control hash CRACKED (false positive -- FA check is broken)"; rc=1
+  else
+    echo "  PASS: negative-control hash not cracked (false-alarm check rejects bogus candidates)"
+  fi
+
   # (bug #3) the precompute cache key must encode the Markov keyspace so
   # different keyspaces / standard tables never share stale endpoints.
   local idx
