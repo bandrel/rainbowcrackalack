@@ -35,7 +35,6 @@
 
 #include "charset.h"
 #include "checkpoint.h"
-#include "markov.h"
 #include "clock.h"
 #include "cpu_rt_functions.h"
 #include "file_lock.h"
@@ -77,19 +76,6 @@
 #define CRACKALACK_NETNTLMV1_7_KERNEL_PATH "CUDA/crackalack_netntlmv1_7.cu"
 #else
 #define CRACKALACK_NETNTLMV1_7_KERNEL_PATH "crackalack_netntlmv1_7.cl"
-#endif
-#ifdef USE_METAL
-#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.metal"
-#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.metal"
-#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "crackalack_markov_ntlm10.metal"
-#elif defined(USE_CUDA)
-#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "CUDA/crackalack_markov_ntlm8.cu"
-#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "CUDA/crackalack_markov_ntlm9.cu"
-#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "CUDA/crackalack_markov_ntlm10.cu"
-#else
-#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.cl"
-#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.cl"
-#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "crackalack_markov_ntlm10.cl"
 #endif
 
 #define VERBOSE 1
@@ -179,10 +165,6 @@ typedef struct {
 
   uint64_t initial_chains_per_execution;
 
-  int     use_markov;
-  char    markov_path[1024];
-  uint64_t markov_keyspace;
-
   unsigned char challenge[8];
 
   gpu_dev gpu;
@@ -225,14 +207,9 @@ unsigned int is_amd_gpu = 0;
 /* The global work size, as over-ridden by the user on the command line. */
 size_t user_provided_gws = 0;
 
-/* Markov mode state set by --markov flag. */
-static int    use_markov = 0;
-static char   markov_path[1024] = {0};
-static uint64_t markov_keyspace = 0;
-
 
 void print_usage_and_exit(char *prog_name, int exit_code) {
-  fprintf(stderr, "Usage: %s hash_algorithm charset_name plaintext_min_length plaintext_max_length table_index chain_length number_of_chains [part_index | -bench] [-gws GWS] [--markov FILE] [--markov-keyspace N]\n\nExample: %s ntlm ascii-32-95 9 9 0 803000 67108864 0\n\n", prog_name, prog_name);
+  fprintf(stderr, "Usage: %s hash_algorithm charset_name plaintext_min_length plaintext_max_length table_index chain_length number_of_chains [part_index | -bench] [-gws GWS]\n\nExample: %s ntlm ascii-32-95 9 9 0 803000 67108864 0\n\n", prog_name, prog_name);
   exit(exit_code);
 }
 
@@ -359,7 +336,6 @@ void *host_thread(void *ptr) {
   gpu_buffer challenge_buffer = NULL;
 
   gpu_uint pos_start = 0;
-  markov_model markov = {0};
 
   if ((args->charset != NULL) && (strlen(args->charset) == 0)) {
     charset_len = 256;
@@ -416,48 +392,6 @@ void *host_thread(void *ptr) {
     printf("%sWARNING: non-optimized kernel will be used since non-standard options were given!  Generation will be much slower.  (Hint: use \"crackalack_gen ntlm ascii-32-95 8 8 0 422000 67108864 X\" for optimized NTLM8 generation, or \"crackalack_gen ntlm ascii-32-95 9 9 0 803000 67108864 X\" for optimized NTLM9 generation.)%s\n", YELLOWB, CLR); fflush(stdout);
   }
 
-  /* When --markov is requested, switch to the Markov generation kernel.
-   * The Markov kernel has the same interface as the generic crackalack kernel
-   * but adds sorted_pos0 and sorted_bigram as args 13 and 14.
-   * Use optimized Markov fast-path kernels for NTLM8/NTLM9 when parameters match. */
-  if (args->use_markov) {
-    if (is_markov_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
-      kernel_path = CRACKALACK_MARKOV_NTLM8_KERNEL_PATH;
-      kernel_name = "crackalack_markov_ntlm8";
-      if (args->gpu.device_number == 0) {
-        printf("%sNote: optimized Markov NTLM8 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
-      }
-    } else if (is_markov_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
-      kernel_path = CRACKALACK_MARKOV_NTLM9_KERNEL_PATH;
-      kernel_name = "crackalack_markov_ntlm9";
-      if (args->gpu.device_number == 0) {
-        printf("%sNote: optimized Markov NTLM9 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
-      }
-    } else if (is_markov_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->use_markov)) {
-      kernel_path = CRACKALACK_MARKOV_NTLM10_KERNEL_PATH;
-      kernel_name = "crackalack_markov_ntlm10";
-      if (args->gpu.device_number == 0) {
-        printf("%sNote: optimized Markov NTLM10 kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
-      }
-    } else {
-      if (strcmp(kernel_path, CRACKALACK_NTLM8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NTLM9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_8_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_MD5_9_KERNEL_PATH) == 0 || strcmp(kernel_path, CRACKALACK_NETNTLMV1_7_KERNEL_PATH) == 0) {
-        if (args->gpu.device_number == 0) {
-          printf("%sNote: --markov cannot use fast-path kernels. Falling back to Markov generic kernel.%s\n", YELLOWB, CLR); fflush(stdout);
-        }
-      }
-#ifdef USE_METAL
-      kernel_path = "crackalack_markov.metal";
-      kernel_name = "crackalack_markov";
-#elif defined(USE_CUDA)
-      kernel_path = "CUDA/crackalack_markov.cu";
-      kernel_name = "crackalack_markov";
-#else
-      kernel_path = "crackalack_markov.cl";
-      kernel_name = "crackalack_markov";
-#endif
-    }
-  }
-
   /* Get the number of compute units in this device. */
   get_device_uint(gpu->device, CL_DEVICE_MAX_COMPUTE_UNITS, &(gpu->num_work_units));
 
@@ -470,19 +404,6 @@ void *host_thread(void *ptr) {
   queue = gpu->queue;
   kernel = gpu->kernel;
 
-  /* Load the Markov model and create GPU buffers for the sorted tables. */
-  if (args->use_markov) {
-    if (markov_load(args->markov_path, &markov) != 0) {
-      fprintf(stderr, "Failed to load Markov model from '%s'\n", args->markov_path);
-      CLRELEASEKERNEL(gpu->kernel);
-      CLRELEASEPROGRAM(gpu->program);
-      CLRELEASEQUEUE(gpu->queue);
-      CLRELEASECONTEXT(gpu->context);
-      pthread_exit(NULL);
-      return NULL;
-    }
-  }
-
 #if defined(USE_METAL) || defined(USE_CUDA)
   kernel_work_group_size = 256;
   kernel_preferred_work_group_size_multiple = 32;
@@ -494,8 +415,6 @@ void *host_thread(void *ptr) {
     CLRELEASEPROGRAM(gpu->program);
     CLRELEASEQUEUE(gpu->queue);
     CLRELEASECONTEXT(gpu->context);
-    if (args->use_markov)
-      markov_free(&markov);
     pthread_exit(NULL);
     return NULL;
   }
@@ -609,12 +528,9 @@ void *host_thread(void *ptr) {
       CLFREEBUFFER(pspace_table_buffer);
       CLFREEBUFFER(pspace_total_buffer);
       CLFREEBUFFER(challenge_buffer);
-      if (args->use_markov) {
-        CLFREEBUFFER(sorted_pos0_buffer);
-        CLFREEBUFFER(sorted_bigram_buffer);
-        CLFREEBUFFER(max_positions_buffer);
-        markov_free(&markov);
-      }
+      CLFREEBUFFER(sorted_pos0_buffer);
+      CLFREEBUFFER(sorted_bigram_buffer);
+      CLFREEBUFFER(max_positions_buffer);
 
       CLRELEASEKERNEL(gpu->kernel);
       CLRELEASEPROGRAM(gpu->program);
@@ -631,10 +547,7 @@ void *host_thread(void *ptr) {
     if (hash_type_buffer == NULL) {
       uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
       gpu_ulong pspace_total;
-      if (args->markov_keyspace > 0)
-        pspace_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, pspace_up_to_index);
-      else
-        pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
+      pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
 
       unsigned int charset_buf_size = charset_len > 0 ? charset_len : 1;
       CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
@@ -648,11 +561,7 @@ void *host_thread(void *ptr) {
       CLCREATEARG(8, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(9, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
       CLCREATEARG(10, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
-      if (args->use_markov) {
-        CLCREATEARG_ARRAY(11, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
-        CLCREATEARG_ARRAY(12, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.max_positions * markov.charset_len * markov.charset_len * sizeof(uint8_t));
-        CLCREATEARG(13, max_positions_buffer, CL_RO, markov.max_positions, sizeof(gpu_uint));
-      } else if (using_fast_path_kernel) {
+      if (using_fast_path_kernel) {
         /* Fast-path kernels (NTLM8, NTLM9, etc.) expect 14 args even though they don't use 11-13.
          * Provide dummy buffers to satisfy OpenCL's requirement that all kernel args be set.
          * The generic crackalack kernel only has 11 args, so skip these for it. */
@@ -934,7 +843,7 @@ int main(int ac, char **av) {
   } else
     part_index = (uint64_t)parse_uint_arg(av[8], "part_index");
 
-  /* Parse optional flags: -gws GWS and --markov FILE (in any order after arg 8). */
+  /* Parse optional flags: -gws GWS (in any order after arg 8). */
   for (i = 9; i < ac; i++) {
     if (strcmp(av[i], "-gws") == 0) {
       if (i + 1 >= ac) {
@@ -943,29 +852,6 @@ int main(int ac, char **av) {
       }
       i++;
       user_provided_gws = parse_uint_arg(av[i], "-gws");
-    } else if (strcmp(av[i], "--markov") == 0) {
-      if (i + 1 >= ac) {
-        fprintf(stderr, "--markov requires a filename\n");
-        return -1;
-      }
-      i++;
-      strncpy(markov_path, av[i], sizeof(markov_path) - 1);
-      use_markov = 1;
-    } else if (strcmp(av[i], "--markov-keyspace") == 0) {
-      if (i + 1 >= ac) {
-        fprintf(stderr, "--markov-keyspace requires a value\n");
-        return -1;
-      }
-      i++;
-      {
-        char *end;
-        errno = 0;
-        markov_keyspace = strtoull(av[i], &end, 10);
-        if (errno != 0 || end == av[i] || *end != '\0' || markov_keyspace == 0) {
-          fprintf(stderr, "Error: --markov-keyspace must be a positive integer, got '%s'.\n", av[i]);
-          return -1;
-        }
-      }
     } else if (strcmp(av[i], "--challenge") == 0) {
       if (i + 1 >= ac) { fprintf(stderr, "--challenge requires a 16-hex value\n"); return -1; }
       i++;
@@ -987,14 +873,6 @@ int main(int ac, char **av) {
   /* Copy charset_name to charset_name_safe. */
   strncpy(charset_name_safe, charset_name, sizeof(charset_name_safe) - 1);
   charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
-
-  /* When using Markov keyspace, append -mkN to the charset field in the filename. */
-  if (markov_keyspace > 0) {
-    char tmp[sizeof(charset_name_safe)];
-    snprintf(tmp, sizeof(tmp), "%s-mk%"PRIu64, charset_name_safe, markov_keyspace);
-    strncpy(charset_name_safe, tmp, sizeof(charset_name_safe) - 1);
-    charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
-  }
 
   /* When using a non-default NetNTLMv1 challenge, append -chal<hex> to charset. */
   if (!challenge_is_default(challenge)) {
@@ -1053,16 +931,6 @@ int main(int ac, char **av) {
     exit(-1);
   }
 
-  if (use_markov && plaintext_len_min != plaintext_len_max) {
-    fprintf(stderr, "Error: --markov requires fixed-length plaintext (min_len must equal max_len)\n");
-    return -1;
-  }
-
-  if (markov_keyspace > 0 && !use_markov) {
-    fprintf(stderr, "Error: --markov-keyspace requires --markov to also be specified.\n");
-    return -1;
-  }
-
   /* The original rcrack didn't support chain counts >= 128M, as that would
    * result in files greater than 2GB in size.  It may work with modern
    * rcrack/rcracki_mt, but its untested as of right now... */
@@ -1086,7 +954,7 @@ int main(int ac, char **av) {
 
   /* If the file size implies that it is already complete, run the verifier on it. */
   if (file_size == ((uint64_t)total_chains_in_table * CHAIN_SIZE)) {
-    if (verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL)) {
+    if (verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, -1)) {
       /* The table is complete, so tell the user and exit. */
       printf("Table in \"%s\" already appears to be complete.  Terminating...\n", filename);
       exit(0);
@@ -1126,7 +994,7 @@ int main(int ac, char **av) {
       /* No valid checkpoint - use legacy resume (experimental) */
       printf("\n  !! WARNING !!\n\nPartially generated table found without checkpoint.\nAttempting legacy resume (experimental).\n\n"); fflush(stdout);
 
-      verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL);
+      verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, -1);
 
       /* fopen()'s modes are weird.  Its easier to just re-open the file for reading
        * at this point, rather than change the code above and re-use the open handle. */
@@ -1169,11 +1037,8 @@ int main(int ac, char **av) {
     } else {
 
       uint64_t plaintext_space_total;
-      if (markov_keyspace > 0)
-        plaintext_space_total = fill_plaintext_space_markov_keyspace(markov_keyspace, plaintext_len_max, plaintext_space_up_to_index);
-      else
-        plaintext_space_total = fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
-      
+      plaintext_space_total = fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
+
       /* Ensure that the user didn't specify a part index so great that it
        * overflows the plaintext space total.  If so, calculate the largest
        * part index that can be used with this character set and tell the
@@ -1260,10 +1125,7 @@ int main(int ac, char **av) {
     args[i].chain_len = chain_len;
     args[i].filename = filename;
     args[i].initial_chains_per_execution = INITIAL_CHAINS_PER_EXECUTION;
-    args[i].use_markov = use_markov;
-    args[i].markov_keyspace = markov_keyspace;
     memcpy(args[i].challenge, challenge, 8);
-    snprintf(args[i].markov_path, sizeof(args[i].markov_path), "%s", markov_path);
     args[i].gpu.device_number = i;
     args[i].gpu.device = devices[i];
 
@@ -1327,7 +1189,7 @@ int main(int ac, char **av) {
     /* Verify that the new table is valid. */
     printf("Now verifying rainbow table... ");
     fflush(stdout);
-    if (!verify_rainbowtable_file(filename, use_markov ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL)) {
+    if (!verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, -1)) {
       char log_filename[256] = {0};
 
       get_rt_log_filename(log_filename, sizeof(log_filename), filename);

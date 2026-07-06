@@ -50,7 +50,6 @@
 #include "clock.h"
 #include "cpu_rt_functions.h"
 #include "hash_validate.h"
-#include "markov.h"
 #include "bloom.h"
 #include "misc.h"
 #include "fa_batch.h"
@@ -71,11 +70,6 @@
 #define PRECOMPUTE_NTLM10_KERNEL_PATH "precompute_ntlm10.metal"
 #define PRECOMPUTE_MD5_8_KERNEL_PATH "precompute_md5_8.metal"
 #define PRECOMPUTE_MD5_9_KERNEL_PATH "precompute_md5_9.metal"
-#define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.metal"
-#define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.metal"
-#define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.metal"
-#define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.metal"
-#define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.metal"
 #define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "precompute_ntlm8_batch.metal"
 #define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH "precompute_netntlmv1_7_batch.metal"
 #elif defined(USE_CUDA)
@@ -84,11 +78,6 @@
 #define PRECOMPUTE_NTLM10_KERNEL_PATH "CUDA/precompute_ntlm10.cu"
 #define PRECOMPUTE_MD5_8_KERNEL_PATH "CUDA/precompute_md5_8.cu"
 #define PRECOMPUTE_MD5_9_KERNEL_PATH "CUDA/precompute_md5_9.cu"
-#define PRECOMPUTE_MARKOV_KERNEL_PATH "CUDA/precompute_markov.cu"
-#define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "CUDA/precompute_markov_ntlm8.cu"
-#define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "CUDA/precompute_markov_ntlm9.cu"
-#define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "CUDA/precompute_markov_ntlm10.cu"
-#define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "CUDA/precompute_markov_ntlm8_batch.cu"
 #define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "CUDA/precompute_ntlm8_batch.cu"
 #define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH "CUDA/precompute_netntlmv1_7_batch.cu"
 #else
@@ -97,11 +86,6 @@
 #define PRECOMPUTE_NTLM10_KERNEL_PATH "precompute_ntlm10.cl"
 #define PRECOMPUTE_MD5_8_KERNEL_PATH "precompute_md5_8.cl"
 #define PRECOMPUTE_MD5_9_KERNEL_PATH "precompute_md5_9.cl"
-#define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
-#define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.cl"
-#define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.cl"
-#define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.cl"
-#define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.cl"
 #define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "precompute_ntlm8_batch.cl"
 #define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH "precompute_netntlmv1_7_batch.cl"
 #endif
@@ -133,22 +117,10 @@
 #define FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH "false_alarm_check_netntlmv1_7.cl"
 #endif
 #ifdef USE_METAL
-#define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.metal"
-#define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.metal"
-#define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "false_alarm_check_markov_ntlm9.metal"
-#define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.metal"
 #define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.metal"
 #elif defined(USE_CUDA)
-#define FALSE_ALARM_MARKOV_KERNEL_PATH "CUDA/false_alarm_check_markov.cu"
-#define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm8.cu"
-#define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm9.cu"
-#define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm10.cu"
 #define GPU_BINARY_SEARCH_KERNEL_PATH "CUDA/gpu_binary_search.cu"
 #else
-#define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.cl"
-#define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.cl"
-#define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "false_alarm_check_markov_ntlm9.cl"
-#define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.cl"
 #define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.cl"
 #endif
 
@@ -196,13 +168,6 @@ typedef struct {
   gpu_ulong *hash_base_indices;
 
   gpu_dev gpu;
-
-  int use_markov;
-  uint64_t markov_keyspace;
-  uint8_t *sorted_pos0;    /* Points into the global markov model; not owned. */
-  uint8_t *sorted_bigram;  /* Points into the global markov model; not owned. */
-  unsigned int markov_charset_len;
-  unsigned int markov_max_positions;
 
   int precompute_gpu_ready;
   int false_alarm_gpu_ready;
@@ -288,11 +253,6 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
  * a command line arg. */
 char jtr_pot_filename[128] = "rainbowcrackalack_jtr.pot";
 char hashcat_pot_filename[128] = "rainbowcrackalack_hashcat.pot";
-
-/* Markov mode state set by --markov flag. */
-static int use_markov = 0;
-static char markov_path[1024] = {0};
-static markov_model g_markov = {0};
 
 /* Aggregate bloom-filter stats across all freed tables.  Updated
  * inside the table-free paths and printed once at shutdown. */
@@ -565,17 +525,11 @@ void harvest_false_alarm_results(false_alarm_state *state) {
   }
 
   /* Compute charset_len for index_to_plaintext (same logic as original). */
-  if (args->markov_keyspace > 0) {
+  if (strcmp(args->charset_name, "byte") == 0)
+    charset_len = 256;
+  else
     charset_len = strlen(args->charset);
-    if (charset_len == 0) charset_len = 1;
-    fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, plaintext_space_up_to_index);
-  } else {
-    if (strcmp(args->charset_name, "byte") == 0)
-      charset_len = 256;
-    else
-      charset_len = strlen(args->charset);
-    fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
-  }
+  fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
 
   /* Search for valid results, and update the ppi with the plaintext.
    *
@@ -603,11 +557,7 @@ void harvest_false_alarm_results(false_alarm_state *state) {
         unsigned char real_key[8] = {0};
 
 
-      	if (args[i].use_markov) {
-          index_to_plaintext_markov_cpu(args[i].results[r], &g_markov, args[i].plaintext_len_max, (unsigned char *)plaintext);
-          plaintext_len = args[i].plaintext_len_max;
-        } else
-          index_to_plaintext(args[i].results[r], args[i].charset, charset_len, args[i].plaintext_len_min, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
+      	index_to_plaintext(args[i].results[r], args[i].charset, charset_len, args[i].plaintext_len_min, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
 
       	/* Double check NTLM results to weed out super false alarms. */
       	if (args[i].hash_type == HASH_NTLM) {
@@ -864,7 +814,6 @@ static int configs_match(const rt_parameters *a, const rt_parameters *b) {
       && a->plaintext_len_max == b->plaintext_len_max
       && a->table_index == b->table_index
       && a->chain_len == b->chain_len
-      && a->markov_keyspace == b->markov_keyspace
       /* The NetNTLMv1 challenge is part of a table's identity: tables built for
        * different challenges are not interchangeable, so they must not share a
        * config group.  Keeping them separate also lets the challenge-resolution
@@ -992,7 +941,6 @@ void setup_args_for_config(thread_args *args, unsigned int num_devices, const rt
     args[idx].table_index       = params->table_index;
     args[idx].reduction_offset  = params->reduction_offset;
     args[idx].chain_len         = params->chain_len;
-    args[idx].markov_keyspace   = params->markov_keyspace;
     memcpy(args[idx].challenge, g_challenge, 8);
   }
 }
@@ -1053,7 +1001,6 @@ void *host_thread_false_alarm(void *ptr) {
   char *kernel_path = FALSE_ALARM_KERNEL_PATH, *kernel_name = "false_alarm_check";
 
   gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
   gpu_buffer challenge_buffer = NULL;
   /*gpu_buffer debug_ulong_buffer = NULL;*/
 
@@ -1066,18 +1013,12 @@ void *host_thread_false_alarm(void *ptr) {
   size_t gws = 0, kernel_work_group_size = 0, kernel_preferred_work_group_size_multiple = 0;
   /*gpu_ulong debug_ulong[128] = {0};*/
   int charset_len = 0;
-  if (args->markov_keyspace > 0) {
-    charset_len = strlen(args->charset);
-    if (charset_len == 0) charset_len = 1;
-    plaintext_space_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, plaintext_space_up_to_index);
+  if (strcmp(args->charset_name, "byte") == 0) {
+    charset_len = 256;
   } else {
-    if (strcmp(args->charset_name, "byte") == 0) {
-      charset_len = 256;
-    } else {
-      charset_len = strlen(args->charset);
-    }
-    plaintext_space_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
+    charset_len = strlen(args->charset);
   }
+  plaintext_space_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
 
   num_start_indices = num_start_index_positions = num_hash_base_indices = num_plaintext_indices = args->num_potential_start_indices;
 
@@ -1145,36 +1086,6 @@ void *host_thread_false_alarm(void *ptr) {
     if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
       printf("\nNote: optimized MD5_9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
       printed_false_alarm_optimized_message = 1;
-    }
-  }
-
-  /* When --markov is active, override with the Markov false alarm kernel.
-   * Use optimized Markov fast-path kernels for NTLM8/NTLM9 when parameters match. */
-  if (args->use_markov) {
-    if (is_markov_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
-      kernel_path = FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH;
-      kernel_name = "false_alarm_check_markov_ntlm8";
-      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
-        printf("\nNote: optimized Markov NTLM8 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
-        printed_false_alarm_optimized_message = 1;
-      }
-    } else if (is_markov_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
-      kernel_path = FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH;
-      kernel_name = "false_alarm_check_markov_ntlm9";
-      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
-        printf("\nNote: optimized Markov NTLM9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
-        printed_false_alarm_optimized_message = 1;
-      }
-    } else if (is_markov_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->use_markov)) {
-      kernel_path = FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH;
-      kernel_name = "false_alarm_check_markov_ntlm10";
-      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
-        printf("\nNote: optimized Markov NTLM10 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
-        printed_false_alarm_optimized_message = 1;
-      }
-    } else {
-      kernel_path = FALSE_ALARM_MARKOV_KERNEL_PATH;
-      kernel_name = "false_alarm_check_markov";
     }
   }
 
@@ -1276,11 +1187,6 @@ void *host_thread_false_alarm(void *ptr) {
   CLCREATEARG_ARRAY(12, start_index_positions_buffer, CL_RO, start_index_positions, num_start_index_positions * sizeof(unsigned int));
   CLCREATEARG_ARRAY(13, hash_base_indices_buffer, CL_RO, hash_base_indices, num_hash_base_indices * sizeof(gpu_ulong));
   CLCREATEARG_ARRAY(15, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
-  if (args->use_markov) {
-    CLCREATEARG_ARRAY(16, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
-    CLCREATEARG_ARRAY(17, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_max_positions * args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
-    CLCREATEARG(18, max_positions_buffer, CL_RO, args->markov_max_positions, sizeof(gpu_uint));
-  }
 
   if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
     CLCREATEARG_ARRAY(16, challenge_buffer, CL_RO, args->challenge, NETNTLMV1_CHALLENGE_LEN);
@@ -1335,11 +1241,6 @@ void *host_thread_false_alarm(void *ptr) {
   CLFREEBUFFER(hash_base_indices_buffer);
   CLFREEBUFFER(output_block_buffer);
   CLFREEBUFFER(challenge_buffer);
-  if (args->use_markov) {
-    CLFREEBUFFER(sorted_pos0_buffer);
-    CLFREEBUFFER(sorted_bigram_buffer);
-    CLFREEBUFFER(max_positions_buffer);
-  }
 
   /* Context/program/kernel/queue are kept alive for reuse across tables.
    * They are released by release_false_alarm_gpu(). */
@@ -1378,7 +1279,7 @@ void *host_thread_precompute(void *ptr) {
   int err = 0;
   char *kernel_path = PRECOMPUTE_KERNEL_PATH, *kernel_name = "precompute";
 
-  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL/*, debug_buffer = NULL*/;
+  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL/*, debug_buffer = NULL*/;
   gpu_buffer challenge_buffer = NULL;
 
   size_t gws = 0;
@@ -1443,36 +1344,6 @@ void *host_thread_precompute(void *ptr) {
     if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
       printf("\nNote: optimized MD5_9 kernel will be used for precomputation.\n\n"); fflush(stdout);
       printed_precompute_optimized_message = 1;
-    }
-  }
-
-  /* When --markov is active, override with the Markov precompute kernel.
-   * Use optimized Markov fast-path kernels for NTLM8/NTLM9 when parameters match. */
-  if (args->use_markov) {
-    if (is_markov_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
-      kernel_path = PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH;
-      kernel_name = "precompute_markov_ntlm8";
-      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
-        printf("\nNote: optimized Markov NTLM8 kernel will be used for precomputation.\n\n"); fflush(stdout);
-        printed_precompute_optimized_message = 1;
-      }
-    } else if (is_markov_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
-      kernel_path = PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH;
-      kernel_name = "precompute_markov_ntlm9";
-      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
-        printf("\nNote: optimized Markov NTLM9 kernel will be used for precomputation.\n\n"); fflush(stdout);
-        printed_precompute_optimized_message = 1;
-      }
-    } else if (is_markov_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->use_markov)) {
-      kernel_path = PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH;
-      kernel_name = "precompute_markov_ntlm10";
-      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
-        printf("\nNote: optimized Markov NTLM10 kernel will be used for precomputation.\n\n"); fflush(stdout);
-        printed_precompute_optimized_message = 1;
-      }
-    } else {
-      kernel_path = PRECOMPUTE_MARKOV_KERNEL_PATH;
-      kernel_name = "precompute_markov";
     }
   }
 
@@ -1570,18 +1441,9 @@ void *host_thread_precompute(void *ptr) {
   {
     uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
     gpu_ulong pspace_total;
-    if (args->markov_keyspace > 0)
-      pspace_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, pspace_up_to_index);
-    else {
-      pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
-    }
+    pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
     CLCREATEARG_ARRAY(13, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
     CLCREATEARG(14, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
-    if (args->use_markov) {
-      CLCREATEARG_ARRAY(15, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
-      CLCREATEARG_ARRAY(16, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_max_positions * args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
-      CLCREATEARG(17, max_positions_buffer, CL_RO, args->markov_max_positions, sizeof(gpu_uint));
-    }
   }
 
   if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
@@ -1647,11 +1509,6 @@ void *host_thread_precompute(void *ptr) {
   CLFREEBUFFER(pspace_table_buffer);
   CLFREEBUFFER(pspace_total_buffer);
   CLFREEBUFFER(challenge_buffer);
-  if (args->use_markov) {
-    CLFREEBUFFER(sorted_pos0_buffer);
-    CLFREEBUFFER(sorted_bigram_buffer);
-    CLFREEBUFFER(max_positions_buffer);
-  }
 
   /* Context/program/kernel/queue are kept alive for reuse across hashes.
    * They are released by release_precompute_gpu(). */
@@ -1863,8 +1720,6 @@ void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int nu
  * sends all hashes to the GPU at once, achieving near-constant time regardless
  * of hash count (up to GPU memory limits).
  *
- * Supports both standard and Markov NTLM8 tables.
- *
  * If index_data_array is non-NULL, each hash's unfiltered output is also
  * written to a disk cache entry (rcracki.precalc.N + .index file) before
  * the non-zero filter is applied.  This makes a second lookup of the same
@@ -1876,16 +1731,13 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     char **index_data_array,
     precomputed_and_potential_indices **ppi_head) {
 
-  int use_markov_batch = args[0].use_markov &&
-      is_markov_ntlm8(args[0].hash_type, args[0].charset, args[0].plaintext_len_min,
-        args[0].plaintext_len_max, args[0].reduction_offset, args[0].chain_len, args[0].use_markov);
-  int use_standard_batch = !args[0].use_markov &&
+  int use_standard_batch =
       is_ntlm8(args[0].hash_type, args[0].charset, args[0].plaintext_len_min,
         args[0].plaintext_len_max, args[0].reduction_offset, args[0].chain_len);
   int use_netntlmv1_batch = is_netntlmv1_7(args[0].hash_type, args[0].charset_name,
         args[0].plaintext_len_min, args[0].plaintext_len_max, args[0].chain_len);
 
-  if (!use_markov_batch && !use_standard_batch && !use_netntlmv1_batch)
+  if (!use_standard_batch && !use_netntlmv1_batch)
     return 0;
   if (num_hashes < 2)
     return 0;
@@ -1901,13 +1753,12 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   gpu_buffer charset_len_buffer = NULL, chain_len_buffer = NULL;
   gpu_buffer device_num_buffer = NULL, total_devices_buffer = NULL;
   gpu_buffer output_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
   gpu_buffer challenge_buffer = NULL;
 
   unsigned int positions_per_hash = args[0].chain_len;  /* Single device: all positions */
   size_t total_work_items = (size_t)num_hashes * positions_per_hash;
 
-  const char *batch_label = use_markov_batch ? "Markov NTLM8" : use_netntlmv1_batch ? "NetNTLMv1-7" : "NTLM8";
+  const char *batch_label = use_netntlmv1_batch ? "NetNTLMv1-7" : "NTLM8";
   printf("\n  Batched precompute (%s): %u hashes x %u positions = %zu work items\n",
          batch_label,
          num_hashes, positions_per_hash, total_work_items);
@@ -1943,12 +1794,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   /* Set up GPU context and load the appropriate batch kernel. */
   gpu->context = CLCREATECONTEXT(context_callback, &(gpu->device));
   gpu->queue = CLCREATEQUEUE(gpu->context, gpu->device);
-  if (use_markov_batch) {
-    load_kernel(gpu->context, 1, &(gpu->device),
-                PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH,
-                "precompute_markov_ntlm8_batch",
-                &(gpu->program), &(gpu->kernel), args[0].hash_type);
-  } else if (use_netntlmv1_batch) {
+  if (use_netntlmv1_batch) {
     load_kernel(gpu->context, 1, &(gpu->device),
                 PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH,
                 "precompute_netntlmv1_7_batch",
@@ -1988,15 +1834,6 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   CLCREATEARG(5, device_num_buffer, CL_RO, device_num, sizeof(gpu_uint));  /* pos_start, updated per chunk */
   CLCREATEARG(6, total_devices_buffer, CL_RO, positions_uint, sizeof(gpu_uint));  /* total_positions */
   CLCREATEARG_ARRAY(7, output_buffer, CL_WO, all_output, output_bytes);
-
-  /* Markov batch kernel takes two additional args for the Markov statistics. */
-  if (use_markov_batch) {
-    CLCREATEARG_ARRAY(8, sorted_pos0_buffer, CL_RO, args[0].sorted_pos0,
-                      args[0].markov_charset_len * sizeof(uint8_t));
-    CLCREATEARG_ARRAY(9, sorted_bigram_buffer, CL_RO, args[0].sorted_bigram,
-                      args[0].markov_max_positions * args[0].markov_charset_len *
-                      args[0].markov_charset_len * sizeof(uint8_t));
-  }
 
   /* NetNTLMv1-7 batch kernel takes the server challenge at index 8. */
   if (use_netntlmv1_batch) {
@@ -2118,7 +1955,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
     ppi->hash = hashes[h];
 
     /* Batched-precompute reverse-order fix (all batched hash types: ntlm8 /
-     * netntlmv1_7 / markov_ntlm8).
+     * netntlmv1_7).
      *
      * The search records a matched endpoint's POSITION as its index in
      * precomputed_end_indices, and the false-alarm kernel reconstructs the
@@ -2162,10 +1999,6 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   CLFREEBUFFER(device_num_buffer);
   CLFREEBUFFER(total_devices_buffer);
   CLFREEBUFFER(output_buffer);
-  if (use_markov_batch) {
-    CLFREEBUFFER(sorted_pos0_buffer);
-    CLFREEBUFFER(sorted_bigram_buffer);
-  }
   CLFREEBUFFER(challenge_buffer);
   CLRELEASEKERNEL(gpu->kernel);
   CLRELEASEPROGRAM(gpu->program);
@@ -3530,20 +3363,13 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
   uint64_t plaintext_space_total = 0;
   int charset_len = 0;
-  if (args[0].markov_keyspace > 0) {
+  if (strcmp(args[0].charset_name, "byte") == 0)
+    charset_len = 256;
+  else
     charset_len = strlen(args[0].charset);
-    if (charset_len == 0) charset_len = 1;
-    plaintext_space_total = fill_plaintext_space_markov_keyspace(
-        args[0].markov_keyspace, args[0].plaintext_len_max, plaintext_space_up_to_index);
-  } else {
-    if (strcmp(args[0].charset_name, "byte") == 0)
-      charset_len = 256;
-    else
-      charset_len = strlen(args[0].charset);
-    plaintext_space_total = fill_plaintext_space_table(
-        charset_len, args[0].plaintext_len_min, args[0].plaintext_len_max,
-        plaintext_space_up_to_index);
-  }
+  plaintext_space_total = fill_plaintext_space_table(
+      charset_len, args[0].plaintext_len_min, args[0].plaintext_len_max,
+      plaintext_space_up_to_index);
   (void)charset_len;  /* used only via fill_* above; suppress unused-var warning */
 
   start_timer(&search_start_time);
@@ -3800,9 +3626,6 @@ int main(int ac, char **av) {
       user_provided_gws = parse_uint_arg(av[++i], "-gws");
     } else if ((strcmp(av[i], "-disable-platform") == 0) && (i + 1 < (unsigned int)ac)) {
       disable_platform = parse_uint_arg(av[++i], "-disable-platform");
-    } else if ((strcmp(av[i], "--markov") == 0) && (i + 1 < (unsigned int)ac)) {
-      use_markov = 1;
-      strncpy(markov_path, av[++i], sizeof(markov_path) - 1);
     } else if ((strcmp(av[i], "--fa-batch") == 0) && (i + 1 < (unsigned int)ac)) {
       unsigned int v = parse_uint_arg(av[++i], "--fa-batch");
       if (v == 0) v = 16384;       /* 0 means "use default" */
@@ -4049,16 +3872,6 @@ int main(int ac, char **av) {
     goto err;
   }
 
-  /* If --markov was requested, load the model once before spawning threads. */
-  if (use_markov) {
-    if (markov_load(markov_path, &g_markov) != 0) {
-      fprintf(stderr, "Error: failed to load Markov model from '%s'\n", markov_path);
-      goto err;
-    }
-    printf("Loaded Markov model from %s (charset_len=%u).\n", markov_path, g_markov.charset_len);
-    fflush(stdout);
-  }
-
   /* Set per-GPU constant fields that don't change across config groups. */
   for (i = 0; i < num_devices; i++) {
     args[i].username       = NULL;  /* Filled in per-hash below. */
@@ -4067,13 +3880,6 @@ int main(int ac, char **av) {
     args[i].gpu.device_number = i;
     args[i].gpu.device     = devices[i];
     get_device_uint(args[i].gpu.device, CL_DEVICE_MAX_COMPUTE_UNITS, &(args[i].gpu.num_work_units));
-    args[i].use_markov     = use_markov;
-    if (use_markov) {
-      args[i].sorted_pos0       = g_markov.sorted_pos0;
-      args[i].sorted_bigram     = g_markov.sorted_bigram;
-      args[i].markov_charset_len = g_markov.charset_len;
-      args[i].markov_max_positions = g_markov.max_positions;
-    }
   }
 
   /* Count config groups for progress reporting. */
@@ -4184,8 +3990,6 @@ int main(int ac, char **av) {
   free_precomputed_and_potential_indices(&ppi_head);
   free_loaded_hashes(usernames, hashes);
   FREE(args);
-  if (use_markov)
-    markov_free(&g_markov);
   pthread_barrier_destroy(&barrier);
 
   if (g_bloom_agg.tables > 0) {
@@ -4211,8 +4015,6 @@ int main(int ac, char **av) {
   free_precomputed_and_potential_indices(&ppi_head);
   free_loaded_hashes(usernames, hashes);
   FREE(args);
-  if (use_markov)
-    markov_free(&g_markov);
   pthread_barrier_destroy(&barrier);
   return -1;
 }

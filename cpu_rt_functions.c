@@ -18,7 +18,6 @@
 #include <stdio.h>
 #include <string.h>
 #include "cpu_rt_functions.h"
-#include "markov.h"
 #include "shared.h"
 
 #include <gcrypt.h>
@@ -50,18 +49,6 @@ static void gcrypt_init_once(void) {
 
 static void ensure_gcrypt_init(void) {
   pthread_once(&gcrypt_once, gcrypt_init_once);
-}
-
-
-/* Fills the pspace table for a markov keyspace.
- * Invariant: pspace[0..plaintext_len_max-1] are always 0; pspace[plaintext_len_max] is the
- * total keyspace. */
-uint64_t fill_plaintext_space_markov_keyspace(uint64_t markov_keyspace, unsigned int plaintext_len_max, uint64_t *plaintext_space_up_to_index) {
-  int i;
-  for (i = 0; i <= (int)plaintext_len_max; i++)
-    plaintext_space_up_to_index[i] = 0;
-  plaintext_space_up_to_index[plaintext_len_max] = markov_keyspace;
-  return markov_keyspace;
 }
 
 
@@ -180,39 +167,6 @@ uint64_t generate_rainbow_chain(
       ntlm_hash(plaintext, *plaintext_len, hash);
     }
     index = hash_to_index(hash, *hash_len, reduction_offset, plaintext_space_total, pos);
-  }
-  return index;
-}
-
-
-uint64_t generate_rainbow_chain_markov(
-    unsigned int hash_type,
-    const markov_model *model,
-    unsigned int plaintext_len,
-    unsigned int reduction_offset,
-    unsigned int chain_len,
-    uint64_t start)
-{
-  uint64_t index = start;
-  uint64_t pspace_total = 1;
-  for (unsigned int i = 0; i < plaintext_len; i++)
-    pspace_total *= model->charset_len;
-
-  for (unsigned int pos = 0; pos < chain_len - 1; pos++) {
-    unsigned char plaintext[MAX_PLAINTEXT_LEN];
-    unsigned char hash[MAX_HASH_OUTPUT_LEN];
-    unsigned int hash_len = sizeof(hash);
-
-    memset(plaintext, 0, sizeof(plaintext));
-    index_to_plaintext_markov_cpu(index, model, plaintext_len, plaintext);
-
-    if (hash_type == HASH_MD5) {
-      md5_hash((char *)plaintext, plaintext_len, hash);
-      hash_len = 16;
-    } else {
-      ntlm_hash((char *)plaintext, plaintext_len, hash);
-    }
-    index = hash_to_index(hash, hash_len, reduction_offset, pspace_total, pos);
   }
   return index;
 }

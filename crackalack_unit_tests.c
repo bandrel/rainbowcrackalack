@@ -39,10 +39,6 @@
 #include "test_hash_to_index_ntlm9.h"
 #include "test_index_to_plaintext.h"
 #include "test_index_to_plaintext_ntlm9.h"
-#include "test_index_to_plaintext_markov.h"
-#include "test_chain_markov.h"
-#include "test_chain_markov_ntlm8.h"
-#include "test_chain_markov_ntlm9.h"
 #include "cpu_tests_common.h"
 #include "version.h"
 
@@ -384,70 +380,6 @@ int main(int ac, char **av) {
   hash_type = HASH_NETNTLMV1;
   load_kernel(context, num_devices, devices, "test_hash_netntlmv1_7_fast.cl", "test_hash_netntlmv1_7_fast", &program, &kernel, hash_type);
   if (!test_hash_netntlmv1_7_fast(devices[0], context, kernel)) {
-    ret = -1;
-    all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
-
-  CLRELEASEKERNEL(kernel);
-  CLRELEASEPROGRAM(program);
-
-
-  /* Markov index_to_plaintext tests. */
-  hash_type = HASH_NTLM;
-  load_kernel(context, num_devices, devices, "test_index_to_plaintext_markov.cl",
-              "test_index_to_plaintext_markov", &program, &kernel, hash_type);
-  printf("Running Markov index_to_plaintext() tests... "); fflush(stdout);
-  if (!test_index_to_plaintext_markov(devices[0], context, kernel)) {
-    ret = -1;
-    all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
-
-  CLRELEASEKERNEL(kernel);
-  CLRELEASEPROGRAM(program);
-
-
-  /* Markov chain generation tests. */
-  hash_type = HASH_NTLM;
-  load_kernel(context, num_devices, devices, "crackalack_markov.cl",
-              "crackalack_markov", &program, &kernel, hash_type);
-  printf("Running Markov chain tests... "); fflush(stdout);
-  if (!test_chain_markov(devices[0], context, kernel)) {
-    ret = -1;
-    all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
-
-  CLRELEASEKERNEL(kernel);
-  CLRELEASEPROGRAM(program);
-
-
-  /* Markov NTLM8 fast-path chain tests. */
-  hash_type = HASH_NTLM;
-  load_kernel(context, num_devices, devices, "crackalack_markov_ntlm8.cl",
-              "crackalack_markov_ntlm8", &program, &kernel, hash_type);
-  printf("Running Markov NTLM8 chain tests... "); fflush(stdout);
-  if (!test_chain_markov_ntlm8(devices[0], context, kernel)) {
-    ret = -1;
-    all_tests_passed = 0;
-    PRINT_FAILED();
-  } else
-    PRINT_PASSED();
-
-  CLRELEASEKERNEL(kernel);
-  CLRELEASEPROGRAM(program);
-
-
-  /* Markov NTLM9 fast-path chain tests. */
-  hash_type = HASH_NTLM;
-  load_kernel(context, num_devices, devices, "crackalack_markov_ntlm9.cl",
-              "crackalack_markov_ntlm9", &program, &kernel, hash_type);
-  printf("Running Markov NTLM9 chain tests... "); fflush(stdout);
-  if (!test_chain_markov_ntlm9(devices[0], context, kernel)) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
