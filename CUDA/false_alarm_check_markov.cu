@@ -1,4 +1,5 @@
 #include "shared.h"
+#include "string.cu"
 #include "rt.cu"
 #include "rt_markov.cu"
 
