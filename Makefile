@@ -189,12 +189,20 @@ CPU_TESTS_OBJS := \
 $(CPU_TESTS_OBJDIR):
 	mkdir -p $@
 
+# -MMD -MP emits per-object .d header-dependency files so that a change to a
+# header (e.g. the rt_parameters struct layout in misc.h) forces a rebuild of
+# every .o that includes it.  Without this, switching branches with a shared
+# build/cpu-tests/obj mixes objects compiled against different struct layouts,
+# producing an ABI mismatch and bogus test failures.
 $(CPU_TESTS_OBJDIR)/%.o: %.c | $(CPU_TESTS_OBJDIR)
-	$(CPU_TESTS_CC) $(CPU_TESTS_CPPFLAGS) $(CPU_TESTS_CFLAGS) -c $< -o $@
+	$(CPU_TESTS_CC) $(CPU_TESTS_CPPFLAGS) $(CPU_TESTS_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 cpu-tests: $(CPU_TESTS_OBJS)
 	$(CPU_TESTS_CC) $(CPU_TESTS_LDFLAGS) $^ -o $(OUTDIR)/$(CPU_TESTS_PROG) $(CPU_TESTS_LIBS)
 	@echo "Built $(OUTDIR)/$(CPU_TESTS_PROG)"
+
+CPU_TESTS_DEPS := $(CPU_TESTS_OBJS:.o=.d)
+-include $(CPU_TESTS_DEPS)
 
 # tsan-sort: build and run test_parallel_sort_tsan.c under ThreadSanitizer.
 # Uses a dedicated build directory (build/tsan-sort/obj) so it never clobbers
