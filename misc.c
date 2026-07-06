@@ -323,33 +323,12 @@ unsigned int is_netntlmv1_7(unsigned int hash_type, char *charset_name, unsigned
 }
 
 
-/* Optimized Markov NTLM8/9/10 path DISABLED: the optimized kernels hardcode keyspace 95^9 (ignoring --markov-keyspace) and their lookup false-alarm check rejects in-table hashes. Returning 0 routes all Markov through the generic crackalack_markov/precompute_markov/false_alarm_check_markov kernels, which honor --markov-keyspace and are verified correct. */
-/* Returns 1 if the parameters form the Markov NTLM 8 set, otherwise 0. */
-unsigned int is_markov_ntlm8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov) {
-  return 0;
-}
-
-
-/* Optimized Markov NTLM8/9/10 path DISABLED: the optimized kernels hardcode keyspace 95^9 (ignoring --markov-keyspace) and their lookup false-alarm check rejects in-table hashes. Returning 0 routes all Markov through the generic crackalack_markov/precompute_markov/false_alarm_check_markov kernels, which honor --markov-keyspace and are verified correct. */
-/* Returns 1 if the parameters form the Markov NTLM 9 set, otherwise 0. */
-unsigned int is_markov_ntlm9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov) {
-  return 0;
-}
-
-
 /* Returns 1 if the parameters form the standard NTLM 10 set, otherwise 0. */
 unsigned int is_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max) {
   return (hash_type == HASH_NTLM)
       && (strcmp(charset, CHARSET_ASCII_32_95) == 0)
       && (plaintext_len_min == 10)
       && (plaintext_len_max == 10);
-}
-
-
-/* Optimized Markov NTLM8/9/10 path DISABLED: the optimized kernels hardcode keyspace 95^9 (ignoring --markov-keyspace) and their lookup false-alarm check rejects in-table hashes. Returning 0 routes all Markov through the generic crackalack_markov/precompute_markov/false_alarm_check_markov kernels, which honor --markov-keyspace and are verified correct. */
-/* Returns 1 if the parameters form the Markov NTLM 10 set, otherwise 0. */
-unsigned int is_markov_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, int use_markov) {
-  return 0;
 }
 
 
@@ -446,17 +425,6 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
           if (parse_challenge_str(ch + 5, parsed_chal) == 0)
             memcpy(rt_params->challenge, parsed_chal, 8);
           *ch = '\0';
-        }
-      }
-
-      /* Extract Markov keyspace from charset name if present (e.g. "ascii-32-95-mk1000000"). */
-      {
-        char *mk = strstr(rt_params->charset_name, "-mk");
-        if (mk) {
-          rt_params->markov_keyspace = strtoull(mk + 3, NULL, 10);
-          *mk = '\0';
-        } else {
-          rt_params->markov_keyspace = 0;
         }
       }
 

@@ -25,7 +25,6 @@
 #include "charset.h"
 #include "cpu_rt_functions.h"
 #include "file_lock.h"
-#include "markov.h"
 #include "misc.h"
 #include "rtc_decompress.h"
 #include "shared.h"
@@ -72,27 +71,6 @@ int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned in
 	return VERIFY_ERR_CORRUPTED;
       }
       expected_start++;
-    }
-  } else if (table_type == VERIFY_TABLE_TYPE_MARKOV) {
-    /* Markov tables have probability-ranked start indices (not sequential).
-     * Only check for non-zero end indices and within-bounds indices. */
-    for (i = 0; i < num_chains; i++) {
-      start = rainbowtable[i * 2];
-      end = rainbowtable[(i * 2) + 1];
-
-      if (end == 0) {
-	fprintf(stderr, "Chain #%"PRIu64" has an end value of zero!\n", i);
-	*error_chain_num = i;
-	return VERIFY_ERR_CORRUPTED;
-      }
-
-      /* For Markov tables, end index must be within the full keyspace (plaintext_space_total).
-       * Start index can be within the markov_keyspace which may be smaller. */
-      if ((plaintext_space_total > 0) && (end >= plaintext_space_total)) {
-	fprintf(stderr, "End index is greater or equal to the plaintext space total!\n\n\tEnd index:   %"PRIu64"\nPlaintext space total: %"PRIu64"\n\n", end, plaintext_space_total);
-	*error_chain_num = i;
-	return VERIFY_ERR_CORRUPTED;
-      }
     }
   } else if (table_type == VERIFY_TABLE_TYPE_LOOKUP) {
     uint64_t last_end = 0;
@@ -154,7 +132,7 @@ int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned in
  * verified with CPU code.  When set to -1, the default of 100 is checked.
  * 
  * Returns 1 on success, or 0 on failure. */
-int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify, const markov_model *markov) {
+int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify) {
   rt_parameters rt_params = {0};
   uint64_t plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
 
@@ -251,10 +229,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
       rc_fread(&actual_end, sizeof(uint64_t), 1, f);
 
       /* Compute the expected end point. */
-      if (markov)
-        computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start);
-      else
-        computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
+      computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
 
       /* Ensure that the end point in the file matches what we just computed. */
       if (actual_end != computed_end) {
@@ -343,10 +318,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
           start = rainbow_table[random_chain * 2];
           actual_end = rainbow_table[(random_chain * 2) + 1];
 
-          if (markov)
-            computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start);
-          else
-            computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
+          computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
 
           if (actual_end != computed_end) {
             _print_chain_error(random_chain, start, actual_end, computed_end);
@@ -361,10 +333,7 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
           start = rainbow_table[random_chain * 2];
           actual_end = rainbow_table[(random_chain * 2) + 1];
 
-          if (markov)
-            computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start);
-          else
-            computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
+          computed_end = generate_rainbow_chain(rt_params.hash_type, charset, charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, start, plaintext_space_up_to_index, plaintext_space_total, plaintext, &plaintext_len, hash, &hash_len);
 
           if (actual_end != computed_end) {
             _print_chain_error(random_chain, start, actual_end, computed_end);
