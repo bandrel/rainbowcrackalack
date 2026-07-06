@@ -84,7 +84,7 @@
 #define PRECOMPUTE_NTLM10_KERNEL_PATH "CUDA/precompute_ntlm10.cu"
 #define PRECOMPUTE_MD5_8_KERNEL_PATH "CUDA/precompute_md5_8.cu"
 #define PRECOMPUTE_MD5_9_KERNEL_PATH "CUDA/precompute_md5_9.cu"
-#define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
+#define PRECOMPUTE_MARKOV_KERNEL_PATH "CUDA/precompute_markov.cu"
 #define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "CUDA/precompute_markov_ntlm8.cu"
 #define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "CUDA/precompute_markov_ntlm9.cu"
 #define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "CUDA/precompute_markov_ntlm10.cu"
@@ -139,7 +139,7 @@
 #define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.metal"
 #define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.metal"
 #elif defined(USE_CUDA)
-#define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.cl"
+#define FALSE_ALARM_MARKOV_KERNEL_PATH "CUDA/false_alarm_check_markov.cu"
 #define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm8.cu"
 #define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm9.cu"
 #define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm10.cu"
