@@ -21,8 +21,11 @@
 
 stages: [cpu, gpu]
 
-default:
-  tags: [gpuhost3-gpu]
+# NOTE: jobs are intentionally left UNTAGGED so they run on the gpuhost3 shell
+# runner without needing an exact tag match.  The runner must therefore have
+# "Run untagged jobs" enabled (Settings > CI/CD > Runners > edit runner).  If you
+# prefer tag-based routing instead, add `tags: [gpuhost3-gpu]` here and give the
+# runner that tag.
 
 variables:
   GIT_STRATEGY: clone
