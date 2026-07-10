@@ -267,6 +267,60 @@ static int group_fill_plaintext_space_mask(void)
 }
 
 
+/* MP-14: index_to_plaintext_mask_cpu — mixed-radix decode */
+static int group_index_to_plaintext_mask(void)
+{
+    int ok = 1;
+    Mask m;
+    char plaintext[MAX_PLAINTEXT_LEN + 1];
+    unsigned int plaintext_len;
+
+    /* mask "?u?d": pos0=A..Z (26), pos1=0..9 (10); keyspace=260 */
+    if (mask_parse("?u?d", &m, NULL, NULL, NULL, NULL) != 0) {
+        fprintf(stderr, "MP-14 failed: mask_parse returned non-zero\n");
+        return 0;
+    }
+
+    /* MP-14a: index 0 -> "A0" */
+    memset(plaintext, 0, sizeof(plaintext));
+    index_to_plaintext_mask_cpu(0, &m, plaintext, &plaintext_len);
+    if (plaintext_len != 2 || strcmp(plaintext, "A0") != 0) {
+        fprintf(stderr, "MP-14a failed: index 0 -> \"%s\" (len=%u), expected \"A0\"\n",
+                plaintext, plaintext_len);
+        ok = 0;
+    }
+
+    /* MP-14b: index 1 -> "A1" (least-significant position increments first) */
+    memset(plaintext, 0, sizeof(plaintext));
+    index_to_plaintext_mask_cpu(1, &m, plaintext, &plaintext_len);
+    if (plaintext_len != 2 || strcmp(plaintext, "A1") != 0) {
+        fprintf(stderr, "MP-14b failed: index 1 -> \"%s\" (len=%u), expected \"A1\"\n",
+                plaintext, plaintext_len);
+        ok = 0;
+    }
+
+    /* MP-14c: index 259 (keyspace-1) -> "Z9" */
+    memset(plaintext, 0, sizeof(plaintext));
+    index_to_plaintext_mask_cpu(259, &m, plaintext, &plaintext_len);
+    if (plaintext_len != 2 || strcmp(plaintext, "Z9") != 0) {
+        fprintf(stderr, "MP-14c failed: index 259 -> \"%s\" (len=%u), expected \"Z9\"\n",
+                plaintext, plaintext_len);
+        ok = 0;
+    }
+
+    /* MP-14d: index 10 -> "B0" (second upper char, first digit) */
+    memset(plaintext, 0, sizeof(plaintext));
+    index_to_plaintext_mask_cpu(10, &m, plaintext, &plaintext_len);
+    if (plaintext_len != 2 || strcmp(plaintext, "B0") != 0) {
+        fprintf(stderr, "MP-14d failed: index 10 -> \"%s\" (len=%u), expected \"B0\"\n",
+                plaintext, plaintext_len);
+        ok = 0;
+    }
+
+    return ok;
+}
+
+
 int test_mask_parse(void)
 {
     int ok = 1;
@@ -279,6 +333,7 @@ int test_mask_parse(void)
     if (!group_a_specifier())      ok = 0;
     if (!group_negative())         ok = 0;
     if (!group_fill_plaintext_space_mask()) ok = 0;
+    if (!group_index_to_plaintext_mask()) ok = 0;
 
     return ok;
 }
