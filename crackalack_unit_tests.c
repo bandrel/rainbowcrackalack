@@ -44,6 +44,7 @@
 #include "test_chain_markov.h"
 #include "test_chain_markov_ntlm8.h"
 #include "test_chain_markov_ntlm9.h"
+#include "test_chain_mask.h"
 #include "cpu_tests_common.h"
 #include "version.h"
 
@@ -465,6 +466,22 @@ int main(int ac, char **av) {
               "crackalack_markov_ntlm9", &program, &kernel, hash_type);
   printf("Running Markov NTLM9 chain tests... "); fflush(stdout);
   if (!test_chain_markov_ntlm9(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* Mask chain generation tests. */
+  hash_type = HASH_NTLM;
+  load_kernel(context, num_devices, devices, "crackalack_mask.cl",
+              "crackalack_mask", &program, &kernel, hash_type);
+  printf("Running Mask chain tests... "); fflush(stdout);
+  if (!test_chain_mask(devices[0], context, kernel)) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
