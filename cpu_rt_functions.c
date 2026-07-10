@@ -19,6 +19,7 @@
 #include <string.h>
 #include "cpu_rt_functions.h"
 #include "markov.h"
+#include "mask_parse.h"
 #include "shared.h"
 
 #include <gcrypt.h>
@@ -62,6 +63,19 @@ uint64_t fill_plaintext_space_markov_keyspace(uint64_t markov_keyspace, unsigned
     plaintext_space_up_to_index[i] = 0;
   plaintext_space_up_to_index[plaintext_len_max] = markov_keyspace;
   return markov_keyspace;
+}
+
+
+/* Fills the pspace table for a mask keyspace.
+ * Fixed-length semantics: pspace[0..mask->length-1] are 0; pspace[mask->length]
+ * holds the full mask keyspace (product of per-position charset sizes). */
+uint64_t fill_plaintext_space_mask(const Mask *mask, uint64_t *plaintext_space_up_to_index) {
+  int i;
+  uint64_t keyspace = mask_keyspace(mask);
+  for (i = 0; i <= mask->length; i++)
+    plaintext_space_up_to_index[i] = 0;
+  plaintext_space_up_to_index[mask->length] = keyspace;
+  return keyspace;
 }
 
 
