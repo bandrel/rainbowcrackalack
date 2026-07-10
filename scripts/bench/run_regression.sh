@@ -235,7 +235,7 @@ phase_roundtrip_multi() {
     echo "" >> "$json"; echo "}" >> "$json"
     log "wrote $json"
     cat "$json" >&2
-    [[ $fail -eq 0 ]] || log "ROUNDTRIP-MULTI: at least one config did not crack all $REG_MULTI_COUNT hashes"
+    [[ $fail -eq 0 ]] || { log "ROUNDTRIP-MULTI: at least one config did not crack all $REG_MULTI_COUNT hashes -- FAILING"; return 1; }
 }
 
 phase_roundtrip() {
@@ -246,7 +246,7 @@ phase_roundtrip() {
     "$PY" -c "from crack_diff import parse_pot" 2>/dev/null \
         || { log "ERROR: crack_diff not importable (PYTHONPATH=$PYTHONPATH)"; exit 1; }
     echo "{" > "$json"
-    local first=1
+    local first=1 fail=0
     for cfg in "${ROUNDTRIP_CONFIGS[@]}"; do
         IFS='|' read -r name gen_args gkh_flags chain_len <<<"$cfg"
         log "round-trip: $name"
@@ -257,6 +257,7 @@ phase_roundtrip() {
         fi
         read -r cracked exp_hash gotpair <<<"$rt_out"
         local storedpt="${gotpair%%|*}" exp="${gotpair##*|}"
+        [[ "$cracked" == "true" ]] || { fail=1; log "round-trip: $name did NOT crack its provably-in-table hash (expected=$exp)"; }
         [[ $first -eq 1 ]] || echo "," >> "$json"; first=0
         local gotjson="null"; [[ -n "$storedpt" ]] && gotjson="\"$storedpt\""
         printf '  "%s": {"cracked": %s, "expected": "%s", "got": %s}' \
@@ -265,6 +266,7 @@ phase_roundtrip() {
     echo "" >> "$json"; echo "}" >> "$json"
     log "wrote $json"
     cat "$json" >&2
+    [[ $fail -eq 0 ]] || { log "ROUNDTRIP: at least one config failed to crack -- FAILING"; return 1; }
 }
 
 phase_crackdiff() {

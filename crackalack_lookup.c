@@ -286,8 +286,12 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
 
 /* The path of the pot file to store cracked hashes in.  This can be overridden by
  * a command line arg. */
-char jtr_pot_filename[128] = "rainbowcrackalack_jtr.pot";
-char hashcat_pot_filename[128] = "rainbowcrackalack_hashcat.pot";
+/* Sized generously (PATH_MAX-class) so a long user-supplied pot path plus the
+ * appended ".hashcat" suffix cannot silently truncate.  A 128-byte buffer here
+ * truncated ".hashcat" -> ".hash" for deep paths (e.g. CI build dirs), so the
+ * hashcat pot was written to the wrong filename and looked like a false crack. */
+char jtr_pot_filename[4096] = "rainbowcrackalack_jtr.pot";
+char hashcat_pot_filename[4096] = "rainbowcrackalack_hashcat.pot";
 
 /* Markov mode state set by --markov flag. */
 static int use_markov = 0;
