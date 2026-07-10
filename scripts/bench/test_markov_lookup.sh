@@ -153,8 +153,68 @@ run_case() {
   fi
 }
 
+# Multi-hash batched path: mint MULTI_COUNT provably-in-table hashes from
+# DISTINCT chains at VARIED chain positions, look them all up together, and
+# assert every one cracks.  This exercises two things the single-hash run_case
+# above cannot:
+#   * the batched Markov precompute + multi-candidate false-alarm path (only
+#     engaged with >=2 loaded hashes) -- guards the "batched-precompute
+#     off-by-one that dropped every multi-hash crack" class of bug;
+#   * position-dependent precompute correctness -- a reversed/off-by-one column
+#     order can be invisible at a single mid-chain position yet drop every
+#     off-center hash, so each hash sits at a different column.
+MULTI_COUNT=4
+run_multi_case() {
+  local label="$1" keyspace="$2"
+  local ks_gen=() ks_gkh=() mk_suffix=""
+  if [[ -n "$keyspace" ]]; then
+    ks_gen=(--markov-keyspace "$keyspace"); ks_gkh=(--markov-keyspace "$keyspace")
+    mk_suffix="-mk${keyspace}"
+  fi
+  echo
+  echo "===== multi-hash case: $label (keyspace='${keyspace:-full}', $MULTI_COUNT hashes) ====="
+  local casedir="$work/multi_${label}"; mkdir -p "$casedir"
+  local genname="ntlm_ascii-32-95${mk_suffix}#8-8_0_${CHAIN_LEN}x${NUM_CHAINS}_0.rt"
+  ( cd "$REPO" && "$GEN" ntlm ascii-32-95 8 8 0 "$CHAIN_LEN" "$NUM_CHAINS" 0 --markov "$MODEL" "${ks_gen[@]}" >/dev/null 2>&1 )
+  [[ -f "$REPO/$genname" ]] || { echo "FAIL[$label-multi]: no table generated ($genname)"; rc=1; return; }
+  mv -f "$REPO/$genname" "$casedir/"; rm -f "$REPO/$genname.state"
+  local table="$casedir/$genname"
+  "$SORT" "$table" >/dev/null 2>&1 || { echo "FAIL[$label-multi]: crackalack_sort failed"; rc=1; return; }
+
+  # One provably-in-table hash per distinct chain, each at a different column.
+  local hashfile="$work/multi_hashes_${label}.txt"; : > "$hashfile"
+  local c start pos out hash
+  for (( c = 0; c < MULTI_COUNT; c++ )); do
+    pos=$(( (c + 1) * CHAIN_LEN / (MULTI_COUNT + 1) )); (( pos >= 1 )) || pos=1
+    start="$("$GETCHAIN" "$table" "$c" 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+    [[ -n "$start" ]] || { echo "FAIL[$label-multi]: get_chain $c failed"; rc=1; return; }
+    out="$("$GKH" "$CHAIN_LEN" 0 "$start" "$pos" --algo ntlm --charset ascii-32-95 --plaintext-len 8 --markov "$MODEL" "${ks_gkh[@]}" 2>&1)"
+    hash="$(awk -F= '/^hash=/{print $2}' <<<"$out")"
+    [[ -n "$hash" ]] || { echo "FAIL[$label-multi]: gen_known_hash $c failed"; echo "$out" | tail -3; rc=1; return; }
+    echo "$hash" >> "$hashfile"
+  done
+  echo "  minted $MULTI_COUNT in-table hashes at columns spread across the chain"
+
+  # File-mode lookup (>=2 hashes -> batched path).  Default pot lands in $REPO.
+  rm -f "$REPO"/rcracki.precalc.* "$REPO"/*.index "$REPO"/rainbowcrackalack_hashcat.pot 2>/dev/null || true
+  local log="$work/multi_${label}.log"
+  ( cd "$REPO" && "$LOOKUP" "$casedir" "$hashfile" --markov "$MODEL" ) >"$log" 2>&1 || true
+  local cracked=0 h
+  while IFS= read -r h; do
+    [[ -n "$h" ]] || continue
+    grep -qiF "$h" "$REPO/rainbowcrackalack_hashcat.pot" 2>/dev/null && cracked=$((cracked + 1))
+  done < "$hashfile"
+  if [[ "$cracked" -eq "$MULTI_COUNT" ]]; then
+    echo "  PASS: batched lookup cracked all $MULTI_COUNT hashes at varied positions"
+  else
+    echo "  FAIL[$label-multi]: cracked $cracked/$MULTI_COUNT hashes"; strip_ansi <"$log" | tail -10; rc=1
+  fi
+}
+
 run_case truncated 500000
 run_case full ""
+run_multi_case truncated 500000
+run_multi_case full ""
 
 echo
 if [[ "$rc" -eq 0 ]]; then
