@@ -180,6 +180,49 @@ static int group_gpu_buffers(void)
 }
 
 
+/* MP-10: ?a expands to l+u+d+s = 26+26+10+33 = 95 */
+static int group_a_specifier(void)
+{
+    int ok = 1;
+    Mask m;
+
+    if (mask_parse("?a", &m, NULL, NULL, NULL, NULL) != 0) {
+        fprintf(stderr, "MP-10 failed: mask_parse(\"?a\") returned error\n");
+        return 0;
+    }
+
+    if (m.positions[0].size != 95) {
+        fprintf(stderr, "MP-10 failed: ?a size=%u, expected 95\n",
+                m.positions[0].size);
+        ok = 0;
+    }
+
+    return ok;
+}
+
+
+/* MP-11/MP-12: negative paths */
+static int group_negative(void)
+{
+    int ok = 1;
+    Mask m;
+
+    /* MP-11: unknown specifier ?z must return -1 */
+    if (mask_parse("?z", &m, NULL, NULL, NULL, NULL) != -1) {
+        fprintf(stderr, "MP-11 failed: expected -1 for unknown specifier \"?z\"\n");
+        ok = 0;
+    }
+
+    /* MP-12: trailing bare ? must return -1 */
+    if (mask_parse("?u?", &m, NULL, NULL, NULL, NULL) != -1) {
+        fprintf(stderr, "MP-12 failed: expected -1 for trailing \"?\" in \"?u?\"\n");
+        ok = 0;
+    }
+
+    return ok;
+}
+
+
 int test_mask_parse(void)
 {
     int ok = 1;
@@ -189,6 +232,8 @@ int test_mask_parse(void)
     if (!group_is_mask_string())   ok = 0;
     if (!group_filename_roundtrip()) ok = 0;
     if (!group_gpu_buffers())      ok = 0;
+    if (!group_a_specifier())      ok = 0;
+    if (!group_negative())         ok = 0;
 
     return ok;
 }
