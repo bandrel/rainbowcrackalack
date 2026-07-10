@@ -174,6 +174,7 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/test_decompress.o \
 	$(CPU_TESTS_OBJDIR)/test_precompute_collate.o \
 	$(CPU_TESTS_OBJDIR)/test_markov.o \
+	$(CPU_TESTS_OBJDIR)/test_mask_parse.o \
 	$(CPU_TESTS_OBJDIR)/test_golden.o \
 	$(CPU_TESTS_OBJDIR)/test_shared.o \
 	$(CPU_TESTS_OBJDIR)/misc.o \
@@ -182,6 +183,7 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/cpu_rt_functions.o \
 	$(CPU_TESTS_OBJDIR)/charset.o \
 	$(CPU_TESTS_OBJDIR)/markov.o \
+	$(CPU_TESTS_OBJDIR)/mask_parse.o \
 	$(CPU_TESTS_OBJDIR)/sort_utils.o \
 	$(CPU_TESTS_OBJDIR)/parallel_sort.o \
 	$(CPU_TESTS_OBJDIR)/precompute_collate.o \

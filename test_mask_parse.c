@@ -1,0 +1,194 @@
+/*
+ * Rainbow Crackalack: test_mask_parse.c
+ * CPU-only unit tests for mask_parse.h / mask_parse.c.
+ */
+
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "mask_parse.h"
+#include "test_mask_parse.h"
+
+
+/* MP-01 through MP-04: basic specifier parsing (?u?l?l?d) */
+static int group_basic_specifiers(void)
+{
+    int ok = 1;
+    Mask m;
+
+    if (mask_parse("?u?l?l?d", &m, NULL, NULL, NULL, NULL) != 0) {
+        fprintf(stderr, "MP-01 failed: mask_parse returned non-zero\n");
+        return 0;
+    }
+
+    /* MP-01: length == 4 */
+    if (m.length != 4) {
+        fprintf(stderr, "MP-01 failed: length=%d, expected 4\n", m.length);
+        ok = 0;
+    }
+
+    /* MP-02: position 0 (?u) has 26 chars */
+    if (m.positions[0].size != 26) {
+        fprintf(stderr, "MP-02 failed: positions[0].size=%u, expected 26\n",
+                m.positions[0].size);
+        ok = 0;
+    }
+
+    /* MP-03: position 3 (?d) has 10 chars */
+    if (m.positions[3].size != 10) {
+        fprintf(stderr, "MP-03 failed: positions[3].size=%u, expected 10\n",
+                m.positions[3].size);
+        ok = 0;
+    }
+
+    /* MP-04: keyspace == 26*26*26*10 == 175760 */
+    uint64_t ks = mask_keyspace(&m);
+    if (ks != (uint64_t)26 * 26 * 26 * 10) {
+        fprintf(stderr, "MP-04 failed: keyspace=%" PRIu64 ", expected 175760\n", ks);
+        ok = 0;
+    }
+
+    return ok;
+}
+
+
+/* MP-05 through MP-06: literal character position */
+static int group_literal_char(void)
+{
+    int ok = 1;
+    Mask m;
+
+    if (mask_parse("A?d", &m, NULL, NULL, NULL, NULL) != 0) {
+        fprintf(stderr, "MP-05 failed: mask_parse returned non-zero\n");
+        return 0;
+    }
+
+    /* MP-05: length == 2, position 0 is literal 'A' with size 1 */
+    if (m.length != 2) {
+        fprintf(stderr, "MP-05 failed: length=%d, expected 2\n", m.length);
+        ok = 0;
+    }
+    if (m.positions[0].size != 1) {
+        fprintf(stderr, "MP-05 failed: positions[0].size=%u, expected 1\n",
+                m.positions[0].size);
+        ok = 0;
+    }
+    if (m.positions[0].chars[0] != 'A') {
+        fprintf(stderr, "MP-05 failed: positions[0].chars[0]='%c', expected 'A'\n",
+                m.positions[0].chars[0]);
+        ok = 0;
+    }
+
+    /* MP-06: position 1 (?d) has 10 chars */
+    if (m.positions[1].size != 10) {
+        fprintf(stderr, "MP-06 failed: positions[1].size=%u, expected 10\n",
+                m.positions[1].size);
+        ok = 0;
+    }
+
+    return ok;
+}
+
+
+/* MP-07: is_mask_string detection */
+static int group_is_mask_string(void)
+{
+    int ok = 1;
+
+    /* MP-07a: mask string with '?' returns 1 */
+    if (is_mask_string("?u?l") != 1) {
+        fprintf(stderr, "MP-07a failed: is_mask_string(\"?u?l\") != 1\n");
+        ok = 0;
+    }
+
+    /* MP-07b: charset name without '?' returns 0 */
+    if (is_mask_string("ascii-32-95") != 0) {
+        fprintf(stderr, "MP-07b failed: is_mask_string(\"ascii-32-95\") != 0\n");
+        ok = 0;
+    }
+
+    return ok;
+}
+
+
+/* MP-08: filename encode/decode roundtrip */
+static int group_filename_roundtrip(void)
+{
+    int ok = 1;
+    char encoded[64];
+    char decoded[64];
+
+    mask_encode_for_filename("?u?l?d?s", encoded, sizeof(encoded));
+    if (strcmp(encoded, "%u%l%d%s") != 0) {
+        fprintf(stderr, "MP-08 failed: encoded=\"%s\", expected \"%%u%%l%%d%%s\"\n",
+                encoded);
+        ok = 0;
+    }
+
+    /* decode in-place */
+    strncpy(decoded, encoded, sizeof(decoded));
+    decoded[sizeof(decoded) - 1] = '\0';
+    mask_decode_from_filename(decoded);
+    if (strcmp(decoded, "?u?l?d?s") != 0) {
+        fprintf(stderr, "MP-08 failed: decoded=\"%s\", expected \"?u?l?d?s\"\n",
+                decoded);
+        ok = 0;
+    }
+
+    return ok;
+}
+
+
+/* MP-09: mask_to_gpu_buffers populates data and lens correctly */
+static int group_gpu_buffers(void)
+{
+    int ok = 1;
+    Mask m;
+    char mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+    unsigned int mask_lens[MAX_PLAINTEXT_LEN];
+
+    /* parse a two-position mask: literal 'Z' then ?d */
+    if (mask_parse("Z?d", &m, NULL, NULL, NULL, NULL) != 0) {
+        fprintf(stderr, "MP-09 failed: mask_parse returned non-zero\n");
+        return 0;
+    }
+
+    mask_to_gpu_buffers(&m, mask_data, mask_lens);
+
+    /* MP-09a: lens[0] == 1 (literal 'Z') */
+    if (mask_lens[0] != 1) {
+        fprintf(stderr, "MP-09a failed: mask_lens[0]=%u, expected 1\n", mask_lens[0]);
+        ok = 0;
+    }
+
+    /* MP-09b: mask_data[0] == 'Z' */
+    if (mask_data[0] != 'Z') {
+        fprintf(stderr, "MP-09b failed: mask_data[0]='%c', expected 'Z'\n",
+                mask_data[0]);
+        ok = 0;
+    }
+
+    /* MP-09c: lens[1] == 10 (?d) */
+    if (mask_lens[1] != 10) {
+        fprintf(stderr, "MP-09c failed: mask_lens[1]=%u, expected 10\n", mask_lens[1]);
+        ok = 0;
+    }
+
+    return ok;
+}
+
+
+int test_mask_parse(void)
+{
+    int ok = 1;
+
+    if (!group_basic_specifiers()) ok = 0;
+    if (!group_literal_char())     ok = 0;
+    if (!group_is_mask_string())   ok = 0;
+    if (!group_filename_roundtrip()) ok = 0;
+    if (!group_gpu_buffers())      ok = 0;
+
+    return ok;
+}

@@ -17,6 +17,7 @@
 #include "test_decompress.h"
 #include "test_precompute_collate.h"
 #include "test_markov.h"
+#include "test_mask_parse.h"
 #include "test_golden.h"
 
 /* terminal_color.h defines these as globals; declare them extern here to
@@ -82,6 +83,14 @@ int run_cpu_only_tests(void) {
   /* Markov tests (CPU-only, no kernel needed). */
   printf("Running Markov tests... "); fflush(stdout);
   if (!test_markov()) {
+    all_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  /* Mask parser tests (CPU-only, no kernel needed). */
+  printf("Running Mask parser tests... "); fflush(stdout);
+  if (!test_mask_parse()) {
     all_passed = 0;
     PRINT_FAILED();
   } else
