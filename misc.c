@@ -38,6 +38,7 @@
 #include "gpu_backend.h"
 
 #include "charset.h"
+#include "mask_parse.h"
 #include "misc.h"
 #include "shared.h"
 
@@ -460,6 +461,25 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
         }
       }
 
+      /* Detect a mask-encoded charset field (e.g. "%u%l%l%d%d%d%d%d").
+       * Check AFTER markov stripping so a future markov+mask combo could be
+       * distinguished.  Decode a copy; if it's a mask string, store the
+       * decoded mask and set is_mask = 1. */
+      {
+        char decoded[256];
+        strncpy(decoded, rt_params->charset_name, sizeof(decoded) - 1);
+        decoded[sizeof(decoded) - 1] = '\0';
+        mask_decode_from_filename(decoded);
+        if (is_mask_string(decoded)) {
+          rt_params->is_mask = 1;
+          strncpy(rt_params->mask, decoded, sizeof(rt_params->mask) - 1);
+          rt_params->mask[sizeof(rt_params->mask) - 1] = '\0';
+        } else {
+          rt_params->is_mask = 0;
+          rt_params->mask[0] = '\0';
+        }
+      }
+
       /* Now parse the unsigned integers. */
       if (sscanf(suffix, "%u-%u_%u_%ux%"SCNu64"_%u", &rt_params->plaintext_len_min, &rt_params->plaintext_len_max, &rt_params->table_index, &rt_params->chain_len, &rt_params->num_chains, &rt_params->table_part) == 6) {
 
@@ -470,9 +490,11 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
 	rt_params->hash_type = hash_str_to_type(rt_params->hash_name);
 
 	/* Ensure that the hash type and character set is valid, the plaintext
-	 * length min & max are set properly, and the chain length is set. */
+	 * length min & max are set properly, and the chain length is set.
+	 * For mask tables the charset field is the encoded mask, not a named
+	 * charset, so skip validate_charset and rely on is_mask instead. */
 	if ((rt_params->hash_type != HASH_UNDEFINED) && \
-	    (validate_charset(rt_params->charset_name) != NULL) && \
+	    (rt_params->is_mask || validate_charset(rt_params->charset_name) != NULL) && \
 	    (rt_params->plaintext_len_min > 0) && \
 	    (rt_params->plaintext_len_min <= rt_params->plaintext_len_max) && \
 	    (rt_params->plaintext_len_max <= MAX_PLAINTEXT_LEN) && \
