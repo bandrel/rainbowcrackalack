@@ -4,10 +4,12 @@
 #include <stdint.h>
 
 #include "markov.h"
+#include "mask_parse.h"
 
 
 uint64_t fill_plaintext_space_table(unsigned int charset_len, unsigned int plaintext_len_min, unsigned int plaintext_len_max, uint64_t *plaintext_space_up_to_index);
 uint64_t fill_plaintext_space_markov_keyspace(uint64_t markov_keyspace, unsigned int plaintext_len_max, uint64_t *plaintext_space_up_to_index);
+uint64_t fill_plaintext_space_mask(const Mask *mask, uint64_t *plaintext_space_up_to_index);
 
 uint64_t hash_to_index(unsigned char *hash_value, unsigned int hash_len, unsigned int reduction_offset, uint64_t plaintext_space_total, unsigned int pos);
 

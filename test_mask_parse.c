@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "cpu_rt_functions.h"
 #include "mask_parse.h"
 #include "test_mask_parse.h"
 
@@ -223,6 +224,49 @@ static int group_negative(void)
 }
 
 
+/* MP-13: fill_plaintext_space_mask — fixed-length pspace semantics */
+static int group_fill_plaintext_space_mask(void)
+{
+    int ok = 1;
+    Mask m;
+
+    if (mask_parse("?u?l?l?d", &m, NULL, NULL, NULL, NULL) != 0) {
+        fprintf(stderr, "MP-13 failed: mask_parse returned non-zero\n");
+        return 0;
+    }
+
+    uint64_t up[MAX_PLAINTEXT_LEN + 1];
+    uint64_t total = fill_plaintext_space_mask(&m, up);
+
+    /* MP-13a: total == 26*26*26*10 == 175760 */
+    uint64_t expected = (uint64_t)26 * 26 * 26 * 10;
+    if (total != expected) {
+        fprintf(stderr, "MP-13a failed: total=%" PRIu64 ", expected %" PRIu64 "\n",
+                total, expected);
+        ok = 0;
+    }
+
+    /* MP-13b: keyspace lives at index m.length */
+    if (up[m.length] != total) {
+        fprintf(stderr, "MP-13b failed: up[%d]=%" PRIu64 ", expected %" PRIu64 "\n",
+                m.length, up[m.length], total);
+        ok = 0;
+    }
+
+    /* MP-13c: all tiers below m.length are 0 (fixed-length semantics) */
+    int i;
+    for (i = 0; i < m.length; i++) {
+        if (up[i] != 0) {
+            fprintf(stderr, "MP-13c failed: up[%d]=%" PRIu64 ", expected 0\n",
+                    i, up[i]);
+            ok = 0;
+        }
+    }
+
+    return ok;
+}
+
+
 int test_mask_parse(void)
 {
     int ok = 1;
@@ -234,6 +278,7 @@ int test_mask_parse(void)
     if (!group_gpu_buffers())      ok = 0;
     if (!group_a_specifier())      ok = 0;
     if (!group_negative())         ok = 0;
+    if (!group_fill_plaintext_space_mask()) ok = 0;
 
     return ok;
 }
