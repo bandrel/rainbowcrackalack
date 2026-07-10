@@ -80,8 +80,10 @@ uint64_t fill_plaintext_space_mask(const Mask *mask, uint64_t *plaintext_space_u
 
 
 /* Decode a mask-keyspace index to a plaintext string.
- * Mixed-radix: iterates from the most-significant position (high) to the
- * least-significant (low = length-1), matching the GPU kernel convention. */
+ * Mixed-radix: position 0 is the most-significant digit; the loop iterates i
+ * from length-1 down to 0 so it extracts the least-significant digit (the last
+ * position) first. Matches the GPU kernel convention.
+ * Precondition: all positions[i].size > 0 (guaranteed by mask_parse). */
 void index_to_plaintext_mask_cpu(uint64_t index, const Mask *mask, char *plaintext, unsigned int *plaintext_len) {
   int i;
   uint64_t x = index;
