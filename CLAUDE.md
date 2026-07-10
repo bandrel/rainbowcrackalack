@@ -1,6 +1,6 @@
 # Rainbow Crackalack - Agent Guide
 
-GPU-accelerated rainbow table generator and hash lookup tool. C with CUDA (Linux), OpenCL (Windows), and Metal (macOS Apple Silicon) GPU backends. Currently supports NTLM only. GPLv3.
+GPU-accelerated rainbow table generator and hash lookup tool. C with CUDA (Linux), OpenCL (Windows), and Metal (macOS Apple Silicon) GPU backends. Currently supports NTLM, MD5, and NetNTLMv1 (SHA-1 constant reserved but unimplemented). GPLv3.
 
 ## Build
 
