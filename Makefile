@@ -108,6 +108,7 @@ LOOKUP_PROG   := crackalack_lookup$(EXE)
 PERFECTIFY    := perfectify$(EXE)
 ENUMERATE     := enumerate_chain$(EXE)
 SORT_PROG     := crackalack_sort$(EXE)
+PLAN_PROG     := crackalack_plan$(EXE)
 RT2RTC_PROG   := crackalack_rt2rtc$(EXE)
 GENKNOWN_PROG    := gen_known_hash$(EXE)
 CPU_TESTS_PROG   := crackalack_cpu_tests$(EXE)
@@ -122,7 +123,8 @@ BINARIES := \
 	$(OUTDIR)/$(LOOKUP_PROG) \
 	$(OUTDIR)/$(PERFECTIFY) \
 	$(OUTDIR)/$(ENUMERATE) \
-	$(OUTDIR)/$(SORT_PROG)
+	$(OUTDIR)/$(SORT_PROG) \
+	$(OUTDIR)/$(PLAN_PROG)
 
 .PHONY: all linux linux-opencl macos windows clean strip \
         prep_opencl_headers prep_none \
@@ -171,6 +173,7 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/test_sort.o \
 	$(CPU_TESTS_OBJDIR)/test_decompress.o \
 	$(CPU_TESTS_OBJDIR)/test_precompute_collate.o \
+	$(CPU_TESTS_OBJDIR)/test_markov.o \
 	$(CPU_TESTS_OBJDIR)/test_golden.o \
 	$(CPU_TESTS_OBJDIR)/test_shared.o \
 	$(CPU_TESTS_OBJDIR)/misc.o \
@@ -178,6 +181,7 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/bloom.o \
 	$(CPU_TESTS_OBJDIR)/cpu_rt_functions.o \
 	$(CPU_TESTS_OBJDIR)/charset.o \
+	$(CPU_TESTS_OBJDIR)/markov.o \
 	$(CPU_TESTS_OBJDIR)/sort_utils.o \
 	$(CPU_TESTS_OBJDIR)/parallel_sort.o \
 	$(CPU_TESTS_OBJDIR)/precompute_collate.o \
@@ -290,6 +294,7 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/markov.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rtc_decompress.o \
@@ -323,6 +328,12 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_hash_to_index_ntlm9.o \
 	$(OBJDIR)/test_index_to_plaintext.o \
 	$(OBJDIR)/test_index_to_plaintext_ntlm9.o \
+	$(OBJDIR)/test_index_to_plaintext_markov.o \
+	$(OBJDIR)/markov.o \
+	$(OBJDIR)/test_chain_markov.o \
+	$(OBJDIR)/test_chain_markov_ntlm8.o \
+	$(OBJDIR)/test_chain_markov_ntlm9.o \
+	$(OBJDIR)/test_markov.o \
 	$(OBJDIR)/test_challenge_host.o \
 	$(OBJDIR)/test_misc.o \
 	$(OBJDIR)/test_golden.o \
@@ -348,6 +359,7 @@ $(OUTDIR)/$(VERIFY_PROG): \
 	$(OBJDIR)/crackalack_verify.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/markov.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/verify.o
@@ -373,6 +385,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/markov.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/precompute_collate.o \
 	$(GPU_BACKEND_OBJ) \
@@ -390,6 +403,7 @@ $(OUTDIR)/$(PERFECTIFY): \
 $(OUTDIR)/$(ENUMERATE): \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/enumerate_chain.o \
+	$(OBJDIR)/markov.o \
 	$(OBJDIR)/test_shared.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
@@ -405,10 +419,20 @@ $(OUTDIR)/$(SORT_PROG): \
 	$(GPU_BACKEND_OBJ)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
+$(OUTDIR)/$(PLAN_PROG): \
+	$(OBJDIR)/charset.o \
+	$(OBJDIR)/crackalack_plan.o \
+	$(OBJDIR)/file_lock.o \
+	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/markov.o \
+	$(OBJDIR)/misc.o
+	$(CC) $(LDFLAGS) $^ -o $@ -lgcrypt -lm
+
 $(abspath $(OUTDIR)/$(GENKNOWN_PROG)): \
 	$(OBJDIR)/gen_known_hash.o \
 	$(OBJDIR)/cpu_rt_functions.o \
-	$(OBJDIR)/charset.o
+	$(OBJDIR)/charset.o \
+	$(OBJDIR)/markov.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS) -lssl -lcrypto
 
 bundle_windows:
@@ -445,5 +469,5 @@ bundle_windows:
 clean:
 	rm -rf build
 	rm -f *.exe \
-	      crackalack_gen crackalack_unit_tests crackalack_cpu_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_rt2rtc crackalack_lookup perfectify enumerate_chain crackalack_sort \
+	      crackalack_gen crackalack_unit_tests crackalack_cpu_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_rt2rtc crackalack_lookup perfectify enumerate_chain crackalack_sort crackalack_plan \
 	      libgcrypt-20.dll libgpg-error-0.dll libwinpthread-1.dll

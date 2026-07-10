@@ -65,6 +65,7 @@ struct _rt_parameters {
   uint64_t num_chains;
   unsigned int table_part;
 
+  uint64_t markov_keyspace; /* 0 = not Markov; >0 = truncated keyspace */
   unsigned char challenge[8]; /* NetNTLMv1 server challenge; default if absent. */
   unsigned int parsed; /* Set to 1 if parameters successfully parsed, otherwise 0. */
 };
@@ -82,7 +83,10 @@ unsigned int hash_str_to_type(char *hash_str);
 unsigned int is_ntlm8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len);
 unsigned int is_ntlm9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len);
 unsigned int is_netntlmv1_7(unsigned int hash_type, char *charset_name, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int chain_len);
+unsigned int is_markov_ntlm8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov);
+unsigned int is_markov_ntlm9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len, int use_markov);
 unsigned int is_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
+unsigned int is_markov_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, int use_markov);
 unsigned int is_md5_8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
 unsigned int is_md5_9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max);
 /* Canonical NetNTLMv1 server challenge (defined in misc.c).  Host-only;

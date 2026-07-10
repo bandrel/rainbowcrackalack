@@ -1,7 +1,7 @@
 /*
  * Rainbow Crackalack: cpu_tests_common.c
  *
- * Implements run_cpu_only_tests(), which runs the CPU-only unit tests
+ * Implements run_cpu_only_tests(), which runs the 7 CPU-only unit tests
  * shared between crackalack_unit_tests and crackalack_cpu_tests.
  *
  * No GPU initialization, context, or kernel is needed for these tests.
@@ -16,6 +16,7 @@
 #include "test_sort.h"
 #include "test_decompress.h"
 #include "test_precompute_collate.h"
+#include "test_markov.h"
 #include "test_golden.h"
 
 /* terminal_color.h defines these as globals; declare them extern here to
@@ -73,6 +74,14 @@ int run_cpu_only_tests(void) {
   /* Batched-precompute collation tests (CPU-only, no kernel needed). */
   printf("Running batched-precompute collation tests... "); fflush(stdout);
   if (!test_precompute_collate()) {
+    all_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  /* Markov tests (CPU-only, no kernel needed). */
+  printf("Running Markov tests... "); fflush(stdout);
+  if (!test_markov()) {
     all_passed = 0;
     PRINT_FAILED();
   } else

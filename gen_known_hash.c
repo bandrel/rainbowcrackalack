@@ -13,6 +13,7 @@
 #include "cpu_rt_functions.h"
 #include "charset.h"
 #include "shared.h"
+#include "markov.h"
 
 extern void setup_des_key(char key_56[], unsigned char *key);
 
@@ -62,6 +63,10 @@ int main(int ac, char **av) {
   unsigned int plaintext_len = 7;
   int charset_set = 0, plen_set = 0;
 
+  /* Markov options */
+  const char *markov_path = NULL;
+  uint64_t markov_keyspace = 0;
+
   const char *positional[4] = {NULL, NULL, NULL, NULL};
   int pos_count = 0;
 
@@ -87,6 +92,17 @@ int main(int ac, char **av) {
       if (i + 1 >= ac) { fprintf(stderr, "%s: --plaintext-len requires a value\n", av[0]); return 1; }
       plaintext_len = (unsigned int)strtoul(av[++i], NULL, 10);
       plen_set = 1;
+    } else if (strcmp(av[i], "--markov") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s: --markov requires a filename\n", av[0]); return 1; }
+      markov_path = av[++i];
+    } else if (strcmp(av[i], "--markov-keyspace") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s: --markov-keyspace requires a value\n", av[0]); return 1; }
+      char *end;
+      markov_keyspace = strtoull(av[++i], &end, 10);
+      if (*end != '\0' || markov_keyspace == 0) {
+        fprintf(stderr, "%s: --markov-keyspace must be a positive integer\n", av[0]);
+        return 1;
+      }
     } else {
       if (pos_count < 4) positional[pos_count] = av[i];
       pos_count++;
@@ -96,8 +112,20 @@ int main(int ac, char **av) {
   if (pos_count != 4) {
     fprintf(stderr,
             "Usage: %s chain_len reduction_offset start_index target_position\n"
-            "          [--algo ntlm|netntlmv1] [--charset NAME] [--plaintext-len N] [--challenge <16hex>]\n",
+            "          [--algo ntlm|netntlmv1] [--charset NAME] [--plaintext-len N] [--challenge <16hex>]\n"
+            "          [--markov FILE --markov-keyspace N]\n",
             av[0]);
+    return 1;
+  }
+
+  /* Validate markov options.  --markov alone is valid (full keyspace), matching
+   * crackalack_gen; only reject --markov-keyspace without a model. */
+  if (markov_keyspace != 0 && markov_path == NULL) {
+    fprintf(stderr, "%s: --markov-keyspace requires --markov\n", av[0]);
+    return 1;
+  }
+  if (markov_path != NULL && algo == ALGO_NETNTLMV1) {
+    fprintf(stderr, "%s: --markov is not supported with --algo netntlmv1\n", av[0]);
     return 1;
   }
 
@@ -129,9 +157,30 @@ int main(int ac, char **av) {
     hash_len = 8;
   }
 
+  /* Load Markov model if requested. */
+  markov_model markov = {0};
+  int use_markov = (markov_path != NULL);
+  if (use_markov) {
+    if (markov_load(markov_path, &markov) != 0) {
+      fprintf(stderr, "%s: failed to load Markov model from '%s'\n", av[0], markov_path);
+      return 1;
+    }
+    /* markov_load already builds sorted tables; call again defensively to
+     * match crackalack_gen's pattern. */
+    markov_build_sorted(&markov);
+  }
+
   uint64_t plaintext_space_up_to_index[16] = {0};
-  uint64_t plaintext_space_total =
-      fill_plaintext_space_table(charset_len, plaintext_len, plaintext_len, plaintext_space_up_to_index);
+  uint64_t plaintext_space_total;
+  if (use_markov && markov_keyspace > 0) {
+    plaintext_space_total = fill_plaintext_space_markov_keyspace(
+        markov_keyspace, plaintext_len, plaintext_space_up_to_index);
+  } else {
+    /* Standard, or full-keyspace Markov (markov_keyspace == 0): the plaintext
+     * space is charset_len ^ plaintext_len, matching crackalack_gen. */
+    plaintext_space_total =
+        fill_plaintext_space_table(charset_len, plaintext_len, plaintext_len, plaintext_space_up_to_index);
+  }
 
   uint64_t index = start_index;
   char plaintext[16] = {0};
@@ -139,8 +188,13 @@ int main(int ac, char **av) {
   unsigned int out_plaintext_len = plaintext_len;
 
   for (unsigned int pos = 0; pos < chain_len - 1; pos++) {
-    index_to_plaintext(index, charset, charset_len, plaintext_len, plaintext_len,
-                       plaintext_space_up_to_index, plaintext, &out_plaintext_len);
+    if (use_markov) {
+      index_to_plaintext_markov_cpu(index, &markov, plaintext_len, (unsigned char *)plaintext);
+      out_plaintext_len = plaintext_len;
+    } else {
+      index_to_plaintext(index, charset, charset_len, plaintext_len, plaintext_len,
+                         plaintext_space_up_to_index, plaintext, &out_plaintext_len);
+    }
 
     if (algo == ALGO_NTLM)
       ntlm_hash(plaintext, out_plaintext_len, hash);
@@ -153,10 +207,12 @@ int main(int ac, char **av) {
       printf("\nplaintext=");
       for (unsigned int j = 0; j < out_plaintext_len; j++) printf("%02x", (unsigned char)plaintext[j]);
       printf("\npos=%u start_index=%" PRIu64 "\n", pos, start_index);
+      if (use_markov) markov_free(&markov);
       return 0;
     }
     index = hash_to_index(hash, hash_len, reduction_offset, plaintext_space_total, pos);
   }
+  if (use_markov) markov_free(&markov);
   fprintf(stderr, "Error: target_pos=%u >= chain_len-1=%u\n", target_pos, chain_len - 1);
   return 1;
 }
