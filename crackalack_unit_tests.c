@@ -40,6 +40,7 @@
 #include "test_index_to_plaintext.h"
 #include "test_index_to_plaintext_ntlm9.h"
 #include "test_index_to_plaintext_markov.h"
+#include "test_index_to_plaintext_mask.h"
 #include "test_chain_markov.h"
 #include "test_chain_markov_ntlm8.h"
 #include "test_chain_markov_ntlm9.h"
@@ -400,6 +401,22 @@ int main(int ac, char **av) {
               "test_index_to_plaintext_markov", &program, &kernel, hash_type);
   printf("Running Markov index_to_plaintext() tests... "); fflush(stdout);
   if (!test_index_to_plaintext_markov(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* Mask index_to_plaintext tests. */
+  hash_type = HASH_NTLM;
+  load_kernel(context, num_devices, devices, "test_index_to_plaintext_mask.cl",
+              "test_index_to_plaintext_mask", &program, &kernel, hash_type);
+  printf("Running Mask index_to_plaintext() tests... "); fflush(stdout);
+  if (!test_index_to_plaintext_mask(devices[0], context, kernel)) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();

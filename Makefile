@@ -331,6 +331,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_index_to_plaintext.o \
 	$(OBJDIR)/test_index_to_plaintext_ntlm9.o \
 	$(OBJDIR)/test_index_to_plaintext_markov.o \
+	$(OBJDIR)/test_index_to_plaintext_mask.o \
 	$(OBJDIR)/markov.o \
 	$(OBJDIR)/test_chain_markov.o \
 	$(OBJDIR)/test_chain_markov_ntlm8.o \
