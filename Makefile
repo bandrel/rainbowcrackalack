@@ -297,6 +297,7 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rtc_decompress.o \
@@ -366,6 +367,7 @@ $(OUTDIR)/$(VERIFY_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/verify.o
@@ -392,6 +394,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/precompute_collate.o \
 	$(GPU_BACKEND_OBJ) \
@@ -419,6 +422,7 @@ $(OUTDIR)/$(SORT_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/gws.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/parallel_sort.o \
 	$(OBJDIR)/sort_utils.o \
@@ -431,6 +435,7 @@ $(OUTDIR)/$(PLAN_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o
 	$(CC) $(LDFLAGS) $^ -o $@ -lgcrypt -lm
 

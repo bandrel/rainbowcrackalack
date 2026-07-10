@@ -10,6 +10,7 @@
 
 #include "cpu_rt_functions.h"
 #include "mask_parse.h"
+#include "misc.h"
 #include "test_mask_parse.h"
 
 
@@ -321,6 +322,85 @@ static int group_index_to_plaintext_mask(void)
 }
 
 
+/* MP-15: parse_rt_params recognises mask-encoded charset in filename */
+static int group_parse_rt_params_mask(void)
+{
+    int ok = 1;
+    rt_parameters p;
+    char encoded[128];
+    char filename[256];
+
+    /* Build a filename with an encoded mask charset.
+     * Original mask: "?u?l?l?d?d?d?d?d"  -> encoded: "%u%l%l%d%d%d%d%d" */
+    mask_encode_for_filename("?u?l?l?d?d?d?d?d", encoded, sizeof(encoded));
+
+    /* MP-15a: encoded charset is the filename-safe form */
+    if (strcmp(encoded, "%u%l%l%d%d%d%d%d") != 0) {
+        fprintf(stderr, "MP-15a failed: encoded=\"%s\", expected \"%%u%%l%%l%%d%%d%%d%%d%%d\"\n",
+                encoded);
+        ok = 0;
+    }
+
+    /* Build filename: ntlm_<encoded>#8-8_0_100000x67108864_0.rt */
+    snprintf(filename, sizeof(filename),
+             "ntlm_%s#8-8_0_100000x67108864_0.rt", encoded);
+
+    memset(&p, 0, sizeof(p));
+    parse_rt_params(&p, filename);
+
+    /* MP-15b: parsed successfully */
+    if (!p.parsed) {
+        fprintf(stderr, "MP-15b failed: parsed=0 for mask filename \"%s\"\n", filename);
+        ok = 0;
+    }
+
+    /* MP-15c: is_mask == 1 */
+    if (p.is_mask != 1) {
+        fprintf(stderr, "MP-15c failed: is_mask=%d, expected 1\n", p.is_mask);
+        ok = 0;
+    }
+
+    /* MP-15d: decoded mask round-trips to original */
+    if (strcmp(p.mask, "?u?l?l?d?d?d?d?d") != 0) {
+        fprintf(stderr, "MP-15d failed: p.mask=\"%s\", expected \"?u?l?l?d?d?d?d?d\"\n",
+                p.mask);
+        ok = 0;
+    }
+
+    /* MP-15e: normal charset filename yields is_mask == 0 */
+    memset(&p, 0, sizeof(p));
+    parse_rt_params(&p, "ntlm_ascii-32-95#8-8_0_422000x67108864_0.rt");
+    if (!p.parsed) {
+        fprintf(stderr, "MP-15e failed: parsed=0 for normal charset filename\n");
+        ok = 0;
+    }
+    if (p.is_mask != 0) {
+        fprintf(stderr, "MP-15e failed: is_mask=%d for normal charset (expected 0)\n",
+                p.is_mask);
+        ok = 0;
+    }
+
+    /* MP-15f: markov filename still parses with markov_keyspace > 0 and is_mask == 0 */
+    memset(&p, 0, sizeof(p));
+    parse_rt_params(&p, "ntlm_ascii-32-95-mk1000000#8-8_0_422000x67108864_0.rt");
+    if (!p.parsed) {
+        fprintf(stderr, "MP-15f failed: parsed=0 for markov filename\n");
+        ok = 0;
+    }
+    if (p.markov_keyspace == 0) {
+        fprintf(stderr, "MP-15f failed: markov_keyspace=0, expected >0\n");
+        ok = 0;
+    }
+    if (p.is_mask != 0) {
+        fprintf(stderr, "MP-15f failed: is_mask=%d for markov filename (expected 0)\n",
+                p.is_mask);
+        ok = 0;
+    }
+
+    return ok;
+}
+
+
 int test_mask_parse(void)
 {
     int ok = 1;
@@ -334,6 +414,7 @@ int test_mask_parse(void)
     if (!group_negative())         ok = 0;
     if (!group_fill_plaintext_space_mask()) ok = 0;
     if (!group_index_to_plaintext_mask()) ok = 0;
+    if (!group_parse_rt_params_mask()) ok = 0;
 
     return ok;
 }
