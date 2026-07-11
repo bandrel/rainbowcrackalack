@@ -1105,12 +1105,18 @@ void *host_thread_false_alarm(void *ptr) {
   size_t gws = 0, kernel_work_group_size = 0, kernel_preferred_work_group_size_multiple = 0;
   /*gpu_ulong debug_ulong[128] = {0};*/
   int charset_len = 0;
+  /* For mask tables args->charset is NULL (validate_charset returns NULL for mask
+   * charset names).  The mask false-alarm kernel uses mask_data / mask_lens instead
+   * of charset, so we pass a 1-byte dummy to avoid a NULL memmove in
+   * gpu_create_and_fill_buffer. */
+  static const char fa_dummy_charset[1] = {0};
+  const char *effective_charset = args->charset ? args->charset : fa_dummy_charset;
   if (args->markov_keyspace > 0) {
     charset_len = strlen(args->charset);
     if (charset_len == 0) charset_len = 1;
     plaintext_space_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, plaintext_space_up_to_index);
   } else if (args->use_mask) {
-    charset_len = 1;  /* not used for mask decode; set to avoid uninit */
+    charset_len = 1;  /* not used for mask decode; mask_data buffer is used instead */
     plaintext_space_total = fill_plaintext_space_mask(&args->mask, plaintext_space_up_to_index);
   } else {
     if (strcmp(args->charset_name, "byte") == 0) {
@@ -1145,48 +1151,54 @@ void *host_thread_false_alarm(void *ptr) {
   memset(plaintext_indices, 0xFF, num_plaintext_indices * sizeof(gpu_ulong));
 
   /* If we're generating the standard NTLM 8-character tables, use the special
-   * optimized kernel instead! */
-  if (is_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
-    kernel_path = FALSE_ALARM_NTLM8_KERNEL_PATH;
-    kernel_name = "false_alarm_check_ntlm8";
-    if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
-      printf("\nNote: optimized NTLM8 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
-      printed_false_alarm_optimized_message = 1;
-    }
-  } else if (is_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
-    kernel_path = FALSE_ALARM_NTLM9_KERNEL_PATH;
-    kernel_name = "false_alarm_check_ntlm9";
-    if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
-      printf("\nNote: optimized NTLM9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
-      printed_false_alarm_optimized_message = 1;
-    }
-  } else if (is_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
-    kernel_path = FALSE_ALARM_NTLM10_KERNEL_PATH;
-    kernel_name = "false_alarm_check_ntlm10";
-    if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
-      printf("\nNote: optimized NTLM10 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
-      printed_false_alarm_optimized_message = 1;
-    }
-  } else if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
-    kernel_path = FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH;
-    kernel_name = "false_alarm_check_netntlmv1_7";
-    if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
-      printf("\nNote: optimized NetNTLMv1-7 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
-      printed_false_alarm_optimized_message = 1;
-    }
-  } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
-    kernel_path = FALSE_ALARM_MD5_8_KERNEL_PATH;
-    kernel_name = "false_alarm_check_md5_8";
-    if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
-      printf("\nNote: optimized MD5_8 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
-      printed_false_alarm_optimized_message = 1;
-    }
-  } else if (is_md5_9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
-    kernel_path = FALSE_ALARM_MD5_9_KERNEL_PATH;
-    kernel_name = "false_alarm_check_md5_9";
-    if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
-      printf("\nNote: optimized MD5_9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
-      printed_false_alarm_optimized_message = 1;
+   * optimized kernel instead!  Mask tables never match these optimized paths
+   * (args->charset is NULL for mask tables and would crash the strcmp inside
+   * is_ntlm8/9/10/md5 -- the mask kernel is selected below instead).
+   * Wrap the entire chain in !args->use_mask so no else-if is evaluated for
+   * mask tables. */
+  if (!args->use_mask) {
+    if (is_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
+      kernel_path = FALSE_ALARM_NTLM8_KERNEL_PATH;
+      kernel_name = "false_alarm_check_ntlm8";
+      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
+        printf("\nNote: optimized NTLM8 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+        printed_false_alarm_optimized_message = 1;
+      }
+    } else if (is_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
+      kernel_path = FALSE_ALARM_NTLM9_KERNEL_PATH;
+      kernel_name = "false_alarm_check_ntlm9";
+      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
+        printf("\nNote: optimized NTLM9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+        printed_false_alarm_optimized_message = 1;
+      }
+    } else if (is_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+      kernel_path = FALSE_ALARM_NTLM10_KERNEL_PATH;
+      kernel_name = "false_alarm_check_ntlm10";
+      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
+        printf("\nNote: optimized NTLM10 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+        printed_false_alarm_optimized_message = 1;
+      }
+    } else if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
+      kernel_path = FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH;
+      kernel_name = "false_alarm_check_netntlmv1_7";
+      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) {
+        printf("\nNote: optimized NetNTLMv1-7 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+        printed_false_alarm_optimized_message = 1;
+      }
+    } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+      kernel_path = FALSE_ALARM_MD5_8_KERNEL_PATH;
+      kernel_name = "false_alarm_check_md5_8";
+      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
+        printf("\nNote: optimized MD5_8 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+        printed_false_alarm_optimized_message = 1;
+      }
+    } else if (is_md5_9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+      kernel_path = FALSE_ALARM_MD5_9_KERNEL_PATH;
+      kernel_name = "false_alarm_check_md5_9";
+      if ((args->gpu.device_number == 0) && (printed_false_alarm_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
+        printf("\nNote: optimized MD5_9 kernel will be used for false alarm checks.\n\n"); fflush(stdout);
+        printed_false_alarm_optimized_message = 1;
+      }
     }
   }
 
@@ -1310,7 +1322,7 @@ void *host_thread_false_alarm(void *ptr) {
      (uint64_t)num_hash_base_indices) * sizeof(gpu_ulong));
 
   CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
-  CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_len);
+  CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, effective_charset, charset_len);
   CLCREATEARG(2, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
   CLCREATEARG(3, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
   CLCREATEARG(4, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
@@ -1454,48 +1466,54 @@ void *host_thread_precompute(void *ptr) {
     output_len++;
 
   /* If we're generating the standard NTLM 8-character tables, use the special
-   * optimized kernel instead! */
-  if (is_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
-    kernel_path = PRECOMPUTE_NTLM8_KERNEL_PATH;
-    kernel_name = "precompute_ntlm8";
-    if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
-      printf("\nNote: optimized NTLM8 kernel will be used for precomputation.\n\n"); fflush(stdout);
-      printed_precompute_optimized_message = 1;
-    }
-  } else if (is_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
-    kernel_path = PRECOMPUTE_NTLM9_KERNEL_PATH;
-    kernel_name = "precompute_ntlm9";
-    if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
-      printf("\nNote: optimized NTLM9 kernel will be used for precomputation.\n\n"); fflush(stdout);
-      printed_precompute_optimized_message = 1;
-    }
-  } else if (is_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
-    kernel_path = PRECOMPUTE_NTLM10_KERNEL_PATH;
-    kernel_name = "precompute_ntlm10";
-    if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
-      printf("\nNote: optimized NTLM10 kernel will be used for precomputation.\n\n"); fflush(stdout);
-      printed_precompute_optimized_message = 1;
-    }
-  } else if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
-    kernel_path = PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH;
-    kernel_name = "precompute_netntlmv1_7";
-    if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
-      printf("\nNote: optimized NetNTLMv1-7 kernel will be used for precomputation.\n\n"); fflush(stdout);
-      printed_precompute_optimized_message = 1;
-    }
-  } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
-    kernel_path = PRECOMPUTE_MD5_8_KERNEL_PATH;
-    kernel_name = "precompute_md5_8";
-    if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
-      printf("\nNote: optimized MD5_8 kernel will be used for precomputation.\n\n"); fflush(stdout);
-      printed_precompute_optimized_message = 1;
-    }
-  } else if (is_md5_9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
-    kernel_path = PRECOMPUTE_MD5_9_KERNEL_PATH;
-    kernel_name = "precompute_md5_9";
-    if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
-      printf("\nNote: optimized MD5_9 kernel will be used for precomputation.\n\n"); fflush(stdout);
-      printed_precompute_optimized_message = 1;
+   * optimized kernel instead!  Mask tables never match these optimized paths
+   * (args->charset is NULL for mask tables and would crash the strcmp inside
+   * is_ntlm8/9/10/md5 -- the mask kernel is selected below instead).
+   * Wrap the entire chain in !args->use_mask so no else-if is evaluated for
+   * mask tables. */
+  if (!args->use_mask) {
+    if (is_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
+      kernel_path = PRECOMPUTE_NTLM8_KERNEL_PATH;
+      kernel_name = "precompute_ntlm8";
+      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
+        printf("\nNote: optimized NTLM8 kernel will be used for precomputation.\n\n"); fflush(stdout);
+        printed_precompute_optimized_message = 1;
+      }
+    } else if (is_ntlm9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
+      kernel_path = PRECOMPUTE_NTLM9_KERNEL_PATH;
+      kernel_name = "precompute_ntlm9";
+      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
+        printf("\nNote: optimized NTLM9 kernel will be used for precomputation.\n\n"); fflush(stdout);
+        printed_precompute_optimized_message = 1;
+      }
+    } else if (is_ntlm10(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+      kernel_path = PRECOMPUTE_NTLM10_KERNEL_PATH;
+      kernel_name = "precompute_ntlm10";
+      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
+        printf("\nNote: optimized NTLM10 kernel will be used for precomputation.\n\n"); fflush(stdout);
+        printed_precompute_optimized_message = 1;
+      }
+    } else if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
+      kernel_path = PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH;
+      kernel_name = "precompute_netntlmv1_7";
+      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) {
+        printf("\nNote: optimized NetNTLMv1-7 kernel will be used for precomputation.\n\n"); fflush(stdout);
+        printed_precompute_optimized_message = 1;
+      }
+    } else if (is_md5_8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+      kernel_path = PRECOMPUTE_MD5_8_KERNEL_PATH;
+      kernel_name = "precompute_md5_8";
+      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
+        printf("\nNote: optimized MD5_8 kernel will be used for precomputation.\n\n"); fflush(stdout);
+        printed_precompute_optimized_message = 1;
+      }
+    } else if (is_md5_9(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max)) {
+      kernel_path = PRECOMPUTE_MD5_9_KERNEL_PATH;
+      kernel_name = "precompute_md5_9";
+      if ((args->gpu.device_number == 0) && (printed_precompute_optimized_message == 0)) { /* Only the first thread prints this, and only prints it once. */
+        printf("\nNote: optimized MD5_9 kernel will be used for precomputation.\n\n"); fflush(stdout);
+        printed_precompute_optimized_message = 1;
+      }
     }
   }
 
@@ -1600,7 +1618,16 @@ void *host_thread_precompute(void *ptr) {
   /*get_device_uint(gpu->device, CL_DEVICE_MAX_COMPUTE_UNITS, &(gpu->num_work_units));*/
 
   int charset_len = 0;
-  if (strcmp(args->charset_name, "byte") == 0) {
+  /* For mask tables args->charset is NULL (validate_charset returns NULL for
+   * mask charset names).  The mask precompute kernel uses mask_data / mask_lens
+   * buffers instead of charset, so we pass a 1-byte dummy to avoid a NULL
+   * memmove in gpu_create_and_fill_buffer. */
+  static const char dummy_charset[1] = {0};
+  const char *effective_charset = args->charset;
+  if (args->use_mask) {
+    charset_len = 1;
+    effective_charset = dummy_charset;
+  } else if (strcmp(args->charset_name, "byte") == 0) {
     charset_len = 256;
   } else {
     charset_len = strlen(args->charset);
@@ -1616,7 +1643,7 @@ void *host_thread_precompute(void *ptr) {
   CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(1, hash_buffer, CL_RO, hash_binary, hash_binary_len);
   CLCREATEARG(2, hash_len_buffer, CL_RO, hash_binary_len, sizeof(gpu_uint));
-  CLCREATEARG_ARRAY(3, charset_buffer, CL_RO, args->charset, charset_len);
+  CLCREATEARG_ARRAY(3, charset_buffer, CL_RO, effective_charset, charset_len);
   CLCREATEARG(4, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
   CLCREATEARG(5, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
   CLCREATEARG(6, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
@@ -1957,7 +1984,7 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   int use_markov_batch = args[0].use_markov &&
       is_markov_ntlm8(args[0].hash_type, args[0].charset, args[0].plaintext_len_min,
         args[0].plaintext_len_max, args[0].reduction_offset, args[0].chain_len, args[0].use_markov);
-  int use_standard_batch = !args[0].use_markov &&
+  int use_standard_batch = !args[0].use_markov && !args[0].use_mask &&
       is_ntlm8(args[0].hash_type, args[0].charset, args[0].plaintext_len_min,
         args[0].plaintext_len_max, args[0].reduction_offset, args[0].chain_len);
   int use_netntlmv1_batch = is_netntlmv1_7(args[0].hash_type, args[0].charset_name,
