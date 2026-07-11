@@ -36,6 +36,7 @@
 #include "charset.h"
 #include "checkpoint.h"
 #include "markov.h"
+#include "mask_parse.h"
 #include "clock.h"
 #include "cpu_rt_functions.h"
 #include "file_lock.h"
@@ -90,6 +91,14 @@
 #define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.cl"
 #define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.cl"
 #define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "crackalack_markov_ntlm10.cl"
+#endif
+
+#ifdef USE_METAL
+#define CRACKALACK_MASK_KERNEL_PATH "crackalack_mask.metal"
+#elif defined(USE_CUDA)
+#define CRACKALACK_MASK_KERNEL_PATH "CUDA/crackalack_mask.cu"
+#else
+#define CRACKALACK_MASK_KERNEL_PATH "crackalack_mask.cl"
 #endif
 
 #define VERBOSE 1
@@ -183,6 +192,9 @@ typedef struct {
   char    markov_path[1024];
   uint64_t markov_keyspace;
 
+  int  use_mask;
+  Mask mask;
+
   unsigned char challenge[8];
 
   gpu_dev gpu;
@@ -230,9 +242,14 @@ static int    use_markov = 0;
 static char   markov_path[1024] = {0};
 static uint64_t markov_keyspace = 0;
 
+/* Mask mode state set by --mask flag. */
+static int  use_mask = 0;
+static char mask_str[1024] = {0};
+static Mask mask = {0};
+
 
 void print_usage_and_exit(char *prog_name, int exit_code) {
-  fprintf(stderr, "Usage: %s hash_algorithm charset_name plaintext_min_length plaintext_max_length table_index chain_length number_of_chains [part_index | -bench] [-gws GWS] [--markov FILE] [--markov-keyspace N]\n\nExample: %s ntlm ascii-32-95 9 9 0 803000 67108864 0\n\n", prog_name, prog_name);
+  fprintf(stderr, "Usage: %s hash_algorithm charset_name plaintext_min_length plaintext_max_length table_index chain_length number_of_chains [part_index | -bench] [-gws GWS] [--markov FILE] [--markov-keyspace N] [--mask MASK]\n\nExample: %s ntlm ascii-32-95 9 9 0 803000 67108864 0\n\n", prog_name, prog_name);
   exit(exit_code);
 }
 
@@ -356,10 +373,14 @@ void *host_thread(void *ptr) {
 
   gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL;
   gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
+  gpu_buffer mask_data_buffer = NULL, mask_lens_buffer = NULL, mask_len_buffer = NULL;
   gpu_buffer challenge_buffer = NULL;
 
   gpu_uint pos_start = 0;
   markov_model markov = {0};
+  char     mask_data_flat[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN] = {0};
+  unsigned int mask_lens_flat[MAX_PLAINTEXT_LEN] = {0};
+  gpu_uint mask_len_val = 0;
 
   if ((args->charset != NULL) && (strlen(args->charset) == 0)) {
     charset_len = 256;
@@ -456,6 +477,18 @@ void *host_thread(void *ptr) {
       kernel_name = "crackalack_markov";
 #endif
     }
+  }
+
+  /* When --mask is requested, override kernel selection to the mask generation kernel. */
+  if (args->use_mask) {
+    kernel_path = CRACKALACK_MASK_KERNEL_PATH;
+    kernel_name = "crackalack_mask";
+    if (args->gpu.device_number == 0) {
+      printf("%sNote: mask generation kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
+    }
+    /* Prepare flat GPU buffers from the parsed mask. */
+    mask_to_gpu_buffers(&args->mask, mask_data_flat, mask_lens_flat);
+    mask_len_val = (gpu_uint)args->mask.length;
   }
 
   /* Get the number of compute units in this device. */
@@ -615,6 +648,11 @@ void *host_thread(void *ptr) {
         CLFREEBUFFER(max_positions_buffer);
         markov_free(&markov);
       }
+      if (args->use_mask) {
+        CLFREEBUFFER(mask_data_buffer);
+        CLFREEBUFFER(mask_lens_buffer);
+        CLFREEBUFFER(mask_len_buffer);
+      }
 
       CLRELEASEKERNEL(gpu->kernel);
       CLRELEASEPROGRAM(gpu->program);
@@ -631,7 +669,9 @@ void *host_thread(void *ptr) {
     if (hash_type_buffer == NULL) {
       uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
       gpu_ulong pspace_total;
-      if (args->markov_keyspace > 0)
+      if (args->use_mask)
+        pspace_total = fill_plaintext_space_mask(&args->mask, pspace_up_to_index);
+      else if (args->markov_keyspace > 0)
         pspace_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, pspace_up_to_index);
       else
         pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
@@ -652,6 +692,11 @@ void *host_thread(void *ptr) {
         CLCREATEARG_ARRAY(11, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
         CLCREATEARG_ARRAY(12, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.max_positions * markov.charset_len * markov.charset_len * sizeof(uint8_t));
         CLCREATEARG(13, max_positions_buffer, CL_RO, markov.max_positions, sizeof(gpu_uint));
+      } else if (args->use_mask) {
+        /* Mask kernel slots 11/12/13 = mask_data / mask_lens / mask_len. */
+        CLCREATEARG_ARRAY(11, mask_data_buffer, CL_RO, mask_data_flat, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN * sizeof(char));
+        CLCREATEARG_ARRAY(12, mask_lens_buffer, CL_RO, mask_lens_flat, MAX_PLAINTEXT_LEN * sizeof(unsigned int));
+        CLCREATEARG(13, mask_len_buffer, CL_RO, mask_len_val, sizeof(gpu_uint));
       } else if (using_fast_path_kernel) {
         /* Fast-path kernels (NTLM8, NTLM9, etc.) expect 14 args even though they don't use 11-13.
          * Provide dummy buffers to satisfy OpenCL's requirement that all kernel args be set.
@@ -973,6 +1018,18 @@ int main(int ac, char **av) {
         fprintf(stderr, "Error: --challenge must be exactly 16 hex digits, got '%s'.\n", av[i]);
         return -1;
       }
+    } else if (strcmp(av[i], "--mask") == 0) {
+      if (i + 1 >= ac) {
+        fprintf(stderr, "--mask requires a mask string (e.g. ?u?l?l?l?l?l?l?d)\n");
+        return -1;
+      }
+      i++;
+      strncpy(mask_str, av[i], sizeof(mask_str) - 1);
+      if (mask_parse(mask_str, &mask, NULL, NULL, NULL, NULL) != 0) {
+        fprintf(stderr, "Error: failed to parse mask '%s'\n", mask_str);
+        return -1;
+      }
+      use_mask = 1;
     } else {
       fprintf(stderr, "Unknown option: %s\n", av[i]);
       print_usage_and_exit(av[0], -1);
@@ -994,6 +1051,12 @@ int main(int ac, char **av) {
     snprintf(tmp, sizeof(tmp), "%s-mk%"PRIu64, charset_name_safe, markov_keyspace);
     strncpy(charset_name_safe, tmp, sizeof(charset_name_safe) - 1);
     charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
+  }
+
+  /* When using a mask, replace the charset field with the filename-encoded mask
+   * (e.g. "?u?l?l?d" -> "%u%l%l%d") so parse_rt_params can reconstruct it. */
+  if (use_mask) {
+    mask_encode_for_filename(mask_str, charset_name_safe, sizeof(charset_name_safe));
   }
 
   /* When using a non-default NetNTLMv1 challenge, append -chal<hex> to charset. */
@@ -1063,6 +1126,25 @@ int main(int ac, char **av) {
     return -1;
   }
 
+  /* Mask mode validations. */
+  if (use_mask && use_markov) {
+    fprintf(stderr, "Error: --mask and --markov are mutually exclusive.\n");
+    return -1;
+  }
+  if (use_mask && plaintext_len_min != plaintext_len_max) {
+    fprintf(stderr, "Error: --mask requires fixed-length plaintext (min_len must equal max_len)\n");
+    return -1;
+  }
+  if (use_mask && (unsigned int)mask.length != plaintext_len_min) {
+    fprintf(stderr, "Error: --mask length (%d) must match plaintext length (%u)\n",
+            mask.length, plaintext_len_min);
+    return -1;
+  }
+  if (use_mask && hash_type == HASH_NETNTLMV1) {
+    fprintf(stderr, "Error: --mask is not supported with netntlmv1.\n");
+    return -1;
+  }
+
   /* The original rcrack didn't support chain counts >= 128M, as that would
    * result in files greater than 2GB in size.  It may work with modern
    * rcrack/rcracki_mt, but its untested as of right now... */
@@ -1086,7 +1168,7 @@ int main(int ac, char **av) {
 
   /* If the file size implies that it is already complete, run the verifier on it. */
   if (file_size == ((uint64_t)total_chains_in_table * CHAIN_SIZE)) {
-    if (verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL)) {
+    if (verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL)) {
       /* The table is complete, so tell the user and exit. */
       printf("Table in \"%s\" already appears to be complete.  Terminating...\n", filename);
       exit(0);
@@ -1126,7 +1208,7 @@ int main(int ac, char **av) {
       /* No valid checkpoint - use legacy resume (experimental) */
       printf("\n  !! WARNING !!\n\nPartially generated table found without checkpoint.\nAttempting legacy resume (experimental).\n\n"); fflush(stdout);
 
-      verify_rainbowtable_file(filename, VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL);
+      verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL);
 
       /* fopen()'s modes are weird.  Its easier to just re-open the file for reading
        * at this point, rather than change the code above and re-use the open handle. */
@@ -1169,7 +1251,9 @@ int main(int ac, char **av) {
     } else {
 
       uint64_t plaintext_space_total;
-      if (markov_keyspace > 0)
+      if (use_mask)
+        plaintext_space_total = fill_plaintext_space_mask(&mask, plaintext_space_up_to_index);
+      else if (markov_keyspace > 0)
         plaintext_space_total = fill_plaintext_space_markov_keyspace(markov_keyspace, plaintext_len_max, plaintext_space_up_to_index);
       else
         plaintext_space_total = fill_plaintext_space_table(charset_len, plaintext_len_min, plaintext_len_max, plaintext_space_up_to_index);
@@ -1262,6 +1346,8 @@ int main(int ac, char **av) {
     args[i].initial_chains_per_execution = INITIAL_CHAINS_PER_EXECUTION;
     args[i].use_markov = use_markov;
     args[i].markov_keyspace = markov_keyspace;
+    args[i].use_mask = use_mask;
+    args[i].mask = mask;
     memcpy(args[i].challenge, challenge, 8);
     snprintf(args[i].markov_path, sizeof(args[i].markov_path), "%s", markov_path);
     args[i].gpu.device_number = i;
@@ -1327,7 +1413,7 @@ int main(int ac, char **av) {
     /* Verify that the new table is valid. */
     printf("Now verifying rainbow table... ");
     fflush(stdout);
-    if (!verify_rainbowtable_file(filename, use_markov ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, use_markov ? 0 : -1, NULL)) {
+    if (!verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL)) {
       char log_filename[256] = {0};
 
       get_rt_log_filename(log_filename, sizeof(log_filename), filename);
