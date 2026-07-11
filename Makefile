@@ -443,7 +443,8 @@ $(abspath $(OUTDIR)/$(GENKNOWN_PROG)): \
 	$(OBJDIR)/gen_known_hash.o \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/charset.o \
-	$(OBJDIR)/markov.o
+	$(OBJDIR)/markov.o \
+	$(OBJDIR)/mask_parse.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS) -lssl -lcrypto
 
 bundle_windows:
