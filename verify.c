@@ -26,6 +26,7 @@
 #include "cpu_rt_functions.h"
 #include "file_lock.h"
 #include "markov.h"
+#include "mask_parse.h"
 #include "misc.h"
 #include "rtc_decompress.h"
 #include "shared.h"
@@ -176,15 +177,26 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     return 0;
   }
 
-  charset = validate_charset(rt_params.charset_name);
-  if (charset == NULL) {
-    fprintf(stderr, "Character set is invalid: %s\n", rt_params.charset_name);
-    return 0;
-  }
-
   unsigned int charset_len = 0;
-  charset_len = (strcmp(rt_params.charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(charset);
-  plaintext_space_total = fill_plaintext_space_table(charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, plaintext_space_up_to_index);
+  if (rt_params.is_mask) {
+    /* Mask tables: charset field encodes a hashcat-style mask — skip validate_charset.
+     * Compute the keyspace from the parsed mask instead. */
+    Mask parsed_mask = {0};
+    if (mask_parse(rt_params.mask, &parsed_mask, NULL, NULL, NULL, NULL) != 0) {
+      fprintf(stderr, "Error: failed to parse mask '%s' from filename\n", rt_params.mask);
+      return 0;
+    }
+    plaintext_space_total = fill_plaintext_space_mask(&parsed_mask, plaintext_space_up_to_index);
+    /* charset and charset_len remain 0/NULL — chain regeneration is not supported for mask verify yet. */
+  } else {
+    charset = validate_charset(rt_params.charset_name);
+    if (charset == NULL) {
+      fprintf(stderr, "Character set is invalid: %s\n", rt_params.charset_name);
+      return 0;
+    }
+    charset_len = (strcmp(rt_params.charset_name, "byte") == 0) ? 256 : (unsigned int)strlen(charset);
+    plaintext_space_total = fill_plaintext_space_table(charset_len, rt_params.plaintext_len_min, rt_params.plaintext_len_max, plaintext_space_up_to_index);
+  }
 
   expected_start = rt_params.num_chains * (uint64_t)rt_params.table_part;
 
