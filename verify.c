@@ -343,8 +343,9 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     unsigned char hash[MAX_HASH_OUTPUT_LEN] = {0};
     unsigned int i = 0, plaintext_len = sizeof(plaintext), hash_len = sizeof(hash);
 
-
-    if (rt_params.hash_type == HASH_NTLM || rt_params.hash_type == HASH_MD5 || rt_params.hash_type == HASH_NETNTLMV1) {
+    if (rt_params.is_mask) {
+      printf("Note: CPU chain re-verification not yet supported for mask tables; skipping.\n"); fflush(stdout);
+    } else if (rt_params.hash_type == HASH_NTLM || rt_params.hash_type == HASH_MD5 || rt_params.hash_type == HASH_NETNTLMV1) {
       /* For incomplete tables, verify the LAST N chains (not random). */
       if (table_should_be_complete == VERIFY_TABLE_MAY_BE_INCOMPLETE) {
         uint64_t start_offset = (actual_num_chains > num_chains_to_verify) ?
