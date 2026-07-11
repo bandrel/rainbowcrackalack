@@ -385,6 +385,8 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
 
 
   rt_params->parsed = 0;
+  rt_params->is_mask = 0;
+  rt_params->mask[0] = '\0';
   memcpy(rt_params->challenge, NETNTLMV1_DEFAULT_CHALLENGE, 8);
 
   /* Skip the directory path, if this filename is absolute. */
