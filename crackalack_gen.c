@@ -382,7 +382,9 @@ void *host_thread(void *ptr) {
   unsigned int mask_lens_flat[MAX_PLAINTEXT_LEN] = {0};
   gpu_uint mask_len_val = 0;
 
-  if ((args->charset != NULL) && (strlen(args->charset) == 0)) {
+  if (args->charset == NULL) {
+    charset_len = 0;
+  } else if (strlen(args->charset) == 0) {
     charset_len = 256;
   } else {
     charset_len = strlen(args->charset);
@@ -390,8 +392,11 @@ void *host_thread(void *ptr) {
 
 
   /* If we're generating the standard NTLM 8- or 9-character tables, use the special
-   * optimized kernel instead! */
-  if (is_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
+   * optimized kernel instead!  Skip charset-based fast-path selection when using a
+   * mask (charset is NULL in that mode; the mask overrides kernel choice below). */
+  if (args->use_mask) {
+    /* Mask path: kernel will be selected in the use_mask block below; no fast-path check. */
+  } else if (is_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len)) {
     kernel_path = CRACKALACK_NTLM8_KERNEL_PATH;
     kernel_name = "crackalack_ntlm8";
     using_fast_path_kernel = 1;
@@ -677,8 +682,10 @@ void *host_thread(void *ptr) {
         pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
 
       unsigned int charset_buf_size = charset_len > 0 ? charset_len : 1;
+      static const char dummy_charset[1] = {0};
+      const char *charset_ptr = (args->charset != NULL) ? args->charset : dummy_charset;
       CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
-      CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, args->charset, charset_buf_size);
+      CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, charset_ptr, charset_buf_size);
       CLCREATEARG(2, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
       CLCREATEARG(3, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
       CLCREATEARG(4, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
@@ -1083,18 +1090,20 @@ int main(int ac, char **av) {
   }
 
 
-  charset = validate_charset(charset_name);
-  if (charset == NULL) {
-    char buf[256] = {0};
+  if (!use_mask) {
+    charset = validate_charset(charset_name);
+    if (charset == NULL) {
+      char buf[256] = {0};
 
-    get_valid_charsets(buf, sizeof(buf));
-    fprintf(stderr, "Error: charset \"%s\" not supported.  Valid values are: %s", charset_name, buf);
-    exit(-1);
-  }
-  if (strcmp(charset_name, "byte") == 0) {
-    charset_len = 256;
-  } else {
-    charset_len = strlen(charset);
+      get_valid_charsets(buf, sizeof(buf));
+      fprintf(stderr, "Error: charset \"%s\" not supported.  Valid values are: %s", charset_name, buf);
+      exit(-1);
+    }
+    if (strcmp(charset_name, "byte") == 0) {
+      charset_len = 256;
+    } else {
+      charset_len = strlen(charset);
+    }
   }
 
 
