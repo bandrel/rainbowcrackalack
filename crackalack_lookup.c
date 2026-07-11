@@ -1328,8 +1328,7 @@ void *host_thread_false_alarm(void *ptr) {
     CLCREATEARG_ARRAY(16, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
     CLCREATEARG_ARRAY(17, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_max_positions * args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
     CLCREATEARG(18, max_positions_buffer, CL_RO, args->markov_max_positions, sizeof(gpu_uint));
-  }
-  if (args->use_mask) {
+  } else if (args->use_mask) {
     CLCREATEARG_ARRAY(16, sorted_pos0_buffer, CL_RO, args->mask_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN * sizeof(char));
     CLCREATEARG_ARRAY(17, sorted_bigram_buffer, CL_RO, args->mask_lens, MAX_PLAINTEXT_LEN * sizeof(unsigned int));
     gpu_uint mask_len_uint = (gpu_uint)args->mask.length;
@@ -1643,8 +1642,7 @@ void *host_thread_precompute(void *ptr) {
       CLCREATEARG_ARRAY(15, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
       CLCREATEARG_ARRAY(16, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_max_positions * args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
       CLCREATEARG(17, max_positions_buffer, CL_RO, args->markov_max_positions, sizeof(gpu_uint));
-    }
-    if (args->use_mask) {
+    } else if (args->use_mask) {
       CLCREATEARG_ARRAY(15, sorted_pos0_buffer, CL_RO, args->mask_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN * sizeof(char));
       CLCREATEARG_ARRAY(16, sorted_bigram_buffer, CL_RO, args->mask_lens, MAX_PLAINTEXT_LEN * sizeof(unsigned int));
       gpu_uint mask_len_uint = (gpu_uint)args->mask.length;
