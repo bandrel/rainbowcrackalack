@@ -51,6 +51,7 @@
 #include "cpu_rt_functions.h"
 #include "hash_validate.h"
 #include "markov.h"
+#include "mask_parse.h"
 #include "bloom.h"
 #include "misc.h"
 #include "fa_batch.h"
@@ -151,6 +152,16 @@
 #define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.cl"
 #define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.cl"
 #endif
+#ifdef USE_METAL
+#define PRECOMPUTE_MASK_KERNEL_PATH "precompute_mask.metal"
+#define FALSE_ALARM_MASK_KERNEL_PATH "false_alarm_check_mask.metal"
+#elif defined(USE_CUDA)
+#define PRECOMPUTE_MASK_KERNEL_PATH "CUDA/precompute_mask.cu"
+#define FALSE_ALARM_MASK_KERNEL_PATH "CUDA/false_alarm_check_mask.cu"
+#else
+#define PRECOMPUTE_MASK_KERNEL_PATH "precompute_mask.cl"
+#define FALSE_ALARM_MASK_KERNEL_PATH "false_alarm_check_mask.cl"
+#endif
 
 /* precomputed_and_potential_indices definition lives in ppi.h. */
 
@@ -203,6 +214,11 @@ typedef struct {
   uint8_t *sorted_bigram;  /* Points into the global markov model; not owned. */
   unsigned int markov_charset_len;
   unsigned int markov_max_positions;
+
+  int use_mask;
+  Mask mask;
+  char mask_data[MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN];
+  unsigned int mask_lens[MAX_PLAINTEXT_LEN];
 
   int precompute_gpu_ready;
   int false_alarm_gpu_ready;
@@ -573,6 +589,9 @@ void harvest_false_alarm_results(false_alarm_state *state) {
     charset_len = strlen(args->charset);
     if (charset_len == 0) charset_len = 1;
     fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, plaintext_space_up_to_index);
+  } else if (args->use_mask) {
+    charset_len = 1;  /* not used for mask decode; set to avoid uninit */
+    fill_plaintext_space_mask(&args->mask, plaintext_space_up_to_index);
   } else {
     if (strcmp(args->charset_name, "byte") == 0)
       charset_len = 256;
@@ -610,6 +629,8 @@ void harvest_false_alarm_results(false_alarm_state *state) {
       	if (args[i].use_markov) {
           index_to_plaintext_markov_cpu(args[i].results[r], &g_markov, args[i].plaintext_len_max, (unsigned char *)plaintext);
           plaintext_len = args[i].plaintext_len_max;
+        } else if (args[i].use_mask) {
+          index_to_plaintext_mask_cpu(args[i].results[r], &args[i].mask, plaintext, &plaintext_len);
         } else
           index_to_plaintext(args[i].results[r], args[i].charset, charset_len, args[i].plaintext_len_min, args[i].plaintext_len_max, plaintext_space_up_to_index, plaintext, &plaintext_len);
 
@@ -997,6 +1018,20 @@ void setup_args_for_config(thread_args *args, unsigned int num_devices, const rt
     args[idx].reduction_offset  = params->reduction_offset;
     args[idx].chain_len         = params->chain_len;
     args[idx].markov_keyspace   = params->markov_keyspace;
+    /* Mask detection: if the table's charset field encodes a mask, parse it and
+     * set use_mask + the GPU buffer fields. */
+    if (params->is_mask) {
+      Mask m = {0};
+      if (mask_parse(params->mask, &m, NULL, NULL, NULL, NULL) == 0) {
+        args[idx].use_mask = 1;
+        args[idx].mask = m;
+        mask_to_gpu_buffers(&m, args[idx].mask_data, args[idx].mask_lens);
+      } else {
+        args[idx].use_mask = 0;
+      }
+    } else {
+      args[idx].use_mask = 0;
+    }
     memcpy(args[idx].challenge, g_challenge, 8);
   }
 }
@@ -1074,6 +1109,9 @@ void *host_thread_false_alarm(void *ptr) {
     charset_len = strlen(args->charset);
     if (charset_len == 0) charset_len = 1;
     plaintext_space_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, plaintext_space_up_to_index);
+  } else if (args->use_mask) {
+    charset_len = 1;  /* not used for mask decode; set to avoid uninit */
+    plaintext_space_total = fill_plaintext_space_mask(&args->mask, plaintext_space_up_to_index);
   } else {
     if (strcmp(args->charset_name, "byte") == 0) {
       charset_len = 256;
@@ -1182,6 +1220,12 @@ void *host_thread_false_alarm(void *ptr) {
     }
   }
 
+  /* When use_mask is active, override with the mask false alarm kernel. */
+  if (args->use_mask) {
+    kernel_path = FALSE_ALARM_MASK_KERNEL_PATH;
+    kernel_name = "false_alarm_check_mask";
+  }
+
   /* Compile kernel once and reuse across table iterations. */
   if (!args->false_alarm_gpu_ready) {
     gpu->context = CLCREATECONTEXT(context_callback, &(gpu->device));
@@ -1285,6 +1329,12 @@ void *host_thread_false_alarm(void *ptr) {
     CLCREATEARG_ARRAY(17, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_max_positions * args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
     CLCREATEARG(18, max_positions_buffer, CL_RO, args->markov_max_positions, sizeof(gpu_uint));
   }
+  if (args->use_mask) {
+    CLCREATEARG_ARRAY(16, sorted_pos0_buffer, CL_RO, args->mask_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN * sizeof(char));
+    CLCREATEARG_ARRAY(17, sorted_bigram_buffer, CL_RO, args->mask_lens, MAX_PLAINTEXT_LEN * sizeof(unsigned int));
+    gpu_uint mask_len_uint = (gpu_uint)args->mask.length;
+    CLCREATEARG(18, max_positions_buffer, CL_RO, mask_len_uint, sizeof(gpu_uint));
+  }
 
   if (is_netntlmv1_7(args->hash_type, args->charset_name, args->plaintext_len_min, args->plaintext_len_max, args->chain_len)) {
     CLCREATEARG_ARRAY(16, challenge_buffer, CL_RO, args->challenge, NETNTLMV1_CHALLENGE_LEN);
@@ -1339,7 +1389,7 @@ void *host_thread_false_alarm(void *ptr) {
   CLFREEBUFFER(hash_base_indices_buffer);
   CLFREEBUFFER(output_block_buffer);
   CLFREEBUFFER(challenge_buffer);
-  if (args->use_markov) {
+  if (args->use_markov || args->use_mask) {
     CLFREEBUFFER(sorted_pos0_buffer);
     CLFREEBUFFER(sorted_bigram_buffer);
     CLFREEBUFFER(max_positions_buffer);
@@ -1480,6 +1530,12 @@ void *host_thread_precompute(void *ptr) {
     }
   }
 
+  /* When use_mask is active, override with the mask precompute kernel. */
+  if (args->use_mask) {
+    kernel_path = PRECOMPUTE_MASK_KERNEL_PATH;
+    kernel_name = "precompute_mask";
+  }
+
   /* Compile kernel once and reuse across invocations. */
   if (!args->precompute_gpu_ready) {
     gpu->context = CLCREATECONTEXT(context_callback, &(gpu->device));
@@ -1576,6 +1632,8 @@ void *host_thread_precompute(void *ptr) {
     gpu_ulong pspace_total;
     if (args->markov_keyspace > 0)
       pspace_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, pspace_up_to_index);
+    else if (args->use_mask)
+      pspace_total = fill_plaintext_space_mask(&args->mask, pspace_up_to_index);
     else {
       pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
     }
@@ -1585,6 +1643,12 @@ void *host_thread_precompute(void *ptr) {
       CLCREATEARG_ARRAY(15, sorted_pos0_buffer, CL_RO, args->sorted_pos0, args->markov_charset_len * sizeof(uint8_t));
       CLCREATEARG_ARRAY(16, sorted_bigram_buffer, CL_RO, args->sorted_bigram, args->markov_max_positions * args->markov_charset_len * args->markov_charset_len * sizeof(uint8_t));
       CLCREATEARG(17, max_positions_buffer, CL_RO, args->markov_max_positions, sizeof(gpu_uint));
+    }
+    if (args->use_mask) {
+      CLCREATEARG_ARRAY(15, sorted_pos0_buffer, CL_RO, args->mask_data, MAX_PLAINTEXT_LEN * MAX_CHARSET_LEN * sizeof(char));
+      CLCREATEARG_ARRAY(16, sorted_bigram_buffer, CL_RO, args->mask_lens, MAX_PLAINTEXT_LEN * sizeof(unsigned int));
+      gpu_uint mask_len_uint = (gpu_uint)args->mask.length;
+      CLCREATEARG(17, max_positions_buffer, CL_RO, mask_len_uint, sizeof(gpu_uint));
     }
   }
 
@@ -1651,7 +1715,7 @@ void *host_thread_precompute(void *ptr) {
   CLFREEBUFFER(pspace_table_buffer);
   CLFREEBUFFER(pspace_total_buffer);
   CLFREEBUFFER(challenge_buffer);
-  if (args->use_markov) {
+  if (args->use_markov || args->use_mask) {
     CLFREEBUFFER(sorted_pos0_buffer);
     CLFREEBUFFER(sorted_bigram_buffer);
     CLFREEBUFFER(max_positions_buffer);
@@ -3551,6 +3615,10 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
     if (charset_len == 0) charset_len = 1;
     plaintext_space_total = fill_plaintext_space_markov_keyspace(
         args[0].markov_keyspace, args[0].plaintext_len_max, plaintext_space_up_to_index);
+  } else if (args[0].use_mask) {
+    charset_len = 1;
+    plaintext_space_total = fill_plaintext_space_mask(
+        &args[0].mask, plaintext_space_up_to_index);
   } else {
     if (strcmp(args[0].charset_name, "byte") == 0)
       charset_len = 256;
