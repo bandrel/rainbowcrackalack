@@ -217,6 +217,43 @@ uint64_t generate_rainbow_chain(
 }
 
 
+uint64_t generate_rainbow_chain_mask(
+    unsigned int hash_type,
+    const Mask *mask,
+    uint64_t plaintext_space_total,
+    unsigned int reduction_offset,
+    unsigned int chain_len,
+    uint64_t start)
+{
+  uint64_t index = start;
+
+  for (unsigned int pos = 0; pos < chain_len - 1; pos++) {
+    char plaintext[MAX_PLAINTEXT_LEN + 1];
+    unsigned char hash[MAX_HASH_OUTPUT_LEN];
+    unsigned int plaintext_len = 0;
+    unsigned int hash_len = sizeof(hash);
+
+    memset(plaintext, 0, sizeof(plaintext));
+    index_to_plaintext_mask_cpu(index, mask, plaintext, &plaintext_len);
+
+    if (hash_type == HASH_MD5) {
+      md5_hash(plaintext, plaintext_len, hash);
+      hash_len = 16;
+    } else if (hash_type == HASH_NETNTLMV1) {
+      unsigned char des_key[8] = {0};
+      setup_des_key(plaintext, des_key);
+      netntlmv1_hash(des_key, 8, hash);
+      hash_len = 8;
+    } else {
+      ntlm_hash(plaintext, plaintext_len, hash);
+      hash_len = 16;
+    }
+    index = hash_to_index(hash, hash_len, reduction_offset, plaintext_space_total, pos);
+  }
+  return index;
+}
+
+
 uint64_t generate_rainbow_chain_markov(
     unsigned int hash_type,
     const markov_model *model,

@@ -12,6 +12,7 @@
 #include <openssl/des.h>
 #include "cpu_rt_functions.h"
 #include "charset.h"
+#include "mask_parse.h"
 #include "shared.h"
 #include "markov.h"
 
@@ -67,6 +68,11 @@ int main(int ac, char **av) {
   const char *markov_path = NULL;
   uint64_t markov_keyspace = 0;
 
+  /* Mask options */
+  const char *mask_str = NULL;
+  Mask parsed_mask = {0};
+  int use_mask = 0;
+
   const char *positional[4] = {NULL, NULL, NULL, NULL};
   int pos_count = 0;
 
@@ -92,6 +98,9 @@ int main(int ac, char **av) {
       if (i + 1 >= ac) { fprintf(stderr, "%s: --plaintext-len requires a value\n", av[0]); return 1; }
       plaintext_len = (unsigned int)strtoul(av[++i], NULL, 10);
       plen_set = 1;
+    } else if (strcmp(av[i], "--mask") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s: --mask requires a mask string (e.g. ?u?l?l?l?l?l?l?d)\n", av[0]); return 1; }
+      mask_str = av[++i];
     } else if (strcmp(av[i], "--markov") == 0) {
       if (i + 1 >= ac) { fprintf(stderr, "%s: --markov requires a filename\n", av[0]); return 1; }
       markov_path = av[++i];
@@ -113,7 +122,8 @@ int main(int ac, char **av) {
     fprintf(stderr,
             "Usage: %s chain_len reduction_offset start_index target_position\n"
             "          [--algo ntlm|netntlmv1] [--charset NAME] [--plaintext-len N] [--challenge <16hex>]\n"
-            "          [--markov FILE --markov-keyspace N]\n",
+            "          [--markov FILE --markov-keyspace N]\n"
+            "          [--mask MASKSTRING]\n",
             av[0]);
     return 1;
   }
@@ -127,6 +137,23 @@ int main(int ac, char **av) {
   if (markov_path != NULL && algo == ALGO_NETNTLMV1) {
     fprintf(stderr, "%s: --markov is not supported with --algo netntlmv1\n", av[0]);
     return 1;
+  }
+
+  /* Validate mask options. */
+  if (mask_str != NULL && markov_path != NULL) {
+    fprintf(stderr, "%s: --mask and --markov are mutually exclusive\n", av[0]);
+    return 1;
+  }
+  if (mask_str != NULL && algo == ALGO_NETNTLMV1) {
+    fprintf(stderr, "%s: --mask is not supported with --algo netntlmv1\n", av[0]);
+    return 1;
+  }
+  if (mask_str != NULL) {
+    if (mask_parse(mask_str, &parsed_mask, NULL, NULL, NULL, NULL) != 0) {
+      fprintf(stderr, "%s: failed to parse mask '%s'\n", av[0], mask_str);
+      return 1;
+    }
+    use_mask = 1;
   }
 
   unsigned int chain_len        = (unsigned int)strtoul(positional[0], NULL, 10);
@@ -172,7 +199,10 @@ int main(int ac, char **av) {
 
   uint64_t plaintext_space_up_to_index[16] = {0};
   uint64_t plaintext_space_total;
-  if (use_markov && markov_keyspace > 0) {
+  if (use_mask) {
+    plaintext_space_total = fill_plaintext_space_mask(&parsed_mask, plaintext_space_up_to_index);
+    plaintext_len = (unsigned int)parsed_mask.length;
+  } else if (use_markov && markov_keyspace > 0) {
     plaintext_space_total = fill_plaintext_space_markov_keyspace(
         markov_keyspace, plaintext_len, plaintext_space_up_to_index);
   } else {
@@ -188,7 +218,9 @@ int main(int ac, char **av) {
   unsigned int out_plaintext_len = plaintext_len;
 
   for (unsigned int pos = 0; pos < chain_len - 1; pos++) {
-    if (use_markov) {
+    if (use_mask) {
+      index_to_plaintext_mask_cpu(index, &parsed_mask, plaintext, &out_plaintext_len);
+    } else if (use_markov) {
       index_to_plaintext_markov_cpu(index, &markov, plaintext_len, (unsigned char *)plaintext);
       out_plaintext_len = plaintext_len;
     } else {

@@ -26,6 +26,7 @@
 
 #include "cpu_rt_functions.h"
 #include "markov.h"
+#include "mask_parse.h"
 #include "misc.h"
 #include "terminal_color.h"
 #include "verify.h"
@@ -40,6 +41,7 @@ static struct option long_options[] = {
   {"truncate_on_err", no_argument, &truncate_on_err, VERIFY_TRUNCATE_ON_ERROR},
   {"num_chains", required_argument, 0, 'n'},
   {"markov", required_argument, 0, 'm'},
+  {"mask", required_argument, 0, 'M'},
   {"challenge", required_argument, 0, 'c'},
   {0, 0, 0, 0}
 };
@@ -53,10 +55,13 @@ void print_usage(char *prog_name) {
 int main(int ac, char **av) {
   char *filename = NULL;
   char *markov_path = NULL;
+  char *mask_str = NULL;
   unsigned int table_type = 0;
   int num_chains_to_verify = -1, c = 0, option_index = 0;
   markov_model markov = {0};
   markov_model *markov_ptr = NULL;
+  Mask parsed_mask = {0};
+  Mask *mask_ptr = NULL;
 
 
   ENABLE_CONSOLE_COLOR();
@@ -70,6 +75,9 @@ int main(int ac, char **av) {
       break;
     case 'm':
       markov_path = optarg;
+      break;
+    case 'M':
+      mask_str = optarg;
       break;
     case 'c': {
       /* NetNTLMv1 CPU chain verification needs the server challenge the table
@@ -117,14 +125,22 @@ int main(int ac, char **av) {
     markov_ptr = &markov;
   }
 
+  if (mask_str) {
+    if (mask_parse(mask_str, &parsed_mask, NULL, NULL, NULL, NULL) != 0) {
+      fprintf(stderr, "Error: failed to parse mask '%s'\n", mask_str);
+      return -1;
+    }
+    mask_ptr = &parsed_mask;
+  }
+
   if (raw_table)
-    table_type = markov_ptr ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED;
+    table_type = (markov_ptr || mask_ptr) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED;
   else if (quick_table)
     table_type = VERIFY_TABLE_TYPE_QUICK;
   else if (sorted_table)
     table_type = VERIFY_TABLE_TYPE_LOOKUP;
 
-  if (!verify_rainbowtable_file(filename, table_type, VERIFY_TABLE_IS_COMPLETE, truncate_on_err, num_chains_to_verify, markov_ptr)) {
+  if (!verify_rainbowtable_file(filename, table_type, VERIFY_TABLE_IS_COMPLETE, truncate_on_err, num_chains_to_verify, markov_ptr, mask_ptr)) {
     fprintf(stderr, "\n%sRainbow table verification FAILED.%s", REDB, CLR);
     if (truncate_on_err == VERIFY_TRUNCATE_ON_ERROR)
       fprintf(stderr, "  File truncate_on_errd.");
