@@ -462,6 +462,11 @@ int verify_chains_recompute(const char *filename, uint64_t start_chain,
     return VERIFY_ERR_CORRUPTED;
   }
 
+  if (rt_params.is_mask) {
+    fprintf(stderr, "verify_chains_recompute: not supported for mask tables\n");
+    return VERIFY_ERR_CORRUPTED;
+  }
+
   /* Validate charset. */
   char *validated_charset = validate_charset(rt_params.charset_name);
   if (validated_charset == NULL) {

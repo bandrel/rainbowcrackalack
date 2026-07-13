@@ -471,7 +471,7 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
        * not be mangled by the in-place %x->?x decode used only to TEST). */
       {
         char decoded[sizeof(rt_params->mask)];
-        strncpy(decoded, rt_params->charset_name, sizeof(decoded) - 1);
+        strncpy(decoded, charset_name_ptr, sizeof(decoded) - 1);
         decoded[sizeof(decoded) - 1] = '\0';
         mask_decode_from_filename(decoded);      /* only to TEST for '?' */
         if (is_mask_string(decoded)) {

@@ -439,7 +439,7 @@ static int group_parse_rt_params_mask(void)
     /* MP-15h: a long custom-charset field (> 64 chars) round-trips through
      * parse_rt_params WITHOUT truncation.  Regression for the bug where the
      * raw field was copied via charset_name[64] before reaching mask[256].
-     * Field = "%1"x6 (12) + "!1-" (3) + 48 hex (24-byte set) = 63 chars, which
+     * Field = %1 x8 (16) + !1- (3) + 60 hex (30-byte set) = 79 chars, which
      * overflows charset_name's 63 usable bytes. */
     {
         rt_parameters q;
@@ -461,7 +461,7 @@ static int group_parse_rt_params_mask(void)
                     "truncation (len=%zu)\n", strlen(field)); ok = 0;
         }
         snprintf(filename, sizeof(filename),
-                 "ntlm_%s#6-6_0_1000x512_0.rt", field);
+                 "ntlm_%s#8-8_0_1000x512_0.rt", field);
         parse_rt_params(&q, filename);
         if (!q.parsed || !q.is_mask) {
             fprintf(stderr, "MP-15h failed: not detected as mask\n"); ok = 0;
