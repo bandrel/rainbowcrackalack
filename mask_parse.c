@@ -20,9 +20,10 @@ int is_mask_string(const char *s) {
 
 
 static int build_position(char spec, MaskPosition *pos,
-                           const char *c1, const char *c2,
-                           const char *c3, const char *c4) {
+                           const MaskPosition *c1, const MaskPosition *c2,
+                           const MaskPosition *c3, const MaskPosition *c4) {
     const char *src = NULL;
+    const MaskPosition *cust = NULL;
     unsigned int i;
 
     pos->size = 0;
@@ -50,10 +51,10 @@ static int build_position(char spec, MaskPosition *pos,
             pos->chars[pos->size++] = (char)(unsigned char)i;
         return 0;
 
-    case '1': src = c1; break;
-    case '2': src = c2; break;
-    case '3': src = c3; break;
-    case '4': src = c4; break;
+    case '1': cust = c1; break;
+    case '2': cust = c2; break;
+    case '3': cust = c3; break;
+    case '4': cust = c4; break;
 
     case 'h': src = "0123456789abcdef"; break;
     case 'H': src = "0123456789ABCDEF"; break;
@@ -64,6 +65,21 @@ static int build_position(char spec, MaskPosition *pos,
 
     default:
         fprintf(stderr, "mask_parse: unknown specifier '?%c'\n", spec);
+        return -1;
+    }
+
+    if (spec == '1' || spec == '2' || spec == '3' || spec == '4') {
+        if (cust != NULL) {                 /* custom charset: copy by length */
+            if (cust->size == 0) {
+                fprintf(stderr, "mask_parse: empty custom charset\n");
+                return -1;
+            }
+            memcpy(pos->chars, cust->chars, cust->size);
+            pos->size = cust->size;
+            return 0;
+        }
+        /* ?1-?4 requested but not provided */
+        fprintf(stderr, "mask_parse: custom charset ?%c not provided\n", spec);
         return -1;
     }
 
@@ -146,9 +162,9 @@ overflow:
 }
 
 
-int mask_parse(const char *mask_str, Mask *out,
-               const char *c1, const char *c2,
-               const char *c3, const char *c4) {
+int mask_parse_ex(const char *mask_str, Mask *out,
+                  const MaskPosition *c1, const MaskPosition *c2,
+                  const MaskPosition *c3, const MaskPosition *c4) {
     int pos = 0;
     unsigned int i = 0;
 
@@ -190,6 +206,25 @@ int mask_parse(const char *mask_str, Mask *out,
 
     out->length = pos;
     return 0;
+}
+
+
+int mask_parse(const char *mask_str, Mask *out,
+               const char *c1, const char *c2,
+               const char *c3, const char *c4) {
+    MaskPosition p[4];
+    const MaskPosition *pp[4] = { NULL, NULL, NULL, NULL };
+    const char *raw[4] = { c1, c2, c3, c4 };
+    int k;
+
+    for (k = 0; k < 4; k++) {
+        if (raw[k] != NULL) {
+            if (expand_charset_def(raw[k], p[k].chars, &p[k].size) != 0)
+                return -1;
+            pp[k] = &p[k];
+        }
+    }
+    return mask_parse_ex(mask_str, out, pp[0], pp[1], pp[2], pp[3]);
 }
 
 
