@@ -175,6 +175,8 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/test_precompute_collate.o \
 	$(CPU_TESTS_OBJDIR)/test_markov.o \
 	$(CPU_TESTS_OBJDIR)/test_mask_parse.o \
+	$(CPU_TESTS_OBJDIR)/test_hcmask.o \
+	$(CPU_TESTS_OBJDIR)/hcmask.o \
 	$(CPU_TESTS_OBJDIR)/test_golden.o \
 	$(CPU_TESTS_OBJDIR)/test_shared.o \
 	$(CPU_TESTS_OBJDIR)/misc.o \
@@ -296,6 +298,7 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/hcmask.o \
 	$(OBJDIR)/markov.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
@@ -341,6 +344,8 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_markov.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/test_mask_parse.o \
+	$(OBJDIR)/hcmask.o \
+	$(OBJDIR)/test_hcmask.o \
 	$(OBJDIR)/test_challenge_host.o \
 	$(OBJDIR)/test_misc.o \
 	$(OBJDIR)/test_golden.o \
@@ -366,6 +371,7 @@ $(OUTDIR)/$(VERIFY_PROG): \
 	$(OBJDIR)/crackalack_verify.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/hcmask.o \
 	$(OBJDIR)/markov.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \

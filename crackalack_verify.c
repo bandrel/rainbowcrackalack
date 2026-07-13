@@ -19,12 +19,14 @@
 #include <windows.h>
 #endif
 
+#include <dirent.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "cpu_rt_functions.h"
+#include "hcmask.h"
 #include "markov.h"
 #include "mask_parse.h"
 #include "misc.h"
@@ -42,6 +44,7 @@ static struct option long_options[] = {
   {"num_chains", required_argument, 0, 'n'},
   {"markov", required_argument, 0, 'm'},
   {"mask", required_argument, 0, 'M'},
+  {"hcmask", required_argument, 0, 'K'},
   {"challenge", required_argument, 0, 'c'},
   {"custom-charset1", required_argument, 0, '1'},
   {"custom-charset2", required_argument, 0, '2'},
@@ -52,7 +55,78 @@ static struct option long_options[] = {
 
 
 void print_usage(char *prog_name) {
-  fprintf(stderr, "This program verifies rainbow tables.\n\n\n  %s --raw [--truncate_on_err] [--num_chains X] [--markov FILE] [--mask MASKSTRING [-1 CHARS] [-2 CHARS] [-3 CHARS] [-4 CHARS]] table.rt\n\nThe above command will verify a newly-generated rainbow table.  This ensures that the table 1.) has sequential start points, and 2.) has non-zero ending points.  Optionally, it can truncate_on_err the file to just before the first error found, if any.\n\nWhen --markov is specified, the Markov model is used for CPU chain verification.  When --mask is specified, the mask (hashcat-style, e.g. ?u?l?l?d) is used for CPU chain verification; -1/-2/-3/-4 define custom charset slots.\n\n\n  %s --quick [--markov FILE] [--mask MASKSTRING [-1 CHARS] [-2 CHARS] [-3 CHARS] [-4 CHARS]] table.rt\n\nThe above command will quickly verify a newly-generated rainbow table.  It is similar to using '--raw', but does not examine the start & end points, and only verifies 5 random chains.  As a result, it can do basic verification without needing to read the entire table into memory first (which incurs a huge I/O cost).  The use case for this option is for quickly checking terabytes of tables for sanity.\n\n\n  %s --sorted [--num_chains X] table.rtc\n\nThe above command will verify a sorted rainbow table (i.e.: that it is suitable for lookups).  It ensures that the end indices are sorted in ascending order.  The table may be compressed or uncompressed.\n\n\nIn any case, --num_chains sets the number of random chains to verify using CPU code (hence, providing a large number here will have a dramatic effect on the speed of verification).  Unless overridden, this defaults to 100.\n\nFor NetNTLMv1 tables, --challenge HEX16 sets the 8-byte server challenge used for CPU chain verification (defaults to the standard challenge 1122334455667788).\n\n\n", prog_name, prog_name, prog_name);
+  fprintf(stderr, "This program verifies rainbow tables.\n\n\n  %s --raw [--truncate_on_err] [--num_chains X] [--markov FILE] [--mask MASKSTRING [-1 CHARS] [-2 CHARS] [-3 CHARS] [-4 CHARS]] table.rt\n\nThe above command will verify a newly-generated rainbow table.  This ensures that the table 1.) has sequential start points, and 2.) has non-zero ending points.  Optionally, it can truncate_on_err the file to just before the first error found, if any.\n\nWhen --markov is specified, the Markov model is used for CPU chain verification.  When --mask is specified, the mask (hashcat-style, e.g. ?u?l?l?d) is used for CPU chain verification; -1/-2/-3/-4 define custom charset slots.\n\n\n  %s --quick [--markov FILE] [--mask MASKSTRING [-1 CHARS] [-2 CHARS] [-3 CHARS] [-4 CHARS]] table.rt\n\nThe above command will quickly verify a newly-generated rainbow table.  It is similar to using '--raw', but does not examine the start & end points, and only verifies 5 random chains.  As a result, it can do basic verification without needing to read the entire table into memory first (which incurs a huge I/O cost).  The use case for this option is for quickly checking terabytes of tables for sanity.\n\n\n  %s --sorted [--num_chains X] table.rtc\n\nThe above command will verify a sorted rainbow table (i.e.: that it is suitable for lookups).  It ensures that the end indices are sorted in ascending order.  The table may be compressed or uncompressed.\n\n\nIn any case, --num_chains sets the number of random chains to verify using CPU code (hence, providing a large number here will have a dramatic effect on the speed of verification).  Unless overridden, this defaults to 100.\n\nFor NetNTLMv1 tables, --challenge HEX16 sets the 8-byte server challenge used for CPU chain verification (defaults to the standard challenge 1122334455667788).\n\n\n  %s --hcmask FILE table_dir/\n\nThe above command batch-verifies a mask campaign: for each mask line in the .hcmask FILE, it locates the matching table(s) in table_dir/, verifies each (quick mode), and reports any mask that has no matching table (MISSING).  Returns non-zero if any entry is missing or any table fails.\n\n\n", prog_name, prog_name, prog_name, prog_name);
+}
+
+
+/* Batch-verify every mask in an .hcmask file against tables in a directory.
+ * For each mask, reconstruct the filename charset field, find matching .rt
+ * table(s), verify each, and report masks with no matching table.
+ * Returns 0 if all entries verified & present, non-zero otherwise. */
+static int verify_hcmask_batch(const char *hcmask_path, const char *dir,
+                               const char *g1, const char *g2,
+                               const char *g3, const char *g4) {
+  HcmaskEntry *entries = NULL;
+  int nentries = 0, e, rc = 0;
+
+  if (hcmask_load(hcmask_path, &entries, &nentries) != 0)
+    return 1;
+
+  for (e = 0; e < nentries; e++) {
+    /* Inline per-mask custom charsets win; otherwise fall back to the global
+     * -1..-4 flags (matching how crackalack_gen resolves them). */
+    const char *rc1 = entries[e].has_cc[0] ? entries[e].cc[0] : g1;
+    const char *rc2 = entries[e].has_cc[1] ? entries[e].cc[1] : g2;
+    const char *rc3 = entries[e].has_cc[2] ? entries[e].cc[2] : g3;
+    const char *rc4 = entries[e].has_cc[3] ? entries[e].cc[3] : g4;
+    Mask m = {0};
+    char field[256], prefix[512];
+    DIR *d;
+    struct dirent *de;
+    int found = 0;
+
+    printf("\nMask %d/%d: '%s'\n", e + 1, nentries, entries[e].mask);
+
+    if (mask_parse(entries[e].mask, &m, rc1, rc2, rc3, rc4) != 0) {
+      fprintf(stderr, "hcmask entry %d: bad mask '%s'\n", e + 1, entries[e].mask);
+      rc = 1; continue;
+    }
+    if (mask_encode_charset_field(entries[e].mask, rc1, rc2, rc3, rc4,
+                                  field, sizeof(field)) != 0) {
+      fprintf(stderr, "hcmask entry %d: cannot encode mask\n", e + 1);
+      rc = 1; continue;
+    }
+    /* Match "_<field>#<len>-<len>_" as a filename fragment.  Distinct per mask
+     * because mask_encode_charset_field round-trips each field uniquely. */
+    snprintf(prefix, sizeof(prefix), "_%s#%d-%d_", field, m.length, m.length);
+
+    d = opendir(dir);
+    if (!d) { perror("opendir"); free(entries); return 1; }
+    while ((de = readdir(d)) != NULL) {
+      char path[4096];
+      size_t nlen = strlen(de->d_name);
+      if (nlen < 3 || strcmp(de->d_name + nlen - 3, ".rt") != 0) continue;
+      if (strstr(de->d_name, prefix) == NULL) continue;
+      found = 1;
+      snprintf(path, sizeof(path), "%s/%s", dir, de->d_name);
+      /* Verify this table using quick mode (5 random chains via CPU).  We pass
+       * the parsed mask so verify walks chains with generate_rainbow_chain_mask;
+       * the quick path has no NULL-mask fallback for mask tables. */
+      if (verify_rainbowtable_file(path, VERIFY_TABLE_TYPE_QUICK, VERIFY_TABLE_IS_COMPLETE, VERIFY_DONT_TRUNCATE, -1, NULL, &m)) {
+        printf("  %sOK%s: %s\n", GREENB, CLR, de->d_name);
+      } else {
+        printf("  %sFAIL%s: %s\n", REDB, CLR, de->d_name);
+        rc = 1;
+      }
+    }
+    closedir(d);
+    if (!found) {
+      printf("  %sMISSING%s: no table for mask '%s' (match %s*)\n", REDB, CLR, entries[e].mask, prefix);
+      rc = 1;
+    }
+  }
+  free(entries);
+  return rc;
 }
 
 
@@ -60,6 +134,7 @@ int main(int ac, char **av) {
   char *filename = NULL;
   char *markov_path = NULL;
   char *mask_str = NULL;
+  const char *hcmask_path = NULL;
   const char *cc1 = NULL, *cc2 = NULL, *cc3 = NULL, *cc4 = NULL;
   unsigned int table_type = 0;
   int num_chains_to_verify = -1, c = 0, option_index = 0;
@@ -83,6 +158,9 @@ int main(int ac, char **av) {
       break;
     case 'M':
       mask_str = optarg;
+      break;
+    case 'K':
+      hcmask_path = optarg;
       break;
     case '1':
       cc1 = optarg;
@@ -111,6 +189,21 @@ int main(int ac, char **av) {
       print_usage(av[0]);
       exit(-1);
     }
+  }
+
+  /* Batch mode: --hcmask FILE DIR verifies every mask in the .hcmask file
+   * against tables in DIR and reports masks with no matching table. */
+  if (hcmask_path) {
+    if (optind != ac - 1) {
+      fprintf(stderr, "\nError: --hcmask requires a table directory argument!\n\n");
+      print_usage(av[0]);
+      exit(-1);
+    }
+    if (mask_str || markov_path) {
+      fprintf(stderr, "Error: --hcmask is mutually exclusive with --mask and --markov.\n");
+      exit(-1);
+    }
+    return verify_hcmask_batch(hcmask_path, av[optind], cc1, cc2, cc3, cc4);
   }
 
   /* Only one of --raw, --quick, or --sorted must be specified. */

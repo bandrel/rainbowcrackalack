@@ -28,6 +28,9 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 #include <time.h>
 #include <unistd.h>
 
@@ -42,6 +45,7 @@
 #include "file_lock.h"
 #include "gws.h"
 #include "hash_validate.h"
+#include "hcmask.h"
 #include "misc.h"
 #include "shared.h"
 #include "terminal_color.h"
@@ -248,6 +252,11 @@ static char mask_str[1024] = {0};
 static Mask mask = {0};
 /* Custom charset definitions (-1/-2/-3/-4) for --mask; NULL when unused. */
 static const char *cc1 = NULL, *cc2 = NULL, *cc3 = NULL, *cc4 = NULL;
+/* Raw -gws argument string for forwarding to --hcmask children; NULL when unused. */
+static const char *gws_arg = NULL;
+
+/* Batch mode state set by --hcmask flag. */
+static const char *hcmask_path = NULL;
 
 
 void print_usage_and_exit(char *prog_name, int exit_code) {
@@ -996,6 +1005,7 @@ int main(int ac, char **av) {
         return -1;
       }
       i++;
+      gws_arg = av[i];
       user_provided_gws = parse_uint_arg(av[i], "-gws");
     } else if (strcmp(av[i], "--markov") == 0) {
       if (i + 1 >= ac) {
@@ -1035,6 +1045,10 @@ int main(int ac, char **av) {
       i++;
       strncpy(mask_str, av[i], sizeof(mask_str) - 1);
       use_mask = 1;
+    } else if (strcmp(av[i], "--hcmask") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "--hcmask requires a filename\n"); return -1; }
+      i++;
+      hcmask_path = av[i];
     } else if (strcmp(av[i], "-1") == 0 || strcmp(av[i], "--custom-charset1") == 0) {
       if (i + 1 >= ac) { fprintf(stderr, "%s requires a value\n", av[i]); return -1; }
       i++;
@@ -1055,6 +1069,91 @@ int main(int ac, char **av) {
       fprintf(stderr, "Unknown option: %s\n", av[i]);
       print_usage_and_exit(av[0], -1);
     }
+  }
+
+
+  /* Batch mode: --hcmask FILE generates one table per parsed mask line by
+   * re-executing this binary per entry (fresh GPU context each; the child
+   * validates its own mask/length).  Positional min/max length are ignored;
+   * each entry's length is derived from its mask. */
+  if (hcmask_path != NULL) {
+#ifdef _WIN32
+    fprintf(stderr, "Error: --hcmask is not supported on Windows.\n");
+    return -1;
+#else
+    HcmaskEntry *entries = NULL;
+    int nentries = 0, e;
+
+    if (use_mask) {
+      fprintf(stderr, "Error: --hcmask and --mask are mutually exclusive.\n");
+      return -1;
+    }
+    if (use_markov) {
+      fprintf(stderr, "Error: --hcmask and --markov are mutually exclusive.\n");
+      return -1;
+    }
+    if (!challenge_is_default(challenge)) {
+      fprintf(stderr, "Error: --hcmask does not support a custom --challenge (masks are NTLM/MD5 only).\n");
+      return -1;
+    }
+    if (hcmask_load(hcmask_path, &entries, &nentries) != 0)
+      return -1;
+
+    for (e = 0; e < nentries; e++) {
+      const char *rc1 = entries[e].has_cc[0] ? entries[e].cc[0] : cc1;
+      const char *rc2 = entries[e].has_cc[1] ? entries[e].cc[1] : cc2;
+      const char *rc3 = entries[e].has_cc[2] ? entries[e].cc[2] : cc3;
+      const char *rc4 = entries[e].has_cc[3] ? entries[e].cc[3] : cc4;
+      Mask m;
+      char lenbuf[16];
+      char *argv[32];
+      int a = 0, status;
+      pid_t pid;
+
+      if (mask_parse(entries[e].mask, &m, rc1, rc2, rc3, rc4) != 0) {
+        fprintf(stderr, "%s: entry %d: bad mask '%s'\n", hcmask_path, e + 1, entries[e].mask);
+        free(entries); return -1;
+      }
+      snprintf(lenbuf, sizeof(lenbuf), "%d", m.length);
+
+      argv[a++] = av[0];
+      argv[a++] = (char *)hash_name;      /* av[1] */
+      argv[a++] = (char *)charset_name;   /* av[2] (ignored under --mask) */
+      argv[a++] = lenbuf;                 /* min */
+      argv[a++] = lenbuf;                 /* max */
+      argv[a++] = av[5];                  /* table_index */
+      argv[a++] = av[6];                  /* chain_len */
+      argv[a++] = av[7];                  /* num_chains */
+      argv[a++] = av[8];                  /* part_index */
+      argv[a++] = "--mask"; argv[a++] = entries[e].mask;
+      if (rc1) { argv[a++] = "-1"; argv[a++] = (char *)rc1; }
+      if (rc2) { argv[a++] = "-2"; argv[a++] = (char *)rc2; }
+      if (rc3) { argv[a++] = "-3"; argv[a++] = (char *)rc3; }
+      if (rc4) { argv[a++] = "-4"; argv[a++] = (char *)rc4; }
+      if (gws_arg) { argv[a++] = "-gws"; argv[a++] = (char *)gws_arg; }
+      argv[a] = NULL;
+
+      printf("=== [hcmask %d/%d] mask '%s' (len %d) ===\n", e + 1, nentries, entries[e].mask, m.length);
+      fflush(stdout);
+
+      pid = fork();
+      if (pid < 0) { perror("fork"); free(entries); return -1; }
+      if (pid == 0) { execvp(av[0], argv); perror("execvp"); _exit(127); }
+      { int wret;
+        while ((wret = waitpid(pid, &status, 0)) < 0 && errno == EINTR) ;
+        if (wret < 0) { perror("waitpid"); free(entries); return -1; }
+      }
+      if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fprintf(stderr, "%s: entry %d ('%s') failed (exit %d)\n",
+                hcmask_path, e + 1, entries[e].mask,
+                WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+        free(entries); return -1;
+      }
+    }
+    free(entries);
+    printf("hcmask: all %d masks generated.\n", nentries);
+    return 0;
+#endif
   }
 
 
