@@ -195,6 +195,156 @@ else
   echo "  PASS: custom negative-control hash not cracked"
 fi
 
+# ---- Hex-token mask case (?h?h?l?d, built-in tokens only) ----
+# Exercises the ?h / ?H built-in hex tokens end-to-end.  No custom charsets.
+# crackalack_lookup gets NO mask flags: it must auto-detect the mask from the
+# self-describing filename (ntlm_%h%h%l%d#4-4_...).
+HX_MASK='?h?h?l?d'
+HX_CHAIN_LEN=1000; HX_NUM_CHAINS=512; HX_TARGET_POS=300
+hxdir="$work/case_hex"; mkdir -p "$hxdir"
+echo
+echo "===== Hex-token mask e2e (?h?h?l?d) ====="
+
+# 1. Generate the hex-token table (length 4, table_index 0, part 0).
+echo "[test] generating hex-token table..."
+( cd "$REPO" && "$GEN" ntlm ascii-32-95 4 4 0 "$HX_CHAIN_LEN" "$HX_NUM_CHAINS" 0 \
+    --mask "$HX_MASK" >/dev/null 2>&1 )
+hxname="ntlm_%h%h%l%d#4-4_0_${HX_CHAIN_LEN}x${HX_NUM_CHAINS}_0.rt"
+if [[ ! -f "$REPO/$hxname" ]]; then
+  hxname="$(cd "$REPO" && ls 'ntlm_%h%h%l%d#4-4_0_'*'_0.rt' 2>/dev/null | head -1)"
+fi
+[[ -n "$hxname" && -f "$REPO/$hxname" ]] || { echo "FAIL: no hex-token table generated"; exit 1; }
+mv -f "$REPO/$hxname" "$hxdir/"; rm -f "$REPO/$hxname.state"
+hxtable="$hxdir/$hxname"
+echo "  generated $hxname"
+
+# 2. Sort.
+echo "[test] sorting hex-token table..."
+"$SORT" "$hxtable" >/dev/null 2>&1 || { echo "FAIL: crackalack_sort failed (hex)"; exit 1; }
+
+# 3. Verify with --mask.
+echo "[test] verifying hex-token table..."
+hxv="$("$VERIFY" --quick --mask "$HX_MASK" "$hxtable" 2>&1 | strip_ansi || true)"
+if grep -qi "successfully verified" <<<"$hxv"; then
+  echo "  PASS: crackalack_verify --mask (hex)"
+else
+  echo "  FAIL: crackalack_verify (hex) did not pass"
+  echo "$hxv" | tail -5
+  rc=1
+fi
+
+# 4. Mint an in-table hash using gen_known_hash --mask.
+echo "[test] minting in-table hex hash with gen_known_hash --mask..."
+hxstart="$("$GETCHAIN" "$hxtable" 0 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+[[ -n "$hxstart" ]] || { echo "FAIL: get_chain failed to read chain 0 start (hex)"; rc=1; hxstart=0; }
+hxo="$("$GKH" "$HX_CHAIN_LEN" 0 "$hxstart" "$HX_TARGET_POS" --algo ntlm --mask "$HX_MASK" 2>&1)"
+hxhash="$(awk -F= '/^hash=/{print $2}' <<<"$hxo")"
+hxpt="$(awk -F= '/^plaintext=/{print $2}' <<<"$hxo")"
+[[ -n "$hxhash" ]] || { echo "FAIL: gen_known_hash (hex) produced no hash"; echo "$hxo" | tail -3; exit 1; }
+echo "  minted in-table hex hash $hxhash (start=$hxstart, pos=$HX_TARGET_POS) -> '$hxpt'"
+
+# 5. Lookup positive control -- lookup auto-detects the mask from the filename.
+echo "[test] running hex lookup (positive control)..."
+rm -f "$REPO"/rcracki.precalc.* "$REPO"/*.index 2>/dev/null || true
+printf '%s\n' "$hxhash" > "$work/hxhashes.txt"
+hxlog="$work/hxlookup.log"
+( cd "$REPO" && "$LOOKUP" "$hxdir" "$work/hxhashes.txt" ) >"$hxlog" 2>&1 || true
+if grep -qiE "Cracked [1-9][0-9]* of|HASH CRACKED" <(strip_ansi <"$hxlog"); then
+  echo "  PASS: lookup cracked the in-table hex hash"
+else
+  echo "  FAIL: in-table hex hash did NOT crack"
+  strip_ansi <"$hxlog" | tail -8
+  rc=1
+fi
+
+# 6. Negative control for the hex case.
+echo "[test] running hex lookup (negative control)..."
+rm -f "$REPO"/rcracki.precalc.* "$REPO"/*.index 2>/dev/null || true
+printf '%s\n' "deadbeefdeadbeefdeadbeefdeadbeef" > "$work/hxneg.txt"
+hxnlog="$work/hxneg.log"
+( cd "$REPO" && "$LOOKUP" "$hxdir" "$work/hxneg.txt" ) >"$hxnlog" 2>&1 || true
+if grep -qiE "Cracked [1-9][0-9]* of|HASH CRACKED" <(strip_ansi <"$hxnlog"); then
+  echo "  FAIL: hex negative-control hash CRACKED (false positive -- FA check is broken)"
+  rc=1
+else
+  echo "  PASS: hex negative-control hash not cracked"
+fi
+
+# ---- Multi-slot custom charset case (?1?2?l?d, -1 ?d -2 abc) ----
+# Exercises multiple custom charset slots AND a token-in-definition (-1 '?d'
+# expands to the digits 0-9).  crackalack_lookup gets NO -N flags: it must
+# reconstruct BOTH custom charsets from the self-describing filename
+# (ntlm_%1%2%l%d!1-<hex>!2-<hex>#4-4_...).
+MS_MASK='?1?2?l?d'; MS1='?d'; MS2='abc'
+MS_CHAIN_LEN=1000; MS_NUM_CHAINS=512; MS_TARGET_POS=300
+msdir="$work/case_multislot"; mkdir -p "$msdir"
+echo
+echo "===== Multi-slot custom charset e2e (?1?2?l?d, -1 ?d -2 abc) ====="
+
+# 1. Generate the multi-slot table (length 4, table_index 0, part 0).
+echo "[test] generating multi-slot custom-charset table..."
+( cd "$REPO" && "$GEN" ntlm ascii-32-95 4 4 0 "$MS_CHAIN_LEN" "$MS_NUM_CHAINS" 0 \
+    --mask "$MS_MASK" -1 "$MS1" -2 "$MS2" >/dev/null 2>&1 )
+# Filename encodes both custom-charset blocks: !1-<hex(0123456789)> !2-<hex(abc)>.
+msname="$(cd "$REPO" && ls 'ntlm_%1%2%l%d!1-'*'!2-'*'#4-4_0_'*'_0.rt' 2>/dev/null | head -1)"
+[[ -n "$msname" && -f "$REPO/$msname" ]] || { echo "FAIL: no multi-slot custom-charset table generated"; exit 1; }
+mv -f "$REPO/$msname" "$msdir/"; rm -f "$REPO/$msname.state"
+mstable="$msdir/$msname"
+echo "  generated $msname"
+
+# 2. Sort.
+echo "[test] sorting multi-slot table..."
+"$SORT" "$mstable" >/dev/null 2>&1 || { echo "FAIL: crackalack_sort failed (multi-slot)"; exit 1; }
+
+# 3. Verify with --mask + -1 + -2.
+echo "[test] verifying multi-slot table..."
+msv="$("$VERIFY" --quick --mask "$MS_MASK" -1 "$MS1" -2 "$MS2" "$mstable" 2>&1 | strip_ansi || true)"
+if grep -qi "successfully verified" <<<"$msv"; then
+  echo "  PASS: crackalack_verify --mask -1 -2 (multi-slot)"
+else
+  echo "  FAIL: crackalack_verify (multi-slot) did not pass"
+  echo "$msv" | tail -5
+  rc=1
+fi
+
+# 4. Mint an in-table hash using gen_known_hash --mask + -1 + -2.
+echo "[test] minting in-table multi-slot hash with gen_known_hash --mask -1 -2..."
+msstart="$("$GETCHAIN" "$mstable" 0 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+[[ -n "$msstart" ]] || { echo "FAIL: get_chain failed to read chain 0 start (multi-slot)"; rc=1; msstart=0; }
+mso="$("$GKH" "$MS_CHAIN_LEN" 0 "$msstart" "$MS_TARGET_POS" --algo ntlm --mask "$MS_MASK" -1 "$MS1" -2 "$MS2" 2>&1)"
+mshash="$(awk -F= '/^hash=/{print $2}' <<<"$mso")"
+mspt="$(awk -F= '/^plaintext=/{print $2}' <<<"$mso")"
+[[ -n "$mshash" ]] || { echo "FAIL: gen_known_hash (multi-slot) produced no hash"; echo "$mso" | tail -3; exit 1; }
+echo "  minted in-table multi-slot hash $mshash (start=$msstart, pos=$MS_TARGET_POS) -> '$mspt'"
+
+# 5. Lookup positive control -- lookup reconstructs BOTH custom charsets from the
+#    filename (NO -N flags passed here).
+echo "[test] running multi-slot lookup (positive control)..."
+rm -f "$REPO"/rcracki.precalc.* "$REPO"/*.index 2>/dev/null || true
+printf '%s\n' "$mshash" > "$work/mshashes.txt"
+mslog="$work/mslookup.log"
+( cd "$REPO" && "$LOOKUP" "$msdir" "$work/mshashes.txt" ) >"$mslog" 2>&1 || true
+if grep -qiE "Cracked [1-9][0-9]* of|HASH CRACKED" <(strip_ansi <"$mslog"); then
+  echo "  PASS: lookup cracked the in-table multi-slot hash"
+else
+  echo "  FAIL: in-table multi-slot hash did NOT crack"
+  strip_ansi <"$mslog" | tail -8
+  rc=1
+fi
+
+# 6. Negative control for the multi-slot case.
+echo "[test] running multi-slot lookup (negative control)..."
+rm -f "$REPO"/rcracki.precalc.* "$REPO"/*.index 2>/dev/null || true
+printf '%s\n' "deadbeefdeadbeefdeadbeefdeadbeef" > "$work/msneg.txt"
+msnlog="$work/msneg.log"
+( cd "$REPO" && "$LOOKUP" "$msdir" "$work/msneg.txt" ) >"$msnlog" 2>&1 || true
+if grep -qiE "Cracked [1-9][0-9]* of|HASH CRACKED" <(strip_ansi <"$msnlog"); then
+  echo "  FAIL: multi-slot negative-control hash CRACKED (false positive -- FA check is broken)"
+  rc=1
+else
+  echo "  PASS: multi-slot negative-control hash not cracked"
+fi
+
 echo
 if [[ "$rc" -eq 0 ]]; then
   echo "PASS: Mask end-to-end pipeline (gen/sort/verify/mint/lookup) works correctly."
