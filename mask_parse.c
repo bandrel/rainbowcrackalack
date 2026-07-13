@@ -1,8 +1,11 @@
 #include "mask_parse.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <string.h>
+
+#define MASK_FIELD_MAX 200
 
 /* Hashcat built-in charsets */
 static const char CHARSET_L[] = "abcdefghijklmnopqrstuvwxyz";
@@ -277,6 +280,123 @@ void mask_decode_from_filename(char *s) {
         }
     }
     *w = '\0';
+}
+
+
+/* Append two lowercase hex digits per byte. */
+static size_t hex_append(char *dst, size_t j, size_t dst_len,
+                         const char *bytes, unsigned int n) {
+    static const char H[] = "0123456789abcdef";
+    unsigned int k;
+    for (k = 0; k < n && j + 2 < dst_len; k++) {
+        dst[j++] = H[(unsigned char)bytes[k] >> 4];
+        dst[j++] = H[(unsigned char)bytes[k] & 0xf];
+    }
+    return j;
+}
+
+int mask_decode_charset_field(const char *field, Mask *out) {
+    char body[256];
+    MaskPosition cust[4];
+    const MaskPosition *pp[4] = { NULL, NULL, NULL, NULL };
+    size_t flen, cut;
+    const char *p;
+
+    if (!field || !out) return -1;
+    flen = strlen(field);
+    if (flen >= sizeof(body)) return -1;
+
+    /* Find the first "!N-" block; everything before it is the mask body. */
+    cut = flen;
+    for (size_t i = 0; i + 2 < flen; i++) {
+        if (field[i] == '!' && field[i + 1] >= '1' && field[i + 1] <= '4' &&
+            field[i + 2] == '-') { cut = i; break; }
+    }
+
+    memcpy(body, field, cut);
+    body[cut] = '\0';
+    mask_decode_from_filename(body);   /* %x -> ?x in place */
+
+    /* Parse each !N-<hex> block. */
+    p = field + cut;
+    while (*p == '!' && p[1] >= '1' && p[1] <= '4' && p[2] == '-') {
+        int idx = p[1] - '1';
+        unsigned int n = 0;
+        p += 3;
+        while (isxdigit((unsigned char)p[0]) && isxdigit((unsigned char)p[1])) {
+            if (n >= MAX_CHARSET_LEN) return -1;
+            cust[idx].chars[n++] = (char)((hexval(p[0]) << 4) | hexval(p[1]));
+            p += 2;
+        }
+        cust[idx].size = n;
+        pp[idx] = &cust[idx];
+    }
+    if (*p != '\0') return -1;   /* trailing garbage */
+
+    return mask_parse_ex(body, out, pp[0], pp[1], pp[2], pp[3]);
+}
+
+int mask_encode_charset_field(const char *mask_str,
+                              const char *c1, const char *c2,
+                              const char *c3, const char *c4,
+                              char *dst, size_t dst_len) {
+    const char *raw[4] = { c1, c2, c3, c4 };
+    int used[4] = { 0, 0, 0, 0 };
+    size_t j;
+    int n;
+    Mask orig, back;
+
+    if (!mask_str || !dst || dst_len == 0)
+        return -1;
+
+    /* Token-encode the mask body (?x -> %x). */
+    mask_encode_for_filename(mask_str, dst, dst_len);
+    j = strlen(dst);
+
+    /* Determine which custom sets are referenced. */
+    for (size_t i = 0; mask_str[i]; i++)
+        if (mask_str[i] == '?' && mask_str[i + 1] >= '1' && mask_str[i + 1] <= '4')
+            used[mask_str[i + 1] - '1'] = 1;
+
+    /* Append !N-<hex(expanded def)> for each used set. */
+    for (n = 0; n < 4; n++) {
+        char exp[MAX_CHARSET_LEN];
+        unsigned int elen = 0;
+        if (!used[n]) continue;
+        if (raw[n] == NULL) {
+            fprintf(stderr, "mask_encode_charset_field: ?%d used but -%d not "
+                    "provided\n", n + 1, n + 1);
+            return -1;
+        }
+        if (expand_charset_def(raw[n], exp, &elen) != 0)
+            return -1;
+        if (j + 3 >= dst_len) return -1;
+        dst[j++] = '!';
+        dst[j++] = (char)('1' + n);
+        dst[j++] = '-';
+        j = hex_append(dst, j, dst_len, exp, elen);
+    }
+    dst[j] = '\0';
+
+    if (strlen(dst) > MASK_FIELD_MAX) {
+        fprintf(stderr, "mask_encode_charset_field: encoded mask too long (%zu > "
+                "%d); use a smaller custom charset\n", strlen(dst), MASK_FIELD_MAX);
+        return -1;
+    }
+
+    /* Encode-time round-trip self-check: decode back and compare Masks. */
+    if (mask_parse(mask_str, &orig, c1, c2, c3, c4) != 0)
+        return -1;
+    if (mask_decode_charset_field(dst, &back) != 0)
+        return -1;
+    if (orig.length != back.length ||
+        memcmp(orig.positions, back.positions,
+               sizeof(MaskPosition) * (size_t)orig.length) != 0) {
+        fprintf(stderr, "mask_encode_charset_field: filename round-trip mismatch "
+                "(ambiguous literal?); reorder the mask\n");
+        return -1;
+    }
+    return 0;
 }
 
 
