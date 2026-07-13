@@ -1022,7 +1022,7 @@ void setup_args_for_config(thread_args *args, unsigned int num_devices, const rt
      * set use_mask + the GPU buffer fields. */
     if (params->is_mask) {
       Mask m = {0};
-      if (mask_parse(params->mask, &m, NULL, NULL, NULL, NULL) == 0) {
+      if (mask_decode_charset_field(params->mask, &m) == 0) {
         args[idx].use_mask = 1;
         args[idx].mask = m;
         mask_to_gpu_buffers(&m, args[idx].mask_data, args[idx].mask_lens);
