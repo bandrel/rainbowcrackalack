@@ -591,6 +591,7 @@ void harvest_false_alarm_results(false_alarm_state *state) {
   double time_delta = 0.0;
   thread_args *args;
   gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
+  uint64_t plaintext_space_total = 0;
   int charset_len = 0;
   char chalhex[17] = {0};
 
@@ -613,7 +614,7 @@ void harvest_false_alarm_results(false_alarm_state *state) {
   if (args->use_markov_mask) {
     charset_len = args->mmtables.charset_len;
     if (charset_len == 0) charset_len = 1;
-    fill_plaintext_space_markov_mask(&args->mmtables, args->markov_keyspace, plaintext_space_up_to_index);
+    plaintext_space_total = fill_plaintext_space_markov_mask(&args->mmtables, args->markov_keyspace, plaintext_space_up_to_index);
   } else if (args->markov_keyspace > 0) {
     charset_len = strlen(args->charset);
     if (charset_len == 0) charset_len = 1;
@@ -628,6 +629,7 @@ void harvest_false_alarm_results(false_alarm_state *state) {
       charset_len = strlen(args->charset);
     fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, plaintext_space_up_to_index);
   }
+  (void)plaintext_space_total;  /* only consumed in use_markov_mask branch; suppress unused-var warning */
 
   /* Search for valid results, and update the ppi with the plaintext.
    *
@@ -3787,7 +3789,12 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
   gpu_ulong plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
   uint64_t plaintext_space_total = 0;
   int charset_len = 0;
-  if (args[0].markov_keyspace > 0) {
+  if (args[0].use_markov_mask) {
+    charset_len = args[0].mmtables.charset_len;
+    if (charset_len == 0) charset_len = 1;
+    plaintext_space_total = fill_plaintext_space_markov_mask(
+        &args[0].mmtables, args[0].markov_keyspace, plaintext_space_up_to_index);
+  } else if (args[0].markov_keyspace > 0) {
     charset_len = strlen(args[0].charset);
     if (charset_len == 0) charset_len = 1;
     plaintext_space_total = fill_plaintext_space_markov_keyspace(
