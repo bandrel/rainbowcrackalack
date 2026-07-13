@@ -26,6 +26,7 @@
 #include "cpu_rt_functions.h"
 #include "file_lock.h"
 #include "markov.h"
+#include "markov_mask.h"
 #include "mask_parse.h"
 #include "misc.h"
 #include "rtc_decompress.h"
@@ -36,6 +37,38 @@
 void _print_chain_error(uint64_t random_chain, uint64_t start, uint64_t actual_end, uint64_t computed_end) {
   fprintf(stderr, "Error: chain #%"PRIu64" is invalid!\n  Start index:        %"PRIu64"\n  Actual chain end:   %"PRIu64"\n  Computed chain end: %"PRIu64"\n\n", random_chain, start, actual_end, computed_end);
 }
+
+/* Recompute a chain end for a combined mask+Markov table, mirroring the
+ * generate_rainbow_chain_markov() walk but using the mixed-radix restricted
+ * decode.  plaintext_space_total is the effective keyspace (full mask keyspace,
+ * or the truncated markov_keyspace when smaller). */
+static uint64_t generate_rainbow_chain_markov_mask_cpu(unsigned int hash_type,
+                                                       const markov_mask_tables *mm,
+                                                       uint64_t plaintext_space_total,
+                                                       unsigned int reduction_offset,
+                                                       unsigned int chain_len,
+                                                       uint64_t start) {
+  uint64_t index = start;
+
+  for (unsigned int pos = 0; pos < chain_len - 1; pos++) {
+    unsigned char plaintext[MAX_PLAINTEXT_LEN] = {0};
+    unsigned char hash[MAX_HASH_OUTPUT_LEN] = {0};
+    unsigned int plaintext_len = 0, hash_len = 0;
+
+    index_to_plaintext_markov_mask_cpu(mm, index, plaintext, &plaintext_len);
+
+    if (hash_type == HASH_MD5) {
+      md5_hash((char *)plaintext, plaintext_len, hash);
+      hash_len = 16;
+    } else {
+      ntlm_hash((char *)plaintext, plaintext_len, hash);
+      hash_len = 16;
+    }
+    index = hash_to_index(hash, hash_len, reduction_offset, plaintext_space_total, pos);
+  }
+  return index;
+}
+
 
 /* Verifies a rainbow table already loaded from disk. */
 int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned int table_type, uint64_t expected_start, uint64_t plaintext_space_total, uint64_t *error_chain_num) {
@@ -155,7 +188,7 @@ int verify_rainbowtable(uint64_t *rainbowtable, uint64_t num_chains, unsigned in
  * verified with CPU code.  When set to -1, the default of 100 is checked.
  * 
  * Returns 1 on success, or 0 on failure. */
-int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify, const markov_model *markov, const Mask *mask) {
+int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned int table_should_be_complete, unsigned int truncate_at_error, int num_chains_to_verify, const markov_model *markov, const Mask *mask, const markov_mask_tables *mmtables) {
   rt_parameters rt_params = {0};
   uint64_t plaintext_space_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
 
@@ -191,8 +224,21 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
       fprintf(stderr, "Error: failed to parse mask '%s' from filename\n", rt_params.mask);
       return 0;
     }
-    plaintext_space_total = fill_plaintext_space_mask(&parsed_mask, plaintext_space_up_to_index);
-    /* charset and charset_len remain 0/NULL — chain regeneration is not supported for mask verify yet. */
+    /* Combined mask+Markov table: the effective plaintext space is the restricted
+     * Markov keyspace (product of per-position sizes, optionally truncated by
+     * -mk<K>), NOT the raw mask keyspace.  Requires the caller to supply the
+     * matching restricted tables (built from --markov + the mask). */
+    if (rt_params.markov_keyspace > 0) {
+      if (mmtables == NULL) {
+        fprintf(stderr, "Error: combined mask+Markov table requires --markov <model> for verification.\n");
+        return 0;
+      }
+      plaintext_space_total = fill_plaintext_space_markov_mask(mmtables, rt_params.markov_keyspace, plaintext_space_up_to_index);
+    } else {
+      plaintext_space_total = fill_plaintext_space_mask(&parsed_mask, plaintext_space_up_to_index);
+    }
+    /* charset and charset_len remain 0/NULL — chain regeneration for pure mask
+     * tables uses the decoded mask; combined tables use mmtables. */
   } else {
     charset = validate_charset(rt_params.charset_name);
     if (charset == NULL) {
@@ -268,7 +314,9 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
       rc_fread(&actual_end, sizeof(uint64_t), 1, f);
 
       /* Compute the expected end point. */
-      if (mask)
+      if (mmtables)
+        computed_end = generate_rainbow_chain_markov_mask_cpu(rt_params.hash_type, mmtables, plaintext_space_total, rt_params.reduction_offset, rt_params.chain_len, start);
+      else if (mask)
         computed_end = generate_rainbow_chain_mask(rt_params.hash_type, mask, plaintext_space_total, rt_params.reduction_offset, rt_params.chain_len, start);
       else if (markov)
         computed_end = generate_rainbow_chain_markov(rt_params.hash_type, markov, rt_params.plaintext_len_max, rt_params.reduction_offset, rt_params.chain_len, rt_params.markov_keyspace, start);
@@ -350,7 +398,34 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     unsigned char hash[MAX_HASH_OUTPUT_LEN] = {0};
     unsigned int i = 0, plaintext_len = sizeof(plaintext), hash_len = sizeof(hash);
 
-    if (rt_params.is_mask && mask) {
+    if (rt_params.is_mask && mmtables) {
+      /* Combined mask+Markov tables: walk chains via the restricted decode. */
+      if (table_should_be_complete == VERIFY_TABLE_MAY_BE_INCOMPLETE) {
+        uint64_t start_offset = (actual_num_chains > num_chains_to_verify) ?
+                                (actual_num_chains - num_chains_to_verify) : 0;
+        for (i = 0; i < num_chains_to_verify; i++) {
+          random_chain = start_offset + i;
+          start = rainbow_table[random_chain * 2];
+          actual_end = rainbow_table[(random_chain * 2) + 1];
+          computed_end = generate_rainbow_chain_markov_mask_cpu(rt_params.hash_type, mmtables, plaintext_space_total, rt_params.reduction_offset, rt_params.chain_len, start);
+          if (actual_end != computed_end) {
+            _print_chain_error(random_chain, start, actual_end, computed_end);
+            goto err;
+          }
+        }
+      } else {
+        for (i = 0; i < num_chains_to_verify; i++) {
+          random_chain = get_random(actual_num_chains);
+          start = rainbow_table[random_chain * 2];
+          actual_end = rainbow_table[(random_chain * 2) + 1];
+          computed_end = generate_rainbow_chain_markov_mask_cpu(rt_params.hash_type, mmtables, plaintext_space_total, rt_params.reduction_offset, rt_params.chain_len, start);
+          if (actual_end != computed_end) {
+            _print_chain_error(random_chain, start, actual_end, computed_end);
+            goto err;
+          }
+        }
+      }
+    } else if (rt_params.is_mask && mask) {
       /* Mask tables: walk chains using generate_rainbow_chain_mask(). */
       if (table_should_be_complete == VERIFY_TABLE_MAY_BE_INCOMPLETE) {
         uint64_t start_offset = (actual_num_chains > num_chains_to_verify) ?
