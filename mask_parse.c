@@ -148,7 +148,7 @@ uint64_t mask_keyspace(const Mask *m) {
 
 
 void mask_encode_for_filename(const char *src, char *dst, size_t dst_len) {
-    static const char valid[] = "ludsab1234";
+    static const char valid[] = "ludsabhH1234";
     size_t j = 0;
     if (!src || !dst || dst_len == 0)
         return;
@@ -166,7 +166,7 @@ void mask_encode_for_filename(const char *src, char *dst, size_t dst_len) {
 
 
 void mask_decode_from_filename(char *s) {
-    static const char valid[] = "ludsab1234";
+    static const char valid[] = "ludsabhH1234";
     char *r = s, *w = s;
     if (!s)
         return;

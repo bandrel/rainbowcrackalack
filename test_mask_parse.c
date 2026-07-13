@@ -139,6 +139,22 @@ static int group_filename_roundtrip(void)
         ok = 0;
     }
 
+    /* MP-19: ?h/?H round-trip through filename encode/decode */
+    mask_encode_for_filename("?h?H?d", encoded, sizeof(encoded));
+    if (strcmp(encoded, "%h%H%d") != 0) {
+        fprintf(stderr, "MP-19 failed: encoded=\"%s\", expected \"%%h%%H%%d\"\n",
+                encoded);
+        ok = 0;
+    }
+    strncpy(decoded, encoded, sizeof(decoded));
+    decoded[sizeof(decoded) - 1] = '\0';
+    mask_decode_from_filename(decoded);
+    if (strcmp(decoded, "?h?H?d") != 0) {
+        fprintf(stderr, "MP-19 failed: decoded=\"%s\", expected \"?h?H?d\"\n",
+                decoded);
+        ok = 0;
+    }
+
     return ok;
 }
 
