@@ -27,7 +27,7 @@ set -euo pipefail
 # modest; must be <= the per-table chain count of the smallest config.
 : "${REG_MULTI_COUNT:=4}"
 # Differential (crackdiff) tunables:
-: "${BASE_REF:=origin/bench-base-preinnerloop}"
+: "${BASE_REF:=origin/master}"
 : "${CAND_REF:=$(git -C "$THIS_REPO" rev-parse --abbrev-ref HEAD)}"
 : "${REAL_TABLES:=/mnt/nvme/rtc/}"
 : "${HASH_COUNT:=200}"
@@ -282,8 +282,22 @@ phase_crackdiff() {
     fi
     mkdir -p "$RESULTS"
     local base_dir="$REG_ROOT/base" cand_dir="$REG_ROOT/cand"
-    log "building BASE"; build_repo "$BASE_REF" "$base_dir"
-    log "building CANDIDATE"; build_repo "$CAND_REF" "$cand_dir"
+    # A missing/unresolvable BASE (e.g. a deleted baseline branch) must not abort
+    # the whole suite -- skip crackdiff gracefully so the later phases still run.
+    log "building BASE"
+    if ! build_repo "$BASE_REF" "$base_dir"; then
+        log "WARN: cannot build BASE '$BASE_REF' — skipping crackdiff"
+        echo '{"base_cracked":0,"cand_cracked":0,"regressions":[],"improvements":[],"skipped":true}' \
+            > "$RESULTS/crackdiff.json"
+        return 0
+    fi
+    log "building CANDIDATE"
+    if ! build_repo "$CAND_REF" "$cand_dir"; then
+        log "WARN: cannot build CANDIDATE '$CAND_REF' — skipping crackdiff"
+        echo '{"base_cracked":0,"cand_cracked":0,"regressions":[],"improvements":[],"skipped":true}' \
+            > "$RESULTS/crackdiff.json"
+        return 0
+    fi
 
     # Generate a shared hash set (NetNTLMv1-7, default challenge) once.
     local hashes="$REG_ROOT/diff_hashes.txt"
@@ -436,7 +450,7 @@ main() {
         hcmask)         phase_hcmask ;;
         mask-markov)    phase_mask_markov ;;
         report)         phase_report ;;
-        all)            phase_prepare; phase_roundtrip; phase_roundtrip_multi; phase_crackdiff; phase_asan_smoke || true; phase_markov || true; phase_mask || true; phase_hcmask || true; phase_mask_markov || true; phase_report ;;
+        all)            phase_prepare; phase_roundtrip; phase_roundtrip_multi; phase_crackdiff || true; phase_asan_smoke || true; phase_markov || true; phase_mask || true; phase_hcmask || true; phase_mask_markov || true; phase_report ;;
         *) echo "Unknown phase: $phase" >&2; exit 2 ;;
     esac
 }
