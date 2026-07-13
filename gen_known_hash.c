@@ -15,6 +15,7 @@
 #include "mask_parse.h"
 #include "shared.h"
 #include "markov.h"
+#include "markov_mask.h"
 
 extern void setup_des_key(char key_56[], unsigned char *key);
 
@@ -152,11 +153,7 @@ int main(int ac, char **av) {
     return 1;
   }
 
-  /* Validate mask options. */
-  if (mask_str != NULL && markov_path != NULL) {
-    fprintf(stderr, "%s: --mask and --markov are mutually exclusive\n", av[0]);
-    return 1;
-  }
+  /* Validate mask options.  --mask + --markov is the valid combined mode. */
   if (mask_str != NULL && algo == ALGO_NETNTLMV1) {
     fprintf(stderr, "%s: --mask is not supported with --algo netntlmv1\n", av[0]);
     return 1;
@@ -210,9 +207,24 @@ int main(int ac, char **av) {
     markov_build_sorted(&markov);
   }
 
+  /* Combined mask+Markov mode: build the restricted tables (per-position charset
+   * ordered by Markov probability).  Mirrors crackalack_gen's combined path. */
+  int combined_mode = (use_mask && use_markov);
+  markov_mask_tables mmtables = {0};
+  if (combined_mode) {
+    if (markov_build_restricted(&markov, &parsed_mask, &mmtables) != 0) {
+      fprintf(stderr, "%s: failed to build combined mask+Markov tables (mask must be a subset of the model charset)\n", av[0]);
+      markov_free(&markov);
+      return 1;
+    }
+  }
+
   uint64_t plaintext_space_up_to_index[16] = {0};
   uint64_t plaintext_space_total;
-  if (use_mask) {
+  if (combined_mode) {
+    plaintext_space_total = fill_plaintext_space_markov_mask(&mmtables, markov_keyspace, plaintext_space_up_to_index);
+    plaintext_len = (unsigned int)parsed_mask.length;
+  } else if (use_mask) {
     plaintext_space_total = fill_plaintext_space_mask(&parsed_mask, plaintext_space_up_to_index);
     plaintext_len = (unsigned int)parsed_mask.length;
   } else if (use_markov && markov_keyspace > 0) {
@@ -231,7 +243,9 @@ int main(int ac, char **av) {
   unsigned int out_plaintext_len = plaintext_len;
 
   for (unsigned int pos = 0; pos < chain_len - 1; pos++) {
-    if (use_mask) {
+    if (combined_mode) {
+      index_to_plaintext_markov_mask_cpu(&mmtables, index, (unsigned char *)plaintext, &out_plaintext_len);
+    } else if (use_mask) {
       index_to_plaintext_mask_cpu(index, &parsed_mask, plaintext, &out_plaintext_len);
     } else if (use_markov) {
       index_to_plaintext_markov_cpu(index, &markov, plaintext_len, (unsigned char *)plaintext);
@@ -252,11 +266,13 @@ int main(int ac, char **av) {
       printf("\nplaintext=");
       for (unsigned int j = 0; j < out_plaintext_len; j++) printf("%02x", (unsigned char)plaintext[j]);
       printf("\npos=%u start_index=%" PRIu64 "\n", pos, start_index);
+      if (combined_mode) markov_mask_tables_free(&mmtables);
       if (use_markov) markov_free(&markov);
       return 0;
     }
     index = hash_to_index(hash, hash_len, reduction_offset, plaintext_space_total, pos);
   }
+  if (combined_mode) markov_mask_tables_free(&mmtables);
   if (use_markov) markov_free(&markov);
   fprintf(stderr, "Error: target_pos=%u >= chain_len-1=%u\n", target_pos, chain_len - 1);
   return 1;

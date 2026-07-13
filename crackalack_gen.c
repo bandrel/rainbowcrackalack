@@ -39,6 +39,7 @@
 #include "charset.h"
 #include "checkpoint.h"
 #include "markov.h"
+#include "markov_mask.h"
 #include "mask_parse.h"
 #include "clock.h"
 #include "cpu_rt_functions.h"
@@ -103,6 +104,14 @@
 #define CRACKALACK_MASK_KERNEL_PATH "CUDA/crackalack_mask.cu"
 #else
 #define CRACKALACK_MASK_KERNEL_PATH "crackalack_mask.cl"
+#endif
+
+#ifdef USE_METAL
+#define CRACKALACK_MARKOV_MASK_KERNEL_PATH "crackalack_markov_mask.metal"
+#elif defined(USE_CUDA)
+#define CRACKALACK_MARKOV_MASK_KERNEL_PATH "CUDA/crackalack_markov_mask.cu"
+#else
+#define CRACKALACK_MARKOV_MASK_KERNEL_PATH "crackalack_markov_mask.cl"
 #endif
 
 #define VERBOSE 1
@@ -198,6 +207,10 @@ typedef struct {
 
   int  use_mask;
   Mask mask;
+
+  /* Combined mask+markov mode: restricted tables built from the model + mask.
+   * Valid only when use_mask && use_markov. */
+  markov_mask_tables mmtables;
 
   unsigned char challenge[8];
 
@@ -393,6 +406,15 @@ void *host_thread(void *ptr) {
   unsigned int mask_lens_flat[MAX_PLAINTEXT_LEN] = {0};
   gpu_uint mask_len_val = 0;
 
+  /* Combined mask+markov mode. */
+  int combined_mode = (args->use_mask && args->use_markov);
+  gpu_buffer mm_r_pos0_buffer = NULL, mm_r_bigram_buffer = NULL, mm_sizes_buffer = NULL, mm_mask_len_buffer = NULL, mm_max_sz_buffer = NULL;
+  uint8_t  mm_r_pos0_flat[256] = {0};
+  uint8_t *mm_r_bigram_flat = NULL;
+  gpu_uint mm_sizes_flat[MAX_PLAINTEXT_LEN] = {0};
+  gpu_uint mm_mask_len_val = 0, mm_max_sz_val = 0;
+  size_t   mm_r_bigram_size = 0;
+
   if (args->charset == NULL) {
     charset_len = 0;
   } else if (strlen(args->charset) == 0) {
@@ -457,7 +479,7 @@ void *host_thread(void *ptr) {
    * The Markov kernel has the same interface as the generic crackalack kernel
    * but adds sorted_pos0 and sorted_bigram as args 13 and 14.
    * Use optimized Markov fast-path kernels for NTLM8/NTLM9 when parameters match. */
-  if (args->use_markov) {
+  if (args->use_markov && !combined_mode) {
     if (is_markov_ntlm8(args->hash_type, args->charset, args->plaintext_len_min, args->plaintext_len_max, args->reduction_offset, args->chain_len, args->use_markov)) {
       kernel_path = CRACKALACK_MARKOV_NTLM8_KERNEL_PATH;
       kernel_name = "crackalack_markov_ntlm8";
@@ -495,8 +517,17 @@ void *host_thread(void *ptr) {
     }
   }
 
-  /* When --mask is requested, override kernel selection to the mask generation kernel. */
-  if (args->use_mask) {
+  /* When --mask + --markov are both requested, use the combined markov_mask
+   * generation kernel.  This must be checked before the mask-only branch since
+   * combined mode also has use_mask set. */
+  if (combined_mode) {
+    kernel_path = CRACKALACK_MARKOV_MASK_KERNEL_PATH;
+    kernel_name = "crackalack_markov_mask";
+    if (args->gpu.device_number == 0) {
+      printf("%sNote: combined mask+Markov generation kernel will be used.%s\n", GREENB, CLR); fflush(stdout);
+    }
+  } else if (args->use_mask) {
+    /* When --mask is requested, override kernel selection to the mask generation kernel. */
     kernel_path = CRACKALACK_MASK_KERNEL_PATH;
     kernel_name = "crackalack_mask";
     if (args->gpu.device_number == 0) {
@@ -519,8 +550,26 @@ void *host_thread(void *ptr) {
   queue = gpu->queue;
   kernel = gpu->kernel;
 
+  /* Prepare combined mask+Markov GPU buffer contents from the restricted tables
+   * (already built in main() and passed via args->mmtables). */
+  if (combined_mode) {
+    mm_max_sz_val = (gpu_uint)args->mmtables.max_sz;
+    mm_mask_len_val = (gpu_uint)args->mmtables.mask_len;
+    for (unsigned int mi = 0; mi < MAX_PLAINTEXT_LEN; mi++)
+      mm_sizes_flat[mi] = (gpu_uint)args->mmtables.sizes[mi];
+    mm_r_bigram_size = (size_t)args->mmtables.mask_len * args->mmtables.charset_len * args->mmtables.max_sz;
+    if (mm_r_bigram_size == 0)
+      mm_r_bigram_size = 1;
+    mm_r_bigram_flat = calloc(mm_r_bigram_size, sizeof(uint8_t));
+    if (mm_r_bigram_flat == NULL) {
+      fprintf(stderr, "Failed to allocate combined markov_mask GPU buffer.\n");
+      exit(-1);
+    }
+    markov_mask_tables_to_gpu_buffers(&args->mmtables, mm_r_pos0_flat, mm_r_bigram_flat);
+  }
+
   /* Load the Markov model and create GPU buffers for the sorted tables. */
-  if (args->use_markov) {
+  if (args->use_markov && !combined_mode) {
     if (markov_load(args->markov_path, &markov) != 0) {
       fprintf(stderr, "Failed to load Markov model from '%s'\n", args->markov_path);
       CLRELEASEKERNEL(gpu->kernel);
@@ -543,7 +592,7 @@ void *host_thread(void *ptr) {
     CLRELEASEPROGRAM(gpu->program);
     CLRELEASEQUEUE(gpu->queue);
     CLRELEASECONTEXT(gpu->context);
-    if (args->use_markov)
+    if (args->use_markov && !combined_mode)
       markov_free(&markov);
     pthread_exit(NULL);
     return NULL;
@@ -658,13 +707,19 @@ void *host_thread(void *ptr) {
       CLFREEBUFFER(pspace_table_buffer);
       CLFREEBUFFER(pspace_total_buffer);
       CLFREEBUFFER(challenge_buffer);
-      if (args->use_markov) {
+      if (combined_mode) {
+        CLFREEBUFFER(mm_r_pos0_buffer);
+        CLFREEBUFFER(mm_r_bigram_buffer);
+        CLFREEBUFFER(mm_sizes_buffer);
+        CLFREEBUFFER(mm_mask_len_buffer);
+        CLFREEBUFFER(mm_max_sz_buffer);
+        FREE(mm_r_bigram_flat);
+      } else if (args->use_markov) {
         CLFREEBUFFER(sorted_pos0_buffer);
         CLFREEBUFFER(sorted_bigram_buffer);
         CLFREEBUFFER(max_positions_buffer);
         markov_free(&markov);
-      }
-      if (args->use_mask) {
+      } else if (args->use_mask) {
         CLFREEBUFFER(mask_data_buffer);
         CLFREEBUFFER(mask_lens_buffer);
         CLFREEBUFFER(mask_len_buffer);
@@ -685,19 +740,30 @@ void *host_thread(void *ptr) {
     if (hash_type_buffer == NULL) {
       uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
       gpu_ulong pspace_total;
-      if (args->use_mask)
+      if (combined_mode)
+        pspace_total = fill_plaintext_space_markov_mask(&args->mmtables, args->markov_keyspace, pspace_up_to_index);
+      else if (args->use_mask)
         pspace_total = fill_plaintext_space_mask(&args->mask, pspace_up_to_index);
       else if (args->markov_keyspace > 0)
         pspace_total = fill_plaintext_space_markov_keyspace(args->markov_keyspace, args->plaintext_len_max, pspace_up_to_index);
       else
         pspace_total = fill_plaintext_space_table(charset_len, args->plaintext_len_min, args->plaintext_len_max, pspace_up_to_index);
 
-      unsigned int charset_buf_size = charset_len > 0 ? charset_len : 1;
+      /* In combined mask+Markov mode, args->charset is NULL (mask mode), but the
+       * markov_mask decode maps charset indices to bytes using the model charset.
+       * Bind the model charset + its length from the restricted tables. */
+      unsigned int eff_charset_len = charset_len;
+      const char *eff_charset = args->charset;
+      if (combined_mode) {
+        eff_charset_len = args->mmtables.charset_len;
+        eff_charset = args->mmtables.charset;
+      }
+      unsigned int charset_buf_size = eff_charset_len > 0 ? eff_charset_len : 1;
       static const char dummy_charset[1] = {0};
-      const char *charset_ptr = (args->charset != NULL) ? args->charset : dummy_charset;
+      const char *charset_ptr = (eff_charset != NULL) ? eff_charset : dummy_charset;
       CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(1, charset_buffer, CL_RO, charset_ptr, charset_buf_size);
-      CLCREATEARG(2, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
+      CLCREATEARG(2, charset_len_buffer, CL_RO, eff_charset_len, sizeof(gpu_uint));
       CLCREATEARG(3, plaintext_len_min_buffer, CL_RO, args->plaintext_len_min, sizeof(gpu_uint));
       CLCREATEARG(4, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
       CLCREATEARG(5, reduction_offset_buffer, CL_RO, args->reduction_offset, sizeof(gpu_uint));
@@ -706,7 +772,15 @@ void *host_thread(void *ptr) {
       CLCREATEARG(8, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(9, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
       CLCREATEARG(10, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
-      if (args->use_markov) {
+      if (combined_mode) {
+        /* Combined mask+Markov kernel slots 11-15 = r_pos0 / r_bigram / sizes /
+         * mask_len / max_sz. */
+        CLCREATEARG_ARRAY(11, mm_r_pos0_buffer, CL_RO, mm_r_pos0_flat, 256 * sizeof(uint8_t));
+        CLCREATEARG_ARRAY(12, mm_r_bigram_buffer, CL_RO, mm_r_bigram_flat, mm_r_bigram_size * sizeof(uint8_t));
+        CLCREATEARG_ARRAY(13, mm_sizes_buffer, CL_RO, mm_sizes_flat, MAX_PLAINTEXT_LEN * sizeof(gpu_uint));
+        CLCREATEARG(14, mm_mask_len_buffer, CL_RO, mm_mask_len_val, sizeof(gpu_uint));
+        CLCREATEARG(15, mm_max_sz_buffer, CL_RO, mm_max_sz_val, sizeof(gpu_uint));
+      } else if (args->use_markov) {
         CLCREATEARG_ARRAY(11, sorted_pos0_buffer, CL_RO, markov.sorted_pos0, markov.charset_len * sizeof(uint8_t));
         CLCREATEARG_ARRAY(12, sorted_bigram_buffer, CL_RO, markov.sorted_bigram, markov.max_positions * markov.charset_len * markov.charset_len * sizeof(uint8_t));
         CLCREATEARG(13, max_positions_buffer, CL_RO, markov.max_positions, sizeof(gpu_uint));
@@ -962,6 +1036,8 @@ int main(int ac, char **av) {
   int charset_len = 0;
   unsigned char challenge[8];
   memcpy(challenge, NETNTLMV1_DEFAULT_CHALLENGE, 8);
+  markov_mask_tables combined_mmtables = {0};
+  int have_combined_mmtables = 0;
 
 
   ENABLE_CONSOLE_COLOR();
@@ -1165,16 +1241,9 @@ int main(int ac, char **av) {
   strncpy(charset_name_safe, charset_name, sizeof(charset_name_safe) - 1);
   charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
 
-  /* When using Markov keyspace, append -mkN to the charset field in the filename. */
-  if (markov_keyspace > 0) {
-    char tmp[sizeof(charset_name_safe)];
-    snprintf(tmp, sizeof(tmp), "%s-mk%"PRIu64, charset_name_safe, markov_keyspace);
-    strncpy(charset_name_safe, tmp, sizeof(charset_name_safe) - 1);
-    charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
-  }
-
   /* When using a mask, replace the charset field with the filename-encoded mask
-   * (e.g. "?u?l?l?d" -> "%u%l%l%d") so parse_rt_params can reconstruct it. */
+   * (e.g. "?u?l?l?d" -> "%u%l%l%d") so parse_rt_params can reconstruct it.
+   * This must run BEFORE the -mk append so combined mode yields "<mask>-mk<K>". */
   if (use_mask) {
     if (mask_parse(mask_str, &mask, cc1, cc2, cc3, cc4) != 0) {
       fprintf(stderr, "Error: failed to parse mask '%s'\n", mask_str);
@@ -1185,6 +1254,39 @@ int main(int ac, char **av) {
       fprintf(stderr, "Failed to encode mask into filename.\n");
       return -1;
     }
+  }
+
+  /* Combined mask+Markov mode: build the restricted Markov tables from the model
+   * and the mask.  markov_build_restricted enforces that every mask character is
+   * a subset of the model charset.  Built here (before the filename -mk append)
+   * so that combined tables always carry a -mk<K> tag in their filename -- this
+   * is how crackalack_verify / crackalack_lookup detect combined mode.  When the
+   * user gave no --markov-keyspace cap, K is the full restricted keyspace. */
+  if (use_mask && use_markov) {
+    markov_model combined_model = {0};
+    if (markov_load(markov_path, &combined_model) != 0) {
+      fprintf(stderr, "Failed to load Markov model from '%s'\n", markov_path);
+      return -1;
+    }
+    if (markov_build_restricted(&combined_model, &mask, &combined_mmtables) != 0) {
+      fprintf(stderr, "Error: failed to build combined mask+Markov tables (mask must be a subset of the model charset).\n");
+      markov_free(&combined_model);
+      return -1;
+    }
+    markov_free(&combined_model);
+    have_combined_mmtables = 1;
+    if (markov_keyspace == 0)
+      markov_keyspace = markov_mask_keyspace(&combined_mmtables);
+  }
+
+  /* When using Markov keyspace, append -mkN to the charset field in the filename.
+   * Runs AFTER the mask encode so combined mode produces "<mask>-mk<K>", while
+   * markov-only produces "<charset>-mk<K>". */
+  if (markov_keyspace > 0) {
+    char tmp[sizeof(charset_name_safe)];
+    snprintf(tmp, sizeof(tmp), "%s-mk%"PRIu64, charset_name_safe, markov_keyspace);
+    strncpy(charset_name_safe, tmp, sizeof(charset_name_safe) - 1);
+    charset_name_safe[sizeof(charset_name_safe) - 1] = '\0';
   }
 
   /* When using a non-default NetNTLMv1 challenge, append -chal<hex> to charset. */
@@ -1256,11 +1358,8 @@ int main(int ac, char **av) {
     return -1;
   }
 
-  /* Mask mode validations. */
-  if (use_mask && use_markov) {
-    fprintf(stderr, "Error: --mask and --markov are mutually exclusive.\n");
-    return -1;
-  }
+  /* Mask mode validations.  (--mask + --markov is now the valid combined mode,
+   * so no mutual-exclusion error here.) */
   if (use_mask && plaintext_len_min != plaintext_len_max) {
     fprintf(stderr, "Error: --mask requires fixed-length plaintext (min_len must equal max_len)\n");
     return -1;
@@ -1298,7 +1397,7 @@ int main(int ac, char **av) {
 
   /* If the file size implies that it is already complete, run the verifier on it. */
   if (file_size == ((uint64_t)total_chains_in_table * CHAIN_SIZE)) {
-    if (verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL)) {
+    if (verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL, have_combined_mmtables ? &combined_mmtables : NULL)) {
       /* The table is complete, so tell the user and exit. */
       printf("Table in \"%s\" already appears to be complete.  Terminating...\n", filename);
       exit(0);
@@ -1338,7 +1437,7 @@ int main(int ac, char **av) {
       /* No valid checkpoint - use legacy resume (experimental) */
       printf("\n  !! WARNING !!\n\nPartially generated table found without checkpoint.\nAttempting legacy resume (experimental).\n\n"); fflush(stdout);
 
-      verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL);
+      verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL, have_combined_mmtables ? &combined_mmtables : NULL);
 
       /* fopen()'s modes are weird.  Its easier to just re-open the file for reading
        * at this point, rather than change the code above and re-use the open handle. */
@@ -1381,7 +1480,9 @@ int main(int ac, char **av) {
     } else {
 
       uint64_t plaintext_space_total;
-      if (use_mask)
+      if (use_mask && use_markov)
+        plaintext_space_total = fill_plaintext_space_markov_mask(&combined_mmtables, markov_keyspace, plaintext_space_up_to_index);
+      else if (use_mask)
         plaintext_space_total = fill_plaintext_space_mask(&mask, plaintext_space_up_to_index);
       else if (markov_keyspace > 0)
         plaintext_space_total = fill_plaintext_space_markov_keyspace(markov_keyspace, plaintext_len_max, plaintext_space_up_to_index);
@@ -1478,6 +1579,8 @@ int main(int ac, char **av) {
     args[i].markov_keyspace = markov_keyspace;
     args[i].use_mask = use_mask;
     args[i].mask = mask;
+    if (have_combined_mmtables)
+      args[i].mmtables = combined_mmtables;  /* shared read-only across threads */
     memcpy(args[i].challenge, challenge, 8);
     snprintf(args[i].markov_path, sizeof(args[i].markov_path), "%s", markov_path);
     args[i].gpu.device_number = i;
@@ -1543,7 +1646,7 @@ int main(int ac, char **av) {
     /* Verify that the new table is valid. */
     printf("Now verifying rainbow table... ");
     fflush(stdout);
-    if (!verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL)) {
+    if (!verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL, have_combined_mmtables ? &combined_mmtables : NULL)) {
       char log_filename[256] = {0};
 
       get_rt_log_filename(log_filename, sizeof(log_filename), filename);
@@ -1564,6 +1667,8 @@ int main(int ac, char **av) {
     gpu_release_device(devices[i]);
 
   pthread_barrier_destroy(&barrier);
+  if (have_combined_mmtables)
+    markov_mask_tables_free(&combined_mmtables);
   FREE(args);
   return 0;
 }

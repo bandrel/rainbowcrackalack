@@ -42,6 +42,7 @@
 #include "test_index_to_plaintext_markov.h"
 #include "test_index_to_plaintext_mask.h"
 #include "test_chain_markov.h"
+#include "test_chain_markov_mask.h"
 #include "test_chain_markov_ntlm8.h"
 #include "test_chain_markov_ntlm9.h"
 #include "test_chain_mask.h"
@@ -482,6 +483,22 @@ int main(int ac, char **av) {
               "crackalack_mask", &program, &kernel, hash_type);
   printf("Running Mask chain tests... "); fflush(stdout);
   if (!test_chain_mask(devices[0], context, kernel)) {
+    ret = -1;
+    all_tests_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  CLRELEASEKERNEL(kernel);
+  CLRELEASEPROGRAM(program);
+
+
+  /* Combined Markov+mask chain generation tests. */
+  hash_type = HASH_NTLM;
+  load_kernel(context, num_devices, devices, "crackalack_markov_mask.cl",
+              "crackalack_markov_mask", &program, &kernel, hash_type);
+  printf("Running Markov+mask chain tests... "); fflush(stdout);
+  if (!test_chain_markov_mask(devices[0], context, kernel)) {
     ret = -1;
     all_tests_passed = 0;
     PRINT_FAILED();
