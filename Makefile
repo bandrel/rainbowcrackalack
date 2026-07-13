@@ -175,6 +175,8 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/test_precompute_collate.o \
 	$(CPU_TESTS_OBJDIR)/test_markov.o \
 	$(CPU_TESTS_OBJDIR)/test_mask_parse.o \
+	$(CPU_TESTS_OBJDIR)/test_markov_mask.o \
+	$(CPU_TESTS_OBJDIR)/markov_mask.o \
 	$(CPU_TESTS_OBJDIR)/test_hcmask.o \
 	$(CPU_TESTS_OBJDIR)/hcmask.o \
 	$(CPU_TESTS_OBJDIR)/test_golden.o \
@@ -300,6 +302,7 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/hcmask.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/markov_mask.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(GPU_BACKEND_OBJ) \
@@ -337,6 +340,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_index_to_plaintext_markov.o \
 	$(OBJDIR)/test_index_to_plaintext_mask.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/markov_mask.o \
 	$(OBJDIR)/test_chain_markov.o \
 	$(OBJDIR)/test_chain_markov_ntlm8.o \
 	$(OBJDIR)/test_chain_markov_ntlm9.o \
@@ -344,6 +348,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_markov.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/test_mask_parse.o \
+	$(OBJDIR)/test_markov_mask.o \
 	$(OBJDIR)/hcmask.o \
 	$(OBJDIR)/test_hcmask.o \
 	$(OBJDIR)/test_challenge_host.o \
@@ -373,6 +378,7 @@ $(OUTDIR)/$(VERIFY_PROG): \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/hcmask.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/markov_mask.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/rtc_decompress.o \
@@ -400,6 +406,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/markov_mask.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/precompute_collate.o \
@@ -450,6 +457,7 @@ $(abspath $(OUTDIR)/$(GENKNOWN_PROG)): \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/markov_mask.o \
 	$(OBJDIR)/mask_parse.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS) -lssl -lcrypto
 
