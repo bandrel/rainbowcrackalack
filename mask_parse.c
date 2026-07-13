@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 #define MASK_FIELD_MAX 200
@@ -283,12 +284,14 @@ void mask_decode_from_filename(char *s) {
 }
 
 
-/* Append two lowercase hex digits per byte. */
+/* Append two lowercase hex digits per byte. Returns new offset, or SIZE_MAX
+ * if the destination buffer is too small. */
 static size_t hex_append(char *dst, size_t j, size_t dst_len,
                          const char *bytes, unsigned int n) {
     static const char H[] = "0123456789abcdef";
     unsigned int k;
-    for (k = 0; k < n && j + 2 < dst_len; k++) {
+    for (k = 0; k < n; k++) {
+        if (j + 2 >= dst_len) return SIZE_MAX;
         dst[j++] = H[(unsigned char)bytes[k] >> 4];
         dst[j++] = H[(unsigned char)bytes[k] & 0xf];
     }
@@ -318,10 +321,13 @@ int mask_decode_charset_field(const char *field, Mask *out) {
     mask_decode_from_filename(body);   /* %x -> ?x in place */
 
     /* Parse each !N-<hex> block. */
+    int seen[4] = { 0, 0, 0, 0 };
     p = field + cut;
     while (*p == '!' && p[1] >= '1' && p[1] <= '4' && p[2] == '-') {
         int idx = p[1] - '1';
         unsigned int n = 0;
+        if (seen[idx]) return -1;   /* duplicate custom-set index */
+        seen[idx] = 1;
         p += 3;
         while (isxdigit((unsigned char)p[0]) && isxdigit((unsigned char)p[1])) {
             if (n >= MAX_CHARSET_LEN) return -1;
@@ -375,6 +381,10 @@ int mask_encode_charset_field(const char *mask_str,
         dst[j++] = (char)('1' + n);
         dst[j++] = '-';
         j = hex_append(dst, j, dst_len, exp, elen);
+        if (j == SIZE_MAX) {
+            fprintf(stderr, "mask_encode_charset_field: destination buffer too small\n");
+            return -1;
+        }
     }
     dst[j] = '\0';
 

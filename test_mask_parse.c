@@ -587,6 +587,20 @@ static int group_charset_field_codec(void)
         fprintf(stderr, "MP-35 failed: token def encode = \"%s\"\n", field); ok = 0;
     }
 
+    /* MP-36: mask body containing literal "!1-" is rejected (ambiguous sentinel) */
+    if (mask_encode_charset_field("A!1-?u", NULL, NULL, NULL, NULL,
+                                  field, sizeof(field)) == 0) {
+        fprintf(stderr, "MP-36 failed: ambiguous !1- literal accepted\n"); ok = 0;
+    }
+
+    /* MP-37: duplicate custom-set block index is rejected on decode */
+    {
+        Mask dupm;
+        if (mask_decode_charset_field("%1%d!1-616263!1-787979", &dupm) == 0) {
+            fprintf(stderr, "MP-37 failed: duplicate !1- block accepted\n"); ok = 0;
+        }
+    }
+
     return ok;
 }
 
