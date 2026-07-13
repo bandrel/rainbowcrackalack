@@ -79,6 +79,69 @@ static int build_position(char spec, MaskPosition *pos,
 }
 
 
+static int hexval(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+    if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+    return -1;
+}
+
+int expand_charset_def(const char *def, char out[MAX_CHARSET_LEN],
+                       unsigned int *out_len) {
+    unsigned int n = 0;
+    size_t i = 0;
+
+    if (def == NULL || out == NULL || out_len == NULL)
+        return -1;
+
+    while (def[i] != '\0') {
+        if (def[i] == '?' && def[i + 1] != '\0') {
+            char spec = def[i + 1];
+            if (spec == '1' || spec == '2' || spec == '3' || spec == '4') {
+                fprintf(stderr, "expand_charset_def: custom charset ?%c not "
+                        "allowed inside a custom charset\n", spec);
+                return -1;
+            }
+            if (spec == '?') {            /* ?? -> literal '?' */
+                if (n >= MAX_CHARSET_LEN) goto overflow;
+                out[n++] = '?';
+                i += 2;
+                continue;
+            }
+            /* Expand a built-in token via build_position into a temp position. */
+            MaskPosition tmp;
+            tmp.size = 0;
+            if (build_position(spec, &tmp, NULL, NULL, NULL, NULL) != 0)
+                return -1;
+            if (n + tmp.size > MAX_CHARSET_LEN) goto overflow;
+            memcpy(out + n, tmp.chars, tmp.size);
+            n += tmp.size;
+            i += 2;
+        } else if (def[i] == '\\' && (def[i + 1] == 'x' || def[i + 1] == 'X') &&
+                   hexval(def[i + 2]) >= 0 && hexval(def[i + 3]) >= 0) {
+            if (n >= MAX_CHARSET_LEN) goto overflow;
+            out[n++] = (char)((hexval(def[i + 2]) << 4) | hexval(def[i + 3]));
+            i += 4;
+        } else if (def[i] == '\\' && def[i + 1] == '\\') {
+            if (n >= MAX_CHARSET_LEN) goto overflow;
+            out[n++] = '\\';
+            i += 2;
+        } else {
+            if (n >= MAX_CHARSET_LEN) goto overflow;
+            out[n++] = def[i++];
+        }
+    }
+
+    *out_len = n;
+    return 0;
+
+overflow:
+    fprintf(stderr, "expand_charset_def: definition exceeds %d bytes\n",
+            MAX_CHARSET_LEN);
+    return -1;
+}
+
+
 int mask_parse(const char *mask_str, Mask *out,
                const char *c1, const char *c2,
                const char *c3, const char *c4) {

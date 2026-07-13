@@ -447,6 +447,46 @@ static int group_hex_and_escape(void)
 }
 
 
+/* MP-20..24: expand_charset_def */
+static int group_expand_charset_def(void)
+{
+    int ok = 1;
+    char buf[MAX_CHARSET_LEN];
+    unsigned int n = 0;
+
+    /* MP-20: plain literals */
+    if (expand_charset_def("abc", buf, &n) != 0 || n != 3 ||
+        memcmp(buf, "abc", 3) != 0) {
+        fprintf(stderr, "MP-20 failed: literal def\n"); ok = 0;
+    }
+
+    /* MP-21: embedded built-in tokens (?d?u = 10 + 26 = 36) */
+    if (expand_charset_def("?d?u", buf, &n) != 0 || n != 36 ||
+        memcmp(buf, "0123456789", 10) != 0 ||
+        memcmp(buf + 10, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 26) != 0) {
+        fprintf(stderr, "MP-21 failed: token-bearing def (n=%u)\n", n); ok = 0;
+    }
+
+    /* MP-22: \xNN hex escapes -> raw bytes */
+    if (expand_charset_def("\\x41\\x42", buf, &n) != 0 || n != 2 ||
+        buf[0] != 0x41 || buf[1] != 0x42) {
+        fprintf(stderr, "MP-22 failed: hex def\n"); ok = 0;
+    }
+
+    /* MP-23: custom-in-custom is rejected */
+    if (expand_charset_def("?1", buf, &n) == 0) {
+        fprintf(stderr, "MP-23 failed: ?1 inside def should be rejected\n"); ok = 0;
+    }
+
+    /* MP-24: overflow (?b?b = 512 > 256) is rejected */
+    if (expand_charset_def("?b?b", buf, &n) == 0) {
+        fprintf(stderr, "MP-24 failed: overflow should be rejected\n"); ok = 0;
+    }
+
+    return ok;
+}
+
+
 int test_mask_parse(void)
 {
     int ok = 1;
@@ -462,6 +502,7 @@ int test_mask_parse(void)
     if (!group_index_to_plaintext_mask()) ok = 0;
     if (!group_parse_rt_params_mask()) ok = 0;
     if (!group_hex_and_escape()) ok = 0;
+    if (!group_expand_charset_def()) ok = 0;
 
     return ok;
 }

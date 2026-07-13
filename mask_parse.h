@@ -28,6 +28,13 @@ int mask_parse(const char *mask_str, Mask *out,
                const char *c1, const char *c2,
                const char *c3, const char *c4);
 
+/* Expand a custom-charset definition string (literals, ?l ?u ?d ?s ?a ?b ?h ?H,
+ * \xNN, ?? -> '?', \\ -> '\') into raw bytes.  Rejects ?1-?4 and unknown ?x.
+ * Output may contain NUL bytes, so length is returned explicitly.
+ * Returns 0 on success, -1 on error. */
+int expand_charset_def(const char *def, char out[MAX_CHARSET_LEN],
+                       unsigned int *out_len);
+
 /* Product of per-position charset sizes. */
 uint64_t mask_keyspace(const Mask *m);
 
