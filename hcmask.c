@@ -6,8 +6,10 @@
 #include <string.h>
 
 /* Split `line` into up to 5 fields on UNESCAPED commas, unescaping "\," -> ','
- * and (only meaningful at the start) "\#" -> '#'.  All other backslash
- * sequences pass through verbatim (so \xNN / \\ reach expand_charset_def later).
+ * and "\#" -> '#' (anywhere in a field; only strictly needed at line start to
+ * avoid comment detection, but unescaping it elsewhere is harmless since '#'
+ * is otherwise literal).  All other backslash sequences pass through verbatim
+ * (so \xNN / \\ reach expand_charset_def later).
  * Returns 1 = entry produced, 0 = skipped, -1 = error. */
 int hcmask_parse_line(const char *line, HcmaskEntry *out) {
     char buf[HCMASK_MAX_MASK_LEN + 4 * (MAX_CHARSET_LEN + 1) + 16];
@@ -33,7 +35,7 @@ int hcmask_parse_line(const char *line, HcmaskEntry *out) {
      * writing NULs and recording field starts.  Strip a trailing newline. */
     fields[nfields++] = buf + bi;
     while (line[li] != '\0' && line[li] != '\n' && line[li] != '\r') {
-        if (bi + 2 >= sizeof(buf)) return -1;   /* line too long */
+        if (bi + 1 >= sizeof(buf)) return -1;   /* line too long */
         if (line[li] == '\\' && line[li + 1] == ',') {
             buf[bi++] = ','; li += 2;
         } else if (line[li] == '\\' && line[li + 1] == '#') {
@@ -49,6 +51,8 @@ int hcmask_parse_line(const char *line, HcmaskEntry *out) {
     }
     buf[bi] = '\0';
 
+    /* Catches the exactly-6-fields case (5 commas, e.g. "a,b,c,d,e,?1?1").
+     * The in-loop guard above only fires on a 7th field (6th comma). */
     if (nfields > 5) return -1;
 
     /* Last field is the mask; must be non-empty. */
