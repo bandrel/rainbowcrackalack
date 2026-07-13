@@ -476,7 +476,14 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
         mask_decode_from_filename(decoded);      /* only to TEST for '?' */
         if (is_mask_string(decoded)) {
           rt_params->is_mask = 1;
-          strncpy(rt_params->mask, rt_params->charset_name,   /* RAW, not decoded */
+          /* Copy the RAW encoded field from the ORIGINAL untruncated filename
+           * source (charset_name_ptr), NOT from rt_params->charset_name, which
+           * is capped at char[64] and would truncate long custom-charset fields
+           * (up to MASK_FIELD_MAX=200 chars) before they reach mask[256].
+           * charset_name_ptr points into rt_filename and is unmodified by the
+           * -chal/-mk stripping above (which mutate the separate charset_name
+           * buffer), so it holds the full field NUL-terminated at the old '#'. */
+          strncpy(rt_params->mask, charset_name_ptr,   /* RAW, not decoded */
                   sizeof(rt_params->mask) - 1);
           rt_params->mask[sizeof(rt_params->mask) - 1] = '\0';
         } else {
