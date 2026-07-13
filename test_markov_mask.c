@@ -65,8 +65,8 @@ static int group_build_and_decode(void) {
     {
         unsigned char pt[MAX_PLAINTEXT_LEN]; unsigned int len = 0;
         index_to_plaintext_markov_mask_cpu(&t, 1, pt, &len);
-        if (len != 2 || pt[0] != 'a') {
-            fprintf(stderr, "MM-04 failed: index1 pos0 '%c'\n", pt[0]); ok = 0;
+        if (len != 2 || pt[0] != 'a' || pt[1] != 'a') {
+            fprintf(stderr, "MM-04 failed: index1 -> '%.*s'\n", (int)len, pt); ok = 0;
         }
     }
     markov_mask_tables_free(&t);
