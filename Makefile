@@ -175,6 +175,8 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/test_precompute_collate.o \
 	$(CPU_TESTS_OBJDIR)/test_markov.o \
 	$(CPU_TESTS_OBJDIR)/test_mask_parse.o \
+	$(CPU_TESTS_OBJDIR)/test_hcmask.o \
+	$(CPU_TESTS_OBJDIR)/hcmask.o \
 	$(CPU_TESTS_OBJDIR)/test_golden.o \
 	$(CPU_TESTS_OBJDIR)/test_shared.o \
 	$(CPU_TESTS_OBJDIR)/misc.o \
