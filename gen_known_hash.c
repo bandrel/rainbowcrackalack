@@ -136,7 +136,7 @@ int main(int ac, char **av) {
             "Usage: %s chain_len reduction_offset start_index target_position\n"
             "          [--algo ntlm|netntlmv1] [--charset NAME] [--plaintext-len N] [--challenge <16hex>]\n"
             "          [--markov FILE --markov-keyspace N]\n"
-            "          [--mask MASKSTRING]\n",
+            "          [--mask MASKSTRING [-1 CHARS] [-2 CHARS] [-3 CHARS] [-4 CHARS]]\n",
             av[0]);
     return 1;
   }
