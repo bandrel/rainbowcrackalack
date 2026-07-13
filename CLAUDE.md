@@ -1,6 +1,6 @@
 # Rainbow Crackalack - Agent Guide
 
-GPU-accelerated rainbow table generator and hash lookup tool. C with CUDA (Linux), OpenCL (Windows), and Metal (macOS Apple Silicon) GPU backends. Currently supports NTLM only. GPLv3.
+GPU-accelerated rainbow table generator and hash lookup tool. C with CUDA (Linux), OpenCL (Windows), and Metal (macOS Apple Silicon) GPU backends. Currently supports NTLM, MD5, and NetNTLMv1 (SHA-1 constant reserved but unimplemented). GPLv3.
 
 ## Build
 
@@ -45,6 +45,33 @@ Note: `nvidia-cuda-toolkit` from the Ubuntu repo may lag behind the installed NV
 
 # Lookup hashes against 8-char tables
 ./crackalack_lookup /path/to/ntlm8_tables/ /path/to/hashes.txt
+```
+
+### Mask attacks
+
+Hashcat-style masks restrict each position to a specific character class, letting you cover structured password spaces (e.g. `Capital + 6 lower + digit`) with a much smaller table than full-charset coverage.
+
+**Built-in tokens:** `?l` (lowercase a-z), `?u` (uppercase A-Z), `?d` (digits 0-9), `?s` (special/printable non-alnum), `?a` (all printable ASCII), `?b` (all bytes 0x00-0xFF), `?h` (hex lowercase 0-9a-f), `?H` (hex uppercase 0-9A-F), `??` (literal `?`).
+
+**Custom charsets:** Define up to four with `-1/-2/-3/-4 <chars>` (or `--custom-charset1..4`). Definitions may themselves contain tokens (e.g. `-1 ?d?l`) and `\xNN` hex escapes. Use the slots as `?1 ?2 ?3 ?4` in the mask.
+
+**Constraints:**
+- The mask is fixed-length: `min_len` and `max_len` args must equal the mask length.
+- Supported for NTLM and MD5. Not supported for NetNTLMv1.
+- `--mask` and `--markov` are mutually exclusive.
+- `crackalack_verify` and `gen_known_hash` also accept `--mask` and `-1..-4`.
+
+**Filenames are self-describing.** Custom charset definitions are encoded into the `.rt` filename as `!N-<hex>` blocks. `crackalack_lookup` reconstructs the mask and charsets from the filename automatically — no mask flags needed at lookup time.
+
+```bash
+# 8-char mask table: capital + 6 lowercase + digit
+./crackalack_gen ntlm ascii-32-95 8 8 0 803000 67108864 0 --mask '?u?l?l?l?l?l?l?d'
+
+# 4-char mask table with custom charset ?1 = 'abcxyz', mask = ?1?1?l?d
+./crackalack_gen ntlm ascii-32-95 4 4 0 803000 67108864 0 --mask '?1?1?l?d' -1 abcxyz
+
+# Lookup against mask tables — no mask flags needed (self-describing filenames)
+./crackalack_lookup /path/to/mask_tables/ /path/to/hashes.txt
 ```
 
 ## Tests

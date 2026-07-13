@@ -9,8 +9,9 @@
 #   run_regression.sh crackdiff       # BASE-vs-CANDIDATE differential
 #   run_regression.sh asan-smoke      # ASan memory-safety smoke test (gen->sort->lookup)
 #   run_regression.sh markov          # Markov end-to-end (gen/sort/verify/mint/lookup)
+#   run_regression.sh mask            # Mask end-to-end (gen/sort/verify/mint/lookup)
 #   run_regression.sh report          # write regression_summary.md
-#   run_regression.sh all             # prepare + roundtrip + roundtrip-multi + crackdiff + asan-smoke + markov + report
+#   run_regression.sh all             # prepare + roundtrip + roundtrip-multi + crackdiff + asan-smoke + markov + mask + report
 set -euo pipefail
 
 # ---- Tunables (override via env) ----
@@ -353,6 +354,23 @@ phase_markov() {
     return $rc
 }
 
+# Mask end-to-end pipeline (gen/sort/verify/mint/lookup + negative control).
+# Delegates to the self-contained test_mask_lookup.sh, wrapped in the GPU lock
+# so it serialises with the other GPU phases.
+phase_mask() {
+    log "MASK: end-to-end pipeline backend=$BACKEND"
+    mkdir -p "$RESULTS"
+    local json="$RESULTS/mask_$BACKEND.json"
+    local rc=0
+    with_gpu_lock bash "$SCRIPT_DIR/test_mask_lookup.sh" "$THIS_REPO" >&2 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        echo '{"passed": true}' > "$json";  log "MASK: PASS"
+    else
+        echo '{"passed": false}' > "$json"; log "MASK: FAIL (rc=$rc)"
+    fi
+    return $rc
+}
+
 phase_report() {
     log "REPORT"
     export PYTHONPATH="$SCRIPT_DIR"
@@ -379,8 +397,9 @@ main() {
         crackdiff)      phase_crackdiff ;;
         asan-smoke)     phase_asan_smoke ;;
         markov)         phase_markov ;;
+        mask)           phase_mask ;;
         report)         phase_report ;;
-        all)            phase_prepare; phase_roundtrip; phase_roundtrip_multi; phase_crackdiff; phase_asan_smoke || true; phase_markov || true; phase_report ;;
+        all)            phase_prepare; phase_roundtrip; phase_roundtrip_multi; phase_crackdiff; phase_asan_smoke || true; phase_markov || true; phase_mask || true; phase_report ;;
         *) echo "Unknown phase: $phase" >&2; exit 2 ;;
     esac
 }

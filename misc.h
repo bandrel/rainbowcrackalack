@@ -67,6 +67,8 @@ struct _rt_parameters {
 
   uint64_t markov_keyspace; /* 0 = not Markov; >0 = truncated keyspace */
   unsigned char challenge[8]; /* NetNTLMv1 server challenge; default if absent. */
+  int is_mask;       /* 1 if charset field encodes a hashcat-style mask, else 0 */
+  char mask[256];    /* Decoded mask string (e.g. "?u?l?d"); empty if is_mask==0 */
   unsigned int parsed; /* Set to 1 if parameters successfully parsed, otherwise 0. */
 };
 typedef struct _rt_parameters rt_parameters;

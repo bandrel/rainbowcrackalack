@@ -19,6 +19,7 @@
 #include <string.h>
 #include "cpu_rt_functions.h"
 #include "markov.h"
+#include "mask_parse.h"
 #include "shared.h"
 
 #include <gcrypt.h>
@@ -62,6 +63,37 @@ uint64_t fill_plaintext_space_markov_keyspace(uint64_t markov_keyspace, unsigned
     plaintext_space_up_to_index[i] = 0;
   plaintext_space_up_to_index[plaintext_len_max] = markov_keyspace;
   return markov_keyspace;
+}
+
+
+/* Fills the pspace table for a mask keyspace.
+ * Fixed-length semantics: pspace[0..mask->length-1] are 0; pspace[mask->length]
+ * holds the full mask keyspace (product of per-position charset sizes). */
+uint64_t fill_plaintext_space_mask(const Mask *mask, uint64_t *plaintext_space_up_to_index) {
+  int i;
+  uint64_t keyspace = mask_keyspace(mask);
+  for (i = 0; i <= mask->length; i++)
+    plaintext_space_up_to_index[i] = 0;
+  plaintext_space_up_to_index[mask->length] = keyspace;
+  return keyspace;
+}
+
+
+/* Decode a mask-keyspace index to a plaintext string.
+ * Mixed-radix: position 0 is the most-significant digit; the loop iterates i
+ * from length-1 down to 0 so it extracts the least-significant digit (the last
+ * position) first. Matches the GPU kernel convention.
+ * Precondition: all positions[i].size > 0 (guaranteed by mask_parse). */
+void index_to_plaintext_mask_cpu(uint64_t index, const Mask *mask, char *plaintext, unsigned int *plaintext_len) {
+  int i;
+  uint64_t x = index;
+  *plaintext_len = (unsigned int)mask->length;
+  plaintext[*plaintext_len] = '\0';
+  for (i = (int)mask->length - 1; i >= 0; i--) {
+    unsigned int sz = mask->positions[i].size;
+    plaintext[i] = mask->positions[i].chars[x % sz];
+    x /= sz;
+  }
 }
 
 
@@ -180,6 +212,43 @@ uint64_t generate_rainbow_chain(
       ntlm_hash(plaintext, *plaintext_len, hash);
     }
     index = hash_to_index(hash, *hash_len, reduction_offset, plaintext_space_total, pos);
+  }
+  return index;
+}
+
+
+uint64_t generate_rainbow_chain_mask(
+    unsigned int hash_type,
+    const Mask *mask,
+    uint64_t plaintext_space_total,
+    unsigned int reduction_offset,
+    unsigned int chain_len,
+    uint64_t start)
+{
+  uint64_t index = start;
+
+  for (unsigned int pos = 0; pos < chain_len - 1; pos++) {
+    char plaintext[MAX_PLAINTEXT_LEN + 1];
+    unsigned char hash[MAX_HASH_OUTPUT_LEN];
+    unsigned int plaintext_len = 0;
+    unsigned int hash_len = sizeof(hash);
+
+    memset(plaintext, 0, sizeof(plaintext));
+    index_to_plaintext_mask_cpu(index, mask, plaintext, &plaintext_len);
+
+    if (hash_type == HASH_MD5) {
+      md5_hash(plaintext, plaintext_len, hash);
+      hash_len = 16;
+    } else if (hash_type == HASH_NETNTLMV1) {
+      unsigned char des_key[8] = {0};
+      setup_des_key(plaintext, des_key);
+      netntlmv1_hash(des_key, 8, hash);
+      hash_len = 8;
+    } else {
+      ntlm_hash(plaintext, plaintext_len, hash);
+      hash_len = 16;
+    }
+    index = hash_to_index(hash, hash_len, reduction_offset, plaintext_space_total, pos);
   }
   return index;
 }
