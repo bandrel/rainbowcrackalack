@@ -63,7 +63,9 @@ void print_usage(char *prog_name) {
  * For each mask, reconstruct the filename charset field, find matching .rt
  * table(s), verify each, and report masks with no matching table.
  * Returns 0 if all entries verified & present, non-zero otherwise. */
-static int verify_hcmask_batch(const char *hcmask_path, const char *dir) {
+static int verify_hcmask_batch(const char *hcmask_path, const char *dir,
+                               const char *g1, const char *g2,
+                               const char *g3, const char *g4) {
   HcmaskEntry *entries = NULL;
   int nentries = 0, e, rc = 0;
 
@@ -71,10 +73,12 @@ static int verify_hcmask_batch(const char *hcmask_path, const char *dir) {
     return 1;
 
   for (e = 0; e < nentries; e++) {
-    const char *rc1 = entries[e].has_cc[0] ? entries[e].cc[0] : NULL;
-    const char *rc2 = entries[e].has_cc[1] ? entries[e].cc[1] : NULL;
-    const char *rc3 = entries[e].has_cc[2] ? entries[e].cc[2] : NULL;
-    const char *rc4 = entries[e].has_cc[3] ? entries[e].cc[3] : NULL;
+    /* Inline per-mask custom charsets win; otherwise fall back to the global
+     * -1..-4 flags (matching how crackalack_gen resolves them). */
+    const char *rc1 = entries[e].has_cc[0] ? entries[e].cc[0] : g1;
+    const char *rc2 = entries[e].has_cc[1] ? entries[e].cc[1] : g2;
+    const char *rc3 = entries[e].has_cc[2] ? entries[e].cc[2] : g3;
+    const char *rc4 = entries[e].has_cc[3] ? entries[e].cc[3] : g4;
     Mask m = {0};
     char field[256], prefix[512];
     DIR *d;
@@ -195,7 +199,11 @@ int main(int ac, char **av) {
       print_usage(av[0]);
       exit(-1);
     }
-    return verify_hcmask_batch(hcmask_path, av[optind]);
+    if (mask_str || markov_path) {
+      fprintf(stderr, "Error: --hcmask is mutually exclusive with --mask and --markov.\n");
+      exit(-1);
+    }
+    return verify_hcmask_batch(hcmask_path, av[optind], cc1, cc2, cc3, cc4);
   }
 
   /* Only one of --raw, --quick, or --sorted must be specified. */
