@@ -87,6 +87,17 @@ static int group_parse_line(void)
         fprintf(stderr, "HM-11 failed: newline not stripped (mask=\"%s\")\n", e.mask); ok = 0;
     }
 
+    /* HM-12: four inline custom charsets (the maximum): "a,b,c,d,?1?2?3?4" */
+    memset(&e, 0, sizeof(e));
+    if (hcmask_parse_line("a,b,c,d,?1?2?3?4", &e) != 1 ||
+        strcmp(e.mask, "?1?2?3?4") != 0 ||
+        !e.has_cc[0] || strcmp(e.cc[0], "a") != 0 ||
+        !e.has_cc[1] || strcmp(e.cc[1], "b") != 0 ||
+        !e.has_cc[2] || strcmp(e.cc[2], "c") != 0 ||
+        !e.has_cc[3] || strcmp(e.cc[3], "d") != 0) {
+        fprintf(stderr, "HM-12 failed: four inline charsets\n"); ok = 0;
+    }
+
     return ok;
 }
 
