@@ -99,6 +99,38 @@ printf '?u?l?l?l?l?l?d\n?d?l,?1?1?1?1\n' > masks.hcmask
 ./crackalack_verify --hcmask masks.hcmask /path/to/tables/
 ```
 
+#### Mask + Markov (combined)
+
+`--mask` and `--markov` can be used together to generate tables where the mask hard-restricts each position's charset and Markov orders candidates within that restricted space by bigram probability. This breaks the practical ceiling for structured long passwords: a 12-char masked keyspace is typically far smaller than a full 8-char keyspace.
+
+**How it works:**
+- The mask defines per-position charsets (same tokens as above). Markov scoring is then applied across only the plaintexts that satisfy those constraints, ranking candidates from most- to least-probable.
+- `--markov-keyspace K` truncates to the K most-probable in-mask plaintexts. Without it, the full mask keyspace is covered (all positions enumerated, ordered by Markov probability).
+- Every character allowed by the mask MUST be present in the Markov model's charset — gen exits with a clear error if any mask position exceeds the model's alphabet.
+
+**Constraints:**
+- Fixed-length only: `min_len` and `max_len` must equal the mask length.
+- NTLM and MD5 only. Not supported for NetNTLMv1.
+- `--mask`+`--markov` is mutually exclusive with `--hcmask`.
+- Verified working on Metal (macOS), CUDA (Linux), and OpenCL (Windows).
+
+**Filenames** encode both the mask and the keyspace. A combined table carries a `-mk<K>` tag in the charset field, e.g. `ntlm_%u%l%l%l%l%l%d-mk1000000#8-8_0_803000x67108864_0.rt`.
+
+**Lookup and verification:**
+- At lookup time pass `--markov <model>`; the mask is auto-detected from the filename — no `--mask` flag needed.
+- `crackalack_verify` and `gen_known_hash` accept `--mask` and `--markov` together.
+
+```bash
+# Combined: cap the keyspace to the 1M most-probable in-mask candidates
+./crackalack_gen ntlm ascii-32-95 8 8 0 803000 67108864 0 \
+    --mask '?u?l?l?l?l?l?d' \
+    --markov dynamic-all.markov \
+    --markov-keyspace 1000000
+
+# Lookup — pass the model; mask is auto-detected from the filename
+./crackalack_lookup /path/to/tables/ hashes.txt --markov dynamic-all.markov
+```
+
 ## Tests
 
 Unit tests require a GPU (CUDA on Linux, OpenCL on Windows, Metal on macOS):
