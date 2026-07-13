@@ -139,6 +139,45 @@ Pass the same `--markov` flag to `crackalack_lookup` when looking up hashes agai
 
     # ./crackalack_lookup /export/ntlm8_tables/ /home/user/hashes.txt --markov ntlm_rockyou.markov
 
+#### Mask attacks
+
+Hashcat-style masks restrict each plaintext position to a specific character class, so a table can cover a structured password space (e.g. `Capital + 6 lowercase + digit`) with a far smaller keyspace than full-charset coverage. Pass `--mask <mask>` to `crackalack_gen`:
+
+    # 8-char mask: capital + 6 lowercase + digit
+    # ./crackalack_gen ntlm ascii-32-95 8 8 0 803000 67108864 0 --mask '?u?l?l?l?l?l?l?d'
+
+**Built-in tokens:** `?l` (a-z), `?u` (A-Z), `?d` (0-9), `?s` (printable non-alphanumeric), `?a` (all printable ASCII), `?b` (all bytes 0x00-0xFF), `?h` (0-9a-f), `?H` (0-9A-F), `??` (a literal `?`).
+
+**Custom charsets:** define up to four with `-1`/`-2`/`-3`/`-4` (aliases `--custom-charset1..4`) and reference them as `?1`-`?4`. Definitions may themselves contain built-in tokens and `\xNN` hex escapes:
+
+    # ?1 = 'abcxyz', 4-char mask ?1?1?l?d
+    # ./crackalack_gen ntlm ascii-32-95 4 4 0 803000 67108864 0 --mask '?1?1?l?d' -1 abcxyz
+
+Masks are fixed-length (`min_len` and `max_len` must equal the mask length) and supported for NTLM and MD5 (not NetNTLMv1). The mask — including any custom charsets — is encoded into the `.rt` filename (custom sets as `!N-<hex>` blocks), so tables are **self-describing**: `crackalack_lookup` reconstructs the mask automatically and needs no mask flags:
+
+    # ./crackalack_lookup /export/mask_tables/ /home/user/hashes.txt
+
+`crackalack_verify` and `gen_known_hash` also accept `--mask` and `-1..-4`.
+
+#### Batch masks (.hcmask)
+
+`crackalack_gen --hcmask FILE` generates one table per mask line, using the hashcat `.hcmask` format (`#` comments, blank lines, and per-line inline custom charsets `cs1,...,csN,mask` where the last comma-field is the mask and preceding fields define `?1..?N`; `\,` and `\#` are escapes). The positional length arguments are ignored — each table's length is derived from its own mask:
+
+    # printf '?u?l?l?l?l?l?d\n?d?l,?1?1?1?1\n' > masks.hcmask
+    # ./crackalack_gen ntlm ascii-32-95 8 8 0 803000 67108864 0 --hcmask masks.hcmask
+
+`crackalack_verify --hcmask FILE DIR` batch-verifies the generated tables and reports any masks with no matching table (campaign completeness). Lookup needs no `.hcmask` file (tables are self-describing).
+
+#### Mask + Markov (combined)
+
+`--mask` and `--markov` can be combined: the mask hard-restricts each position's charset, and the Markov model orders candidates within that restricted space by bigram probability. With `--markov-keyspace K` the table covers only the **K most-probable in-mask plaintexts** — the smallest, highest-yield tables for structured passwords:
+
+    # ./crackalack_gen ntlm ascii-32-95 8 8 0 803000 67108864 0 --mask '?u?l?l?l?l?l?d' --markov rockyou.markov --markov-keyspace 1000000
+
+Every mask-position character must be a subset of the model's charset. Combined tables are tagged `<mask>-mk<K>` in the filename; at lookup pass `--markov <model>` (the mask is auto-detected from the filename):
+
+    # ./crackalack_lookup /export/mask_markov_tables/ /home/user/hashes.txt --markov rockyou.markov
+
 #### Generating NetNTLMv1 tables
 
 NetNTLMv1 rainbow tables cover the 7-byte DES key fragments used in the Net-NTLMv1 challenge-response protocol. Each fragment is a raw byte value (charset `byte`, length 7), so the keyspace is 256^7 per fragment.
@@ -256,6 +295,13 @@ This is what runs in **CI**: a GitHub Actions workflow builds and runs `crackala
 |`scripts/bench/run_regression.sh`         |Crack round-trip + differential (false-negative) regression checks, including an `asan-smoke` phase.|
 
 ## Change Log
+### v1.5
+ - Added hashcat-style mask attacks: `--mask` on `crackalack_gen`/`crackalack_verify`/`gen_known_hash` with tokens `?l ?u ?d ?s ?a ?b ?h ?H` and `??` escaping. Masks restrict each position's charset for far smaller tables on structured passwords. Fixed-length; NTLM/MD5.
+ - Added custom charsets `?1`-`?4` via `-1`/`-2`/`-3`/`-4` (definitions may contain built-in tokens and `\xNN` hex). Custom sets are encoded into the `.rt` filename (`!N-<hex>` blocks) so mask tables are self-describing — `crackalack_lookup` reconstructs the mask with no extra flags.
+ - Added `.hcmask` batch support: `crackalack_gen --hcmask FILE` generates one table per mask line (hashcat format, incl. inline per-line custom charsets); `crackalack_verify --hcmask FILE DIR` batch-verifies and reports missing masks.
+ - Added combined mask+Markov generation: `--mask` with `--markov` orders candidates within the mask's restricted per-position charsets by bigram probability, so `--markov-keyspace` covers the top-K most-probable in-mask plaintexts. Generic kernels across CUDA/OpenCL/Metal.
+ - Verified end-to-end (gen/sort/verify/mint/lookup) across Metal, CUDA, and OpenCL backends; regression harness (`run_regression.sh`) gained `hcmask` and `mask-markov` phases.
+
 ### v1.4
  - Ported the Linux GPU backend from OpenCL to CUDA (runtime kernel compilation via NVRTC; NVIDIA-only). Linux builds now require `nvidia-cuda-toolkit` instead of OpenCL headers. Windows continues to use OpenCL.
  - Added macOS Apple Silicon support via Metal GPU backend.
