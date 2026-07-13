@@ -502,6 +502,41 @@ static int group_expand_charset_def(void)
 }
 
 
+/* MP-28..30: custom charsets via mask_parse (raw defs) and mask_parse_ex */
+static int group_custom_charsets(void)
+{
+    int ok = 1;
+    Mask m;
+
+    /* MP-28: ?1?1?d with -1 abc -> positions 0,1 size 3; keyspace 3*3*10 */
+    if (mask_parse("?1?1?d", &m, "abc", NULL, NULL, NULL) != 0 ||
+        m.length != 3 || m.positions[0].size != 3 || m.positions[1].size != 3 ||
+        memcmp(m.positions[0].chars, "abc", 3) != 0 ||
+        mask_keyspace(&m) != (uint64_t)3 * 3 * 10) {
+        fprintf(stderr, "MP-28 failed: custom charset ?1\n"); ok = 0;
+    }
+
+    /* MP-29: token-bearing def -1 ?d expands (10 chars) */
+    if (mask_parse("?1", &m, "?d", NULL, NULL, NULL) != 0 ||
+        m.positions[0].size != 10 ||
+        memcmp(m.positions[0].chars, "0123456789", 10) != 0) {
+        fprintf(stderr, "MP-29 failed: token-bearing custom def\n"); ok = 0;
+    }
+
+    /* MP-30: custom set with embedded NUL survives (not truncated) */
+    {
+        MaskPosition c1;
+        c1.size = 3; c1.chars[0] = 'x'; c1.chars[1] = '\0'; c1.chars[2] = 'y';
+        if (mask_parse_ex("?1", &m, &c1, NULL, NULL, NULL) != 0 ||
+            m.positions[0].size != 3 || m.positions[0].chars[1] != '\0') {
+            fprintf(stderr, "MP-30 failed: NUL in custom set truncated\n"); ok = 0;
+        }
+    }
+
+    return ok;
+}
+
+
 int test_mask_parse(void)
 {
     int ok = 1;
@@ -518,6 +553,7 @@ int test_mask_parse(void)
     if (!group_parse_rt_params_mask()) ok = 0;
     if (!group_hex_and_escape()) ok = 0;
     if (!group_expand_charset_def()) ok = 0;
+    if (!group_custom_charsets()) ok = 0;
 
     return ok;
 }

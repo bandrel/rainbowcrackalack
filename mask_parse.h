@@ -28,6 +28,11 @@ int mask_parse(const char *mask_str, Mask *out,
                const char *c1, const char *c2,
                const char *c3, const char *c4);
 
+/* Core parser taking PRE-EXPANDED custom charsets (or NULL for unused). */
+int mask_parse_ex(const char *mask_str, Mask *out,
+                  const MaskPosition *c1, const MaskPosition *c2,
+                  const MaskPosition *c3, const MaskPosition *c4);
+
 /* Expand a custom-charset definition string (literals, ?l ?u ?d ?s ?a ?b ?h ?H,
  * \xNN, ?? -> '?', \\ -> '\') into raw bytes.  Rejects ?1-?4 and unknown ?x.
  * Output may contain NUL bytes, so length is returned explicitly.
