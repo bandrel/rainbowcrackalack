@@ -182,7 +182,12 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
     /* Mask tables: charset field encodes a hashcat-style mask — skip validate_charset.
      * Compute the keyspace from the parsed mask instead. */
     Mask parsed_mask = {0};
-    if (mask_parse(rt_params.mask, &parsed_mask, NULL, NULL, NULL, NULL) != 0) {
+    /* rt_params.mask holds the RAW %-encoded charset field from the table
+     * filename (including any trailing !N-<hex> custom-charset blocks), NOT the
+     * decoded ?-form that mask_parse() expects.  Use the filename decoder, which
+     * decodes %x->?x and reconstructs custom charsets.  Returns 0 on success,
+     * -1 on error (same contract as mask_parse). */
+    if (mask_decode_charset_field(rt_params.mask, &parsed_mask) != 0) {
       fprintf(stderr, "Error: failed to parse mask '%s' from filename\n", rt_params.mask);
       return 0;
     }

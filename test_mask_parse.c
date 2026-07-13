@@ -436,6 +436,49 @@ static int group_parse_rt_params_mask(void)
         }
     }
 
+    /* MP-15h: a long custom-charset field (> 64 chars) round-trips through
+     * parse_rt_params WITHOUT truncation.  Regression for the bug where the
+     * raw field was copied via charset_name[64] before reaching mask[256].
+     * Field = "%1"x6 (12) + "!1-" (3) + 48 hex (24-byte set) = 63 chars, which
+     * overflows charset_name's 63 usable bytes. */
+    {
+        rt_parameters q;
+        Mask dm;
+        char field[256];
+        char filename[512];
+        /* 30 distinct bytes for the -1 custom charset. */
+        const char *custom = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123";
+        size_t custom_len = strlen(custom);
+        memset(&q, 0, sizeof(q));
+        if (mask_encode_charset_field("?1?1?1?1?1?1?1?1", custom, NULL, NULL, NULL,
+                                      field, sizeof(field)) != 0) {
+            fprintf(stderr, "MP-15h failed: encode failed\n"); ok = 0;
+        }
+        /* Must exceed charset_name's usable capacity (sizeof-1 = 63) so the old
+         * copy-through-charset_name path would have truncated it. */
+        if (strlen(field) <= 63) {
+            fprintf(stderr, "MP-15h failed: field not long enough to exercise "
+                    "truncation (len=%zu)\n", strlen(field)); ok = 0;
+        }
+        snprintf(filename, sizeof(filename),
+                 "ntlm_%s#6-6_0_1000x512_0.rt", field);
+        parse_rt_params(&q, filename);
+        if (!q.parsed || !q.is_mask) {
+            fprintf(stderr, "MP-15h failed: not detected as mask\n"); ok = 0;
+        }
+        if (strlen(q.mask) != strlen(field) ||
+            strcmp(q.mask, field) != 0) {
+            fprintf(stderr, "MP-15h failed: raw field truncated: got \"%s\" "
+                    "(len=%zu), expected \"%s\" (len=%zu)\n",
+                    q.mask, strlen(q.mask), field, strlen(field)); ok = 0;
+        }
+        if (mask_decode_charset_field(q.mask, &dm) != 0 || dm.length != 8 ||
+            dm.positions[0].size != custom_len ||
+            memcmp(dm.positions[0].chars, custom, custom_len) != 0) {
+            fprintf(stderr, "MP-15h failed: decode from stored field\n"); ok = 0;
+        }
+    }
+
     return ok;
 }
 
