@@ -463,18 +463,21 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
         }
       }
 
-      /* Detect a mask-encoded charset field (e.g. "%u%l%l%d%d%d%d%d").
-       * Check AFTER markov stripping so a future markov+mask combo could be
-       * distinguished.  Decode a copy; if it's a mask string, store the
-       * decoded mask and set is_mask = 1. */
+      /* Detect a mask-encoded charset field (e.g. "%u%l%d" or
+       * "%1%1%d!1-616263").  Check AFTER markov stripping so a future
+       * markov+mask combo could be distinguished.  Store the RAW encoded
+       * field; consumers call mask_decode_charset_field() to reconstruct the
+       * Mask (custom sets are carried in trailing !N-<hex> blocks, which must
+       * not be mangled by the in-place %x->?x decode used only to TEST). */
       {
-        char decoded[256];
+        char decoded[sizeof(rt_params->mask)];
         strncpy(decoded, rt_params->charset_name, sizeof(decoded) - 1);
         decoded[sizeof(decoded) - 1] = '\0';
-        mask_decode_from_filename(decoded);
+        mask_decode_from_filename(decoded);      /* only to TEST for '?' */
         if (is_mask_string(decoded)) {
           rt_params->is_mask = 1;
-          strncpy(rt_params->mask, decoded, sizeof(rt_params->mask) - 1);
+          strncpy(rt_params->mask, rt_params->charset_name,   /* RAW, not decoded */
+                  sizeof(rt_params->mask) - 1);
           rt_params->mask[sizeof(rt_params->mask) - 1] = '\0';
         } else {
           rt_params->is_mask = 0;

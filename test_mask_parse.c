@@ -376,9 +376,11 @@ static int group_parse_rt_params_mask(void)
         ok = 0;
     }
 
-    /* MP-15d: decoded mask round-trips to original */
-    if (strcmp(p.mask, "?u?l?l?d?d?d?d?d") != 0) {
-        fprintf(stderr, "MP-15d failed: p.mask=\"%s\", expected \"?u?l?l?d?d?d?d?d\"\n",
+    /* MP-15d: the RAW (encoded) charset field is stored verbatim; consumers
+     * call mask_decode_charset_field() to reconstruct the Mask.  For a plain
+     * mask this means the "%"-encoded token string is preserved as-is. */
+    if (strcmp(p.mask, "%u%l%l%d%d%d%d%d") != 0) {
+        fprintf(stderr, "MP-15d failed: p.mask=\"%s\", expected \"%%u%%l%%l%%d%%d%%d%%d%%d\"\n",
                 p.mask);
         ok = 0;
     }
@@ -411,6 +413,27 @@ static int group_parse_rt_params_mask(void)
         fprintf(stderr, "MP-15f failed: is_mask=%d for markov filename (expected 0)\n",
                 p.is_mask);
         ok = 0;
+    }
+
+    /* MP-15g: custom-charset filename -> is_mask, RAW field preserved, and
+     * mask_decode_charset_field reconstructs the custom set. */
+    {
+        rt_parameters q;
+        Mask dm;
+        memset(&q, 0, sizeof(q));
+        parse_rt_params(&q, "ntlm_%1%1%d!1-616263#3-3_0_1000x512_0.rt");
+        if (!q.parsed || !q.is_mask) {
+            fprintf(stderr, "MP-15g failed: not detected as mask\n"); ok = 0;
+        }
+        if (strcmp(q.mask, "%1%1%d!1-616263") != 0) {
+            fprintf(stderr, "MP-15g failed: raw field not preserved: \"%s\"\n",
+                    q.mask); ok = 0;
+        }
+        if (mask_decode_charset_field(q.mask, &dm) != 0 || dm.length != 3 ||
+            dm.positions[0].size != 3 ||
+            memcmp(dm.positions[0].chars, "abc", 3) != 0) {
+            fprintf(stderr, "MP-15g failed: decode from stored field\n"); ok = 0;
+        }
     }
 
     return ok;
