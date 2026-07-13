@@ -344,6 +344,8 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_markov.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/test_mask_parse.o \
+	$(OBJDIR)/hcmask.o \
+	$(OBJDIR)/test_hcmask.o \
 	$(OBJDIR)/test_challenge_host.o \
 	$(OBJDIR)/test_misc.o \
 	$(OBJDIR)/test_golden.o \
