@@ -486,6 +486,13 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
           strncpy(rt_params->mask, charset_name_ptr,   /* RAW, not decoded */
                   sizeof(rt_params->mask) - 1);
           rt_params->mask[sizeof(rt_params->mask) - 1] = '\0';
+          /* Strip any trailing -mk<N> suffix so that rt_params->mask holds
+           * only the pure mask field (e.g. "%u%l%l%d"), not the markov tag. */
+          {
+            char *mk_in_mask = strstr(rt_params->mask, "-mk");
+            if (mk_in_mask)
+              *mk_in_mask = '\0';
+          }
         } else {
           rt_params->is_mask = 0;
           rt_params->mask[0] = '\0';

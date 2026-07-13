@@ -6,6 +6,7 @@
 #include "mask_parse.h"
 #include "markov_mask.h"
 #include "test_markov_mask.h"
+#include "misc.h"
 
 /* Build an in-memory markov model over charset "abc" with explicit freqs. */
 static void make_model_abc(markov_model *m) {
@@ -74,6 +75,22 @@ static int group_build_and_decode(void) {
     return ok;
 }
 
+static int group_parse_combined(void) {
+    int ok = 1;
+    rt_parameters p;
+    memset(&p, 0, sizeof(p));
+    parse_rt_params(&p, "ntlm_%u%l%l%d-mk1000000#4-4_0_1000x512_0.rt");
+    if (!p.parsed) { fprintf(stderr, "MM-06 failed: not parsed\n"); return 0; }
+    if (p.markov_keyspace != 1000000ULL) {
+        fprintf(stderr, "MM-06 failed: markov_keyspace=%" PRIu64 "\n", p.markov_keyspace); ok = 0;
+    }
+    if (!p.is_mask) { fprintf(stderr, "MM-06 failed: is_mask=0\n"); ok = 0; }
+    if (strcmp(p.mask, "%u%l%l%d") != 0) {
+        fprintf(stderr, "MM-06 failed: mask=\"%s\"\n", p.mask); ok = 0;
+    }
+    return ok;
+}
+
 static int group_subset_violation(void) {
     int ok = 1;
     markov_model m; make_model_abc(&m);
@@ -95,5 +112,6 @@ int test_markov_mask(void) {
     int ok = 1;
     if (!group_build_and_decode()) ok = 0;
     if (!group_subset_violation()) ok = 0;
+    if (!group_parse_combined()) ok = 0;
     return ok;
 }
