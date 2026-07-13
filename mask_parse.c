@@ -127,6 +127,10 @@ int expand_charset_def(const char *def, char out[MAX_CHARSET_LEN],
             out[n++] = '\\';
             i += 2;
         } else {
+            if (def[i] == '?') {   /* trailing '?' with no specifier */
+                fprintf(stderr, "expand_charset_def: trailing '?' with no specifier\n");
+                return -1;
+            }
             if (n >= MAX_CHARSET_LEN) goto overflow;
             out[n++] = def[i++];
         }
