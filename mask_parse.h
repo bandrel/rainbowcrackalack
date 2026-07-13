@@ -56,6 +56,19 @@ void mask_encode_for_filename(const char *src, char *dst, size_t dst_len);
  */
 void mask_decode_from_filename(char *s);
 
+/* Build the filename charset field: token-encode mask_str then append
+ * "!N-<hex(expanded def)>" for each custom set referenced.  Performs an
+ * encode-time round-trip self-check and enforces a max field length.
+ * Returns 0 on success, -1 on ambiguity/overflow/missing-def. */
+int mask_encode_charset_field(const char *mask_str,
+                              const char *c1, const char *c2,
+                              const char *c3, const char *c4,
+                              char *dst, size_t dst_len);
+
+/* Parse a filename charset field (with optional !N-<hex> blocks) into a Mask.
+ * Handles plain masks (no blocks) too.  Returns 0 on success, -1 on error. */
+int mask_decode_charset_field(const char *field, Mask *out);
+
 /*
  * Fill flat GPU buffers from a parsed mask:
  *   mask_data[i * MAX_CHARSET_LEN .. +size-1] = chars for position i

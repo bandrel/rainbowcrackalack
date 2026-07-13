@@ -546,6 +546,51 @@ static int group_custom_charsets(void)
 }
 
 
+/* MP-32..35: filename charset-field codec with custom sets */
+static int group_charset_field_codec(void)
+{
+    int ok = 1;
+    char field[256];
+    Mask m;
+
+    /* MP-32: plain mask round-trips (no !N- block) */
+    if (mask_encode_charset_field("?u?l?d", NULL, NULL, NULL, NULL,
+                                  field, sizeof(field)) != 0 ||
+        strcmp(field, "%u%l%d") != 0) {
+        fprintf(stderr, "MP-32 failed: plain encode = \"%s\"\n", field); ok = 0;
+    }
+    if (mask_decode_charset_field("%u%l%d", &m) != 0 || m.length != 3 ||
+        m.positions[0].size != 26 || m.positions[2].size != 10) {
+        fprintf(stderr, "MP-32 failed: plain decode\n"); ok = 0;
+    }
+
+    /* MP-33: custom set encodes hex of EXPANDED bytes ("abc" -> 616263) */
+    if (mask_encode_charset_field("?1?1?d", "abc", NULL, NULL, NULL,
+                                  field, sizeof(field)) != 0 ||
+        strcmp(field, "%1%1%d!1-616263") != 0) {
+        fprintf(stderr, "MP-33 failed: custom encode = \"%s\"\n", field); ok = 0;
+    }
+
+    /* MP-34: decode reconstructs identical Mask */
+    if (mask_decode_charset_field("%1%1%d!1-616263", &m) != 0 || m.length != 3 ||
+        m.positions[0].size != 3 || m.positions[1].size != 3 ||
+        memcmp(m.positions[0].chars, "abc", 3) != 0 ||
+        m.positions[2].size != 10) {
+        fprintf(stderr, "MP-34 failed: custom decode\n"); ok = 0;
+    }
+
+    /* MP-35: token-bearing def is expanded before hex-encoding
+     * (-1 ?d -> 10 bytes 0x30..0x39 -> 20 hex chars) */
+    if (mask_encode_charset_field("?1", "?d", NULL, NULL, NULL,
+                                  field, sizeof(field)) != 0 ||
+        strcmp(field, "%1!1-30313233343536373839") != 0) {
+        fprintf(stderr, "MP-35 failed: token def encode = \"%s\"\n", field); ok = 0;
+    }
+
+    return ok;
+}
+
+
 int test_mask_parse(void)
 {
     int ok = 1;
@@ -563,6 +608,7 @@ int test_mask_parse(void)
     if (!group_hex_and_escape()) ok = 0;
     if (!group_expand_charset_def()) ok = 0;
     if (!group_custom_charsets()) ok = 0;
+    if (!group_charset_field_codec()) ok = 0;
 
     return ok;
 }
