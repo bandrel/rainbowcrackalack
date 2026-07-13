@@ -55,6 +55,13 @@ static int build_position(char spec, MaskPosition *pos,
     case '3': src = c3; break;
     case '4': src = c4; break;
 
+    case 'h': src = "0123456789abcdef"; break;
+    case 'H': src = "0123456789ABCDEF"; break;
+
+    case '?':   /* ?? -> literal '?' */
+        pos->chars[pos->size++] = '?';
+        return 0;
+
     default:
         fprintf(stderr, "mask_parse: unknown specifier '?%c'\n", spec);
         return -1;

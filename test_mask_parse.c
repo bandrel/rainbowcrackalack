@@ -401,6 +401,36 @@ static int group_parse_rt_params_mask(void)
 }
 
 
+/* MP-16..18: ?h, ?H, and ?? escaping */
+static int group_hex_and_escape(void)
+{
+    int ok = 1;
+    Mask m;
+
+    /* MP-16: ?h = 16 lowercase-hex chars */
+    if (mask_parse("?h", &m, NULL, NULL, NULL, NULL) != 0 || m.length != 1 ||
+        m.positions[0].size != 16 ||
+        memcmp(m.positions[0].chars, "0123456789abcdef", 16) != 0) {
+        fprintf(stderr, "MP-16 failed: ?h expansion wrong\n"); ok = 0;
+    }
+
+    /* MP-17: ?H = 16 uppercase-hex chars */
+    if (mask_parse("?H", &m, NULL, NULL, NULL, NULL) != 0 || m.length != 1 ||
+        m.positions[0].size != 16 ||
+        memcmp(m.positions[0].chars, "0123456789ABCDEF", 16) != 0) {
+        fprintf(stderr, "MP-17 failed: ?H expansion wrong\n"); ok = 0;
+    }
+
+    /* MP-18: ?? = literal '?' position of size 1 */
+    if (mask_parse("a??b", &m, NULL, NULL, NULL, NULL) != 0 || m.length != 3 ||
+        m.positions[1].size != 1 || m.positions[1].chars[0] != '?') {
+        fprintf(stderr, "MP-18 failed: ?? escaping wrong (len=%d)\n", m.length); ok = 0;
+    }
+
+    return ok;
+}
+
+
 int test_mask_parse(void)
 {
     int ok = 1;
@@ -415,6 +445,7 @@ int test_mask_parse(void)
     if (!group_fill_plaintext_space_mask()) ok = 0;
     if (!group_index_to_plaintext_mask()) ok = 0;
     if (!group_parse_rt_params_mask()) ok = 0;
+    if (!group_hex_and_escape()) ok = 0;
 
     return ok;
 }
