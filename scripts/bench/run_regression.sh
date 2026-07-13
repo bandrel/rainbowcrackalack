@@ -10,8 +10,10 @@
 #   run_regression.sh asan-smoke      # ASan memory-safety smoke test (gen->sort->lookup)
 #   run_regression.sh markov          # Markov end-to-end (gen/sort/verify/mint/lookup)
 #   run_regression.sh mask            # Mask end-to-end (gen/sort/verify/mint/lookup)
+#   run_regression.sh hcmask          # .hcmask batch gen/verify end-to-end
+#   run_regression.sh mask-markov     # Mask+Markov combined end-to-end (needs dynamic-all.markov)
 #   run_regression.sh report          # write regression_summary.md
-#   run_regression.sh all             # prepare + roundtrip + roundtrip-multi + crackdiff + asan-smoke + markov + mask + report
+#   run_regression.sh all             # prepare + roundtrip + roundtrip-multi + crackdiff + asan-smoke + markov + mask + hcmask + mask-markov + report
 set -euo pipefail
 
 # ---- Tunables (override via env) ----
@@ -371,6 +373,39 @@ phase_mask() {
     return $rc
 }
 
+# .hcmask batch end-to-end (gen/verify + missing-mask completeness).
+# Delegates to test_hcmask.sh, wrapped in the GPU lock.
+phase_hcmask() {
+    log "HCMASK: batch end-to-end backend=$BACKEND"
+    mkdir -p "$RESULTS"
+    local json="$RESULTS/hcmask_$BACKEND.json"
+    local rc=0
+    with_gpu_lock bash "$SCRIPT_DIR/test_hcmask.sh" "$THIS_REPO" >&2 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        echo '{"passed": true}' > "$json";  log "HCMASK: PASS"
+    else
+        echo '{"passed": false}' > "$json"; log "HCMASK: FAIL (rc=$rc)"
+    fi
+    return $rc
+}
+
+# Mask+Markov combined end-to-end (gen/sort/verify/mint/lookup + negative control).
+# Delegates to test_mask_markov_lookup.sh (needs dynamic-all.markov in the repo;
+# the script skips gracefully if the model is absent), wrapped in the GPU lock.
+phase_mask_markov() {
+    log "MASK_MARKOV: combined end-to-end backend=$BACKEND"
+    mkdir -p "$RESULTS"
+    local json="$RESULTS/mask_markov_$BACKEND.json"
+    local rc=0
+    with_gpu_lock bash "$SCRIPT_DIR/test_mask_markov_lookup.sh" "$THIS_REPO" >&2 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        echo '{"passed": true}' > "$json";  log "MASK_MARKOV: PASS"
+    else
+        echo '{"passed": false}' > "$json"; log "MASK_MARKOV: FAIL (rc=$rc)"
+    fi
+    return $rc
+}
+
 phase_report() {
     log "REPORT"
     export PYTHONPATH="$SCRIPT_DIR"
@@ -398,8 +433,10 @@ main() {
         asan-smoke)     phase_asan_smoke ;;
         markov)         phase_markov ;;
         mask)           phase_mask ;;
+        hcmask)         phase_hcmask ;;
+        mask-markov)    phase_mask_markov ;;
         report)         phase_report ;;
-        all)            phase_prepare; phase_roundtrip; phase_roundtrip_multi; phase_crackdiff; phase_asan_smoke || true; phase_markov || true; phase_mask || true; phase_report ;;
+        all)            phase_prepare; phase_roundtrip; phase_roundtrip_multi; phase_crackdiff; phase_asan_smoke || true; phase_markov || true; phase_mask || true; phase_hcmask || true; phase_mask_markov || true; phase_report ;;
         *) echo "Unknown phase: $phase" >&2; exit 2 ;;
     esac
 }
