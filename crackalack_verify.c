@@ -28,6 +28,7 @@
 #include "cpu_rt_functions.h"
 #include "hcmask.h"
 #include "markov.h"
+#include "markov_mask.h"
 #include "mask_parse.h"
 #include "misc.h"
 #include "terminal_color.h"
@@ -112,7 +113,7 @@ static int verify_hcmask_batch(const char *hcmask_path, const char *dir,
       /* Verify this table using quick mode (5 random chains via CPU).  We pass
        * the parsed mask so verify walks chains with generate_rainbow_chain_mask;
        * the quick path has no NULL-mask fallback for mask tables. */
-      if (verify_rainbowtable_file(path, VERIFY_TABLE_TYPE_QUICK, VERIFY_TABLE_IS_COMPLETE, VERIFY_DONT_TRUNCATE, -1, NULL, &m)) {
+      if (verify_rainbowtable_file(path, VERIFY_TABLE_TYPE_QUICK, VERIFY_TABLE_IS_COMPLETE, VERIFY_DONT_TRUNCATE, -1, NULL, &m, NULL)) {
         printf("  %sOK%s: %s\n", GREENB, CLR, de->d_name);
       } else {
         printf("  %sFAIL%s: %s\n", REDB, CLR, de->d_name);
@@ -243,6 +244,19 @@ int main(int ac, char **av) {
     mask_ptr = &parsed_mask;
   }
 
+  /* Combined mask+Markov verification: build the restricted tables so chain
+   * regeneration uses the mixed-radix Markov decode.  Requires both flags. */
+  markov_mask_tables mmtables = {0};
+  markov_mask_tables *mmtables_ptr = NULL;
+  if (markov_ptr && mask_ptr) {
+    if (markov_build_restricted(markov_ptr, mask_ptr, &mmtables) != 0) {
+      fprintf(stderr, "Error: failed to build combined mask+Markov tables (mask must be a subset of the model charset).\n");
+      markov_free(&markov);
+      return -1;
+    }
+    mmtables_ptr = &mmtables;
+  }
+
   if (raw_table)
     table_type = (markov_ptr || mask_ptr) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED;
   else if (quick_table)
@@ -250,17 +264,21 @@ int main(int ac, char **av) {
   else if (sorted_table)
     table_type = VERIFY_TABLE_TYPE_LOOKUP;
 
-  if (!verify_rainbowtable_file(filename, table_type, VERIFY_TABLE_IS_COMPLETE, truncate_on_err, num_chains_to_verify, markov_ptr, mask_ptr)) {
+  if (!verify_rainbowtable_file(filename, table_type, VERIFY_TABLE_IS_COMPLETE, truncate_on_err, num_chains_to_verify, markov_ptr, mask_ptr, mmtables_ptr)) {
     fprintf(stderr, "\n%sRainbow table verification FAILED.%s", REDB, CLR);
     if (truncate_on_err == VERIFY_TRUNCATE_ON_ERROR)
       fprintf(stderr, "  File truncate_on_errd.");
     fprintf(stderr, "\n\n");
+    if (mmtables_ptr)
+      markov_mask_tables_free(&mmtables);
     if (markov_ptr)
       markov_free(&markov);
     return -1;
   }
 
   printf("%sRainbow table successfully verified!%s\n", GREENB, CLR);
+  if (mmtables_ptr)
+    markov_mask_tables_free(&mmtables);
   if (markov_ptr)
     markov_free(&markov);
   return 0;

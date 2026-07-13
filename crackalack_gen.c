@@ -1256,6 +1256,29 @@ int main(int ac, char **av) {
     }
   }
 
+  /* Combined mask+Markov mode: build the restricted Markov tables from the model
+   * and the mask.  markov_build_restricted enforces that every mask character is
+   * a subset of the model charset.  Built here (before the filename -mk append)
+   * so that combined tables always carry a -mk<K> tag in their filename -- this
+   * is how crackalack_verify / crackalack_lookup detect combined mode.  When the
+   * user gave no --markov-keyspace cap, K is the full restricted keyspace. */
+  if (use_mask && use_markov) {
+    markov_model combined_model = {0};
+    if (markov_load(markov_path, &combined_model) != 0) {
+      fprintf(stderr, "Failed to load Markov model from '%s'\n", markov_path);
+      return -1;
+    }
+    if (markov_build_restricted(&combined_model, &mask, &combined_mmtables) != 0) {
+      fprintf(stderr, "Error: failed to build combined mask+Markov tables (mask must be a subset of the model charset).\n");
+      markov_free(&combined_model);
+      return -1;
+    }
+    markov_free(&combined_model);
+    have_combined_mmtables = 1;
+    if (markov_keyspace == 0)
+      markov_keyspace = markov_mask_keyspace(&combined_mmtables);
+  }
+
   /* When using Markov keyspace, append -mkN to the charset field in the filename.
    * Runs AFTER the mask encode so combined mode produces "<mask>-mk<K>", while
    * markov-only produces "<charset>-mk<K>". */
@@ -1351,24 +1374,6 @@ int main(int ac, char **av) {
     return -1;
   }
 
-  /* Combined mask+Markov mode: build the restricted Markov tables from the model
-   * and the mask.  markov_build_restricted enforces that every mask character is
-   * a subset of the model charset (its error is that check). */
-  if (use_mask && use_markov) {
-    markov_model combined_model = {0};
-    if (markov_load(markov_path, &combined_model) != 0) {
-      fprintf(stderr, "Failed to load Markov model from '%s'\n", markov_path);
-      return -1;
-    }
-    if (markov_build_restricted(&combined_model, &mask, &combined_mmtables) != 0) {
-      fprintf(stderr, "Error: failed to build combined mask+Markov tables (mask must be a subset of the model charset).\n");
-      markov_free(&combined_model);
-      return -1;
-    }
-    markov_free(&combined_model);
-    have_combined_mmtables = 1;
-  }
-
   /* The original rcrack didn't support chain counts >= 128M, as that would
    * result in files greater than 2GB in size.  It may work with modern
    * rcrack/rcracki_mt, but its untested as of right now... */
@@ -1392,7 +1397,7 @@ int main(int ac, char **av) {
 
   /* If the file size implies that it is already complete, run the verifier on it. */
   if (file_size == ((uint64_t)total_chains_in_table * CHAIN_SIZE)) {
-    if (verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL)) {
+    if (verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL, have_combined_mmtables ? &combined_mmtables : NULL)) {
       /* The table is complete, so tell the user and exit. */
       printf("Table in \"%s\" already appears to be complete.  Terminating...\n", filename);
       exit(0);
@@ -1432,7 +1437,7 @@ int main(int ac, char **av) {
       /* No valid checkpoint - use legacy resume (experimental) */
       printf("\n  !! WARNING !!\n\nPartially generated table found without checkpoint.\nAttempting legacy resume (experimental).\n\n"); fflush(stdout);
 
-      verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL);
+      verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_MAY_BE_INCOMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL, have_combined_mmtables ? &combined_mmtables : NULL);
 
       /* fopen()'s modes are weird.  Its easier to just re-open the file for reading
        * at this point, rather than change the code above and re-use the open handle. */
@@ -1641,7 +1646,7 @@ int main(int ac, char **av) {
     /* Verify that the new table is valid. */
     printf("Now verifying rainbow table... ");
     fflush(stdout);
-    if (!verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL)) {
+    if (!verify_rainbowtable_file(filename, (use_markov || use_mask) ? VERIFY_TABLE_TYPE_MARKOV : VERIFY_TABLE_TYPE_GENERATED, VERIFY_TABLE_IS_COMPLETE, VERIFY_TRUNCATE_ON_ERROR, (use_markov || use_mask) ? 0 : -1, NULL, use_mask ? &mask : NULL, have_combined_mmtables ? &combined_mmtables : NULL)) {
       char log_filename[256] = {0};
 
       get_rt_log_filename(log_filename, sizeof(log_filename), filename);
