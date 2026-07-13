@@ -121,6 +121,80 @@ else
   echo "  PASS: negative-control hash not cracked (false-alarm check rejects bogus candidates)"
 fi
 
+# ---- Custom-charset case (?1?1?l?d with -1 abcxyz) ----
+# Exercises hashcat-style custom charsets end-to-end.  crackalack_lookup gets
+# NO -1 flag: it must reconstruct the custom charset from the self-describing
+# filename (ntlm_%1%1%l%d!1-<hex>#4-4_...).
+CC_MASK='?1?1?l?d'; CC1='abcxyz'
+CC_CHAIN_LEN=1000; CC_NUM_CHAINS=512; CC_TARGET_POS=300
+ccdir="$work/case_custom"; mkdir -p "$ccdir"
+echo
+echo "===== Custom-charset end-to-end test (mask='$CC_MASK' -1 '$CC1') ====="
+
+# 1. Generate the custom-charset table (length 4, table_index 0, part 0).
+echo "[test] generating custom-charset table..."
+( cd "$REPO" && "$GEN" ntlm ascii-32-95 4 4 0 "$CC_CHAIN_LEN" "$CC_NUM_CHAINS" 0 \
+    --mask "$CC_MASK" -1 "$CC1" >/dev/null 2>&1 )
+# Filename hex suffix is deterministic but matched by glob for robustness.
+ccname="$(cd "$REPO" && ls 'ntlm_%1%1%l%d!1-'*'_0.rt' 2>/dev/null | head -1)"
+[[ -n "$ccname" && -f "$REPO/$ccname" ]] || { echo "FAIL: no custom-charset table generated"; exit 1; }
+mv -f "$REPO/$ccname" "$ccdir/"; rm -f "$REPO/$ccname.state"
+cctable="$ccdir/$ccname"
+echo "  generated $ccname"
+
+# 2. Sort.
+echo "[test] sorting custom-charset table..."
+"$SORT" "$cctable" >/dev/null 2>&1 || { echo "FAIL: crackalack_sort failed (custom)"; exit 1; }
+
+# 3. Verify with --mask + -1.
+echo "[test] verifying custom-charset table..."
+ccv="$("$VERIFY" --quick --mask "$CC_MASK" -1 "$CC1" "$cctable" 2>&1 | strip_ansi || true)"
+if grep -qi "successfully verified" <<<"$ccv"; then
+  echo "  PASS: crackalack_verify --mask -1 (custom)"
+else
+  echo "  FAIL: crackalack_verify (custom) did not pass"
+  echo "$ccv" | tail -5
+  rc=1
+fi
+
+# 4. Mint an in-table hash using gen_known_hash --mask + -1.
+echo "[test] minting in-table custom hash with gen_known_hash --mask -1..."
+ccstart="$("$GETCHAIN" "$cctable" 0 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+[[ -n "$ccstart" ]] || { echo "FAIL: get_chain failed to read chain 0 start (custom)"; rc=1; ccstart=0; }
+cco="$("$GKH" "$CC_CHAIN_LEN" 0 "$ccstart" "$CC_TARGET_POS" --algo ntlm --mask "$CC_MASK" -1 "$CC1" 2>&1)"
+cchash="$(awk -F= '/^hash=/{print $2}' <<<"$cco")"
+ccpt="$(awk -F= '/^plaintext=/{print $2}' <<<"$cco")"
+[[ -n "$cchash" ]] || { echo "FAIL: gen_known_hash (custom) produced no hash"; echo "$cco" | tail -3; exit 1; }
+echo "  minted in-table custom hash $cchash (start=$ccstart, pos=$CC_TARGET_POS) -> '$ccpt'"
+
+# 5. Lookup positive control -- lookup auto-detects the custom charset from the
+#    filename (NO -1 flag passed here).
+echo "[test] running custom lookup (positive control)..."
+rm -f "$REPO"/rcracki.precalc.* "$REPO"/*.index 2>/dev/null || true
+printf '%s\n' "$cchash" > "$work/cchashes.txt"
+cclog="$work/cclookup.log"
+( cd "$REPO" && "$LOOKUP" "$ccdir" "$work/cchashes.txt" ) >"$cclog" 2>&1 || true
+if grep -qiE "Cracked [1-9][0-9]* of|HASH CRACKED" <(strip_ansi <"$cclog"); then
+  echo "  PASS: lookup cracked the in-table custom hash"
+else
+  echo "  FAIL: in-table custom hash did NOT crack"
+  strip_ansi <"$cclog" | tail -8
+  rc=1
+fi
+
+# 6. Negative control for the custom case.
+echo "[test] running custom lookup (negative control)..."
+rm -f "$REPO"/rcracki.precalc.* "$REPO"/*.index 2>/dev/null || true
+printf '%s\n' "deadbeefdeadbeefdeadbeefdeadbeef" > "$work/ccneg.txt"
+ccnlog="$work/ccneg.log"
+( cd "$REPO" && "$LOOKUP" "$ccdir" "$work/ccneg.txt" ) >"$ccnlog" 2>&1 || true
+if grep -qiE "Cracked [1-9][0-9]* of|HASH CRACKED" <(strip_ansi <"$ccnlog"); then
+  echo "  FAIL: custom negative-control hash CRACKED (false positive -- FA check is broken)"
+  rc=1
+else
+  echo "  PASS: custom negative-control hash not cracked"
+fi
+
 echo
 if [[ "$rc" -eq 0 ]]; then
   echo "PASS: Mask end-to-end pipeline (gen/sort/verify/mint/lookup) works correctly."
