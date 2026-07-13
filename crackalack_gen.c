@@ -252,6 +252,8 @@ static char mask_str[1024] = {0};
 static Mask mask = {0};
 /* Custom charset definitions (-1/-2/-3/-4) for --mask; NULL when unused. */
 static const char *cc1 = NULL, *cc2 = NULL, *cc3 = NULL, *cc4 = NULL;
+/* Raw -gws argument string for forwarding to --hcmask children; NULL when unused. */
+static const char *gws_arg = NULL;
 
 /* Batch mode state set by --hcmask flag. */
 static const char *hcmask_path = NULL;
@@ -1003,6 +1005,7 @@ int main(int ac, char **av) {
         return -1;
       }
       i++;
+      gws_arg = av[i];
       user_provided_gws = parse_uint_arg(av[i], "-gws");
     } else if (strcmp(av[i], "--markov") == 0) {
       if (i + 1 >= ac) {
@@ -1089,6 +1092,10 @@ int main(int ac, char **av) {
       fprintf(stderr, "Error: --hcmask and --markov are mutually exclusive.\n");
       return -1;
     }
+    if (!challenge_is_default(challenge)) {
+      fprintf(stderr, "Error: --hcmask does not support a custom --challenge (masks are NTLM/MD5 only).\n");
+      return -1;
+    }
     if (hcmask_load(hcmask_path, &entries, &nentries) != 0)
       return -1;
 
@@ -1123,6 +1130,7 @@ int main(int ac, char **av) {
       if (rc2) { argv[a++] = "-2"; argv[a++] = (char *)rc2; }
       if (rc3) { argv[a++] = "-3"; argv[a++] = (char *)rc3; }
       if (rc4) { argv[a++] = "-4"; argv[a++] = (char *)rc4; }
+      if (gws_arg) { argv[a++] = "-gws"; argv[a++] = (char *)gws_arg; }
       argv[a] = NULL;
 
       printf("=== [hcmask %d/%d] mask '%s' (len %d) ===\n", e + 1, nentries, entries[e].mask, m.length);
@@ -1131,7 +1139,10 @@ int main(int ac, char **av) {
       pid = fork();
       if (pid < 0) { perror("fork"); free(entries); return -1; }
       if (pid == 0) { execvp(av[0], argv); perror("execvp"); _exit(127); }
-      if (waitpid(pid, &status, 0) < 0) { perror("waitpid"); free(entries); return -1; }
+      { int wret;
+        while ((wret = waitpid(pid, &status, 0)) < 0 && errno == EINTR) ;
+        if (wret < 0) { perror("waitpid"); free(entries); return -1; }
+      }
       if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         fprintf(stderr, "%s: entry %d ('%s') failed (exit %d)\n",
                 hcmask_path, e + 1, entries[e].mask,
