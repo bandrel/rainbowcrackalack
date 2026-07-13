@@ -483,6 +483,21 @@ static int group_expand_charset_def(void)
         fprintf(stderr, "MP-24 failed: overflow should be rejected\n"); ok = 0;
     }
 
+    /* MP-25: \\ -> literal backslash */
+    if (expand_charset_def("\\\\", buf, &n) != 0 || n != 1 || buf[0] != '\\') {
+        fprintf(stderr, "MP-25 failed: backslash escape\n"); ok = 0;
+    }
+
+    /* MP-26: unknown ?z is rejected */
+    if (expand_charset_def("?z", buf, &n) == 0) {
+        fprintf(stderr, "MP-26 failed: ?z should be rejected\n"); ok = 0;
+    }
+
+    /* MP-27: trailing bare '?' is rejected */
+    if (expand_charset_def("abc?", buf, &n) == 0) {
+        fprintf(stderr, "MP-27 failed: trailing '?' should be rejected\n"); ok = 0;
+    }
+
     return ok;
 }
 
