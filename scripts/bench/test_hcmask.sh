@@ -34,6 +34,28 @@ echo "[test] batch verify (all present)..."
 vout="$("$VERIFY" --hcmask "$work/masks.hcmask" "$tables" 2>&1 | strip_ansi || true)"
 if grep -q "MISSING" <<<"$vout"; then echo "  FAIL: unexpected MISSING"; echo "$vout"; rc=1; else echo "  PASS: no missing tables"; fi
 
+echo "[test] lookup cracks an in-table hash from the batch dir (no mask flags)..."
+plain="$tables/ntlm_%u%l%l%d#4-4_0_1000x512_0.rt"
+if [[ -f "$plain" ]]; then
+  pstart="$("$GETCHAIN" "$plain" 0 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+  out="$("$GKH" 1000 0 "$pstart" 300 --algo ntlm --mask '?u?l?l?d' 2>&1)"
+  h="$(awk -F= '/^hash=/{print $2}' <<<"$out")"
+  if [[ -n "$h" ]]; then
+    rm -f "$REPO"/rcracki.precalc.* "$REPO"/*.index 2>/dev/null || true
+    printf '%s\n' "$h" > "$work/h.txt"
+    ( cd "$REPO" && "$LOOKUP" "$tables" "$work/h.txt" ) >"$work/lk.log" 2>&1 || true
+    if grep -qiE "Cracked [1-9][0-9]* of|HASH CRACKED" <(strip_ansi <"$work/lk.log"); then
+      echo "  PASS: lookup cracked the batch-generated table"
+    else
+      echo "  FAIL: lookup did not crack"; strip_ansi <"$work/lk.log" | tail -6; rc=1
+    fi
+  else
+    echo "  FAIL: gen_known_hash produced no hash"; echo "$out" | tail -3; rc=1
+  fi
+else
+  echo "  FAIL: expected plain table missing"; rc=1
+fi
+
 echo "[test] batch verify reports MISSING when a table is removed..."
 rm -f "$tables"/ntlm_%u%l%l%d#4-4_0_1000x512_0.rt
 vout2="$("$VERIFY" --hcmask "$work/masks.hcmask" "$tables" 2>&1 | strip_ansi || true)"
