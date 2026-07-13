@@ -371,6 +371,7 @@ $(OUTDIR)/$(VERIFY_PROG): \
 	$(OBJDIR)/crackalack_verify.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/hcmask.o \
 	$(OBJDIR)/markov.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
