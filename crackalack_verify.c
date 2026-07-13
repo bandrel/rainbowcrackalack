@@ -43,6 +43,10 @@ static struct option long_options[] = {
   {"markov", required_argument, 0, 'm'},
   {"mask", required_argument, 0, 'M'},
   {"challenge", required_argument, 0, 'c'},
+  {"custom-charset1", required_argument, 0, '1'},
+  {"custom-charset2", required_argument, 0, '2'},
+  {"custom-charset3", required_argument, 0, '3'},
+  {"custom-charset4", required_argument, 0, '4'},
   {0, 0, 0, 0}
 };
 
@@ -56,6 +60,7 @@ int main(int ac, char **av) {
   char *filename = NULL;
   char *markov_path = NULL;
   char *mask_str = NULL;
+  const char *cc1 = NULL, *cc2 = NULL, *cc3 = NULL, *cc4 = NULL;
   unsigned int table_type = 0;
   int num_chains_to_verify = -1, c = 0, option_index = 0;
   markov_model markov = {0};
@@ -66,7 +71,7 @@ int main(int ac, char **av) {
 
   ENABLE_CONSOLE_COLOR();
   PRINT_PROJECT_HEADER();
-  while ((c = getopt_long(ac, av, "", long_options, &option_index)) != -1) {
+  while ((c = getopt_long(ac, av, "1:2:3:4:", long_options, &option_index)) != -1) {
     switch(c) {
     case 0:
       break;
@@ -78,6 +83,18 @@ int main(int ac, char **av) {
       break;
     case 'M':
       mask_str = optarg;
+      break;
+    case '1':
+      cc1 = optarg;
+      break;
+    case '2':
+      cc2 = optarg;
+      break;
+    case '3':
+      cc3 = optarg;
+      break;
+    case '4':
+      cc4 = optarg;
       break;
     case 'c': {
       /* NetNTLMv1 CPU chain verification needs the server challenge the table
@@ -126,7 +143,7 @@ int main(int ac, char **av) {
   }
 
   if (mask_str) {
-    if (mask_parse(mask_str, &parsed_mask, NULL, NULL, NULL, NULL) != 0) {
+    if (mask_parse(mask_str, &parsed_mask, cc1, cc2, cc3, cc4) != 0) {
       fprintf(stderr, "Error: failed to parse mask '%s'\n", mask_str);
       return -1;
     }

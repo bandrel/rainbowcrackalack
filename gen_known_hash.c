@@ -72,6 +72,7 @@ int main(int ac, char **av) {
   const char *mask_str = NULL;
   Mask parsed_mask = {0};
   int use_mask = 0;
+  const char *cc1 = NULL, *cc2 = NULL, *cc3 = NULL, *cc4 = NULL;
 
   const char *positional[4] = {NULL, NULL, NULL, NULL};
   int pos_count = 0;
@@ -101,6 +102,18 @@ int main(int ac, char **av) {
     } else if (strcmp(av[i], "--mask") == 0) {
       if (i + 1 >= ac) { fprintf(stderr, "%s: --mask requires a mask string (e.g. ?u?l?l?l?l?l?l?d)\n", av[0]); return 1; }
       mask_str = av[++i];
+    } else if (strcmp(av[i], "-1") == 0 || strcmp(av[i], "--custom-charset1") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s: %s requires a value\n", av[0], av[i]); return 1; }
+      cc1 = av[++i];
+    } else if (strcmp(av[i], "-2") == 0 || strcmp(av[i], "--custom-charset2") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s: %s requires a value\n", av[0], av[i]); return 1; }
+      cc2 = av[++i];
+    } else if (strcmp(av[i], "-3") == 0 || strcmp(av[i], "--custom-charset3") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s: %s requires a value\n", av[0], av[i]); return 1; }
+      cc3 = av[++i];
+    } else if (strcmp(av[i], "-4") == 0 || strcmp(av[i], "--custom-charset4") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s: %s requires a value\n", av[0], av[i]); return 1; }
+      cc4 = av[++i];
     } else if (strcmp(av[i], "--markov") == 0) {
       if (i + 1 >= ac) { fprintf(stderr, "%s: --markov requires a filename\n", av[0]); return 1; }
       markov_path = av[++i];
@@ -149,7 +162,7 @@ int main(int ac, char **av) {
     return 1;
   }
   if (mask_str != NULL) {
-    if (mask_parse(mask_str, &parsed_mask, NULL, NULL, NULL, NULL) != 0) {
+    if (mask_parse(mask_str, &parsed_mask, cc1, cc2, cc3, cc4) != 0) {
       fprintf(stderr, "%s: failed to parse mask '%s'\n", av[0], mask_str);
       return 1;
     }

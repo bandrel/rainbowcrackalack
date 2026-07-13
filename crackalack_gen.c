@@ -246,6 +246,8 @@ static uint64_t markov_keyspace = 0;
 static int  use_mask = 0;
 static char mask_str[1024] = {0};
 static Mask mask = {0};
+/* Custom charset definitions (-1/-2/-3/-4) for --mask; NULL when unused. */
+static const char *cc1 = NULL, *cc2 = NULL, *cc3 = NULL, *cc4 = NULL;
 
 
 void print_usage_and_exit(char *prog_name, int exit_code) {
@@ -1032,11 +1034,23 @@ int main(int ac, char **av) {
       }
       i++;
       strncpy(mask_str, av[i], sizeof(mask_str) - 1);
-      if (mask_parse(mask_str, &mask, NULL, NULL, NULL, NULL) != 0) {
-        fprintf(stderr, "Error: failed to parse mask '%s'\n", mask_str);
-        return -1;
-      }
       use_mask = 1;
+    } else if (strcmp(av[i], "-1") == 0 || strcmp(av[i], "--custom-charset1") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s requires a value\n", av[i]); return -1; }
+      i++;
+      cc1 = av[i];
+    } else if (strcmp(av[i], "-2") == 0 || strcmp(av[i], "--custom-charset2") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s requires a value\n", av[i]); return -1; }
+      i++;
+      cc2 = av[i];
+    } else if (strcmp(av[i], "-3") == 0 || strcmp(av[i], "--custom-charset3") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s requires a value\n", av[i]); return -1; }
+      i++;
+      cc3 = av[i];
+    } else if (strcmp(av[i], "-4") == 0 || strcmp(av[i], "--custom-charset4") == 0) {
+      if (i + 1 >= ac) { fprintf(stderr, "%s requires a value\n", av[i]); return -1; }
+      i++;
+      cc4 = av[i];
     } else {
       fprintf(stderr, "Unknown option: %s\n", av[i]);
       print_usage_and_exit(av[0], -1);
@@ -1063,7 +1077,15 @@ int main(int ac, char **av) {
   /* When using a mask, replace the charset field with the filename-encoded mask
    * (e.g. "?u?l?l?d" -> "%u%l%l%d") so parse_rt_params can reconstruct it. */
   if (use_mask) {
-    mask_encode_for_filename(mask_str, charset_name_safe, sizeof(charset_name_safe));
+    if (mask_parse(mask_str, &mask, cc1, cc2, cc3, cc4) != 0) {
+      fprintf(stderr, "Error: failed to parse mask '%s'\n", mask_str);
+      return -1;
+    }
+    if (mask_encode_charset_field(mask_str, cc1, cc2, cc3, cc4,
+                                  charset_name_safe, sizeof(charset_name_safe)) != 0) {
+      fprintf(stderr, "Failed to encode mask into filename.\n");
+      return -1;
+    }
   }
 
   /* When using a non-default NetNTLMv1 challenge, append -chal<hex> to charset. */
