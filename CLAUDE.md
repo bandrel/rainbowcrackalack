@@ -74,6 +74,31 @@ Hashcat-style masks restrict each position to a specific character class, lettin
 ./crackalack_lookup /path/to/mask_tables/ /path/to/hashes.txt
 ```
 
+#### Batch masks (.hcmask)
+
+`--hcmask FILE` generates one table per mask line from a hashcat `.hcmask` file, letting you kick off an entire mask campaign in a single invocation.
+
+**File format:**
+- Lines beginning with `#` and blank lines are skipped.
+- Each active line is a comma-separated record: `cs1,...,csN,mask` where the **last** field is the mask and the preceding fields define custom charsets `?1..?4` for that line.
+- `\,` and `\#` are recognized escape sequences within a field.
+
+**Behavior:**
+- `min_len` / `max_len` positional args are **ignored** — each table's length is derived from its own mask.
+- Global `-1..-4` flags act as defaults for slots a line doesn't define inline; an inline definition wins over the global default.
+- `--hcmask` is mutually exclusive with `--mask` and `--markov`.
+
+**Verification:** `crackalack_verify --hcmask FILE DIR` batch-verifies every generated table for the listed masks and reports any mask whose table is absent from `DIR` (campaign completeness check). Exits non-zero if any table is missing or fails verification.
+
+**Lookup:** No `.hcmask` flag is needed at lookup time — tables are self-describing via their filenames.
+
+```bash
+# one table per line; line 2 defines ?1='?d?l' inline
+printf '?u?l?l?l?l?l?d\n?d?l,?1?1?1?1\n' > masks.hcmask
+./crackalack_gen ntlm ascii-32-95 8 8 0 803000 67108864 0 --hcmask masks.hcmask
+./crackalack_verify --hcmask masks.hcmask /path/to/tables/
+```
+
 ## Tests
 
 Unit tests require a GPU (CUDA on Linux, OpenCL on Windows, Metal on macOS):
