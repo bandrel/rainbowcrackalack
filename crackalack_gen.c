@@ -592,7 +592,7 @@ void *host_thread(void *ptr) {
     CLRELEASEPROGRAM(gpu->program);
     CLRELEASEQUEUE(gpu->queue);
     CLRELEASECONTEXT(gpu->context);
-    if (args->use_markov)
+    if (args->use_markov && !combined_mode)
       markov_free(&markov);
     pthread_exit(NULL);
     return NULL;
@@ -1475,7 +1475,9 @@ int main(int ac, char **av) {
     } else {
 
       uint64_t plaintext_space_total;
-      if (use_mask)
+      if (use_mask && use_markov)
+        plaintext_space_total = fill_plaintext_space_markov_mask(&combined_mmtables, markov_keyspace, plaintext_space_up_to_index);
+      else if (use_mask)
         plaintext_space_total = fill_plaintext_space_mask(&mask, plaintext_space_up_to_index);
       else if (markov_keyspace > 0)
         plaintext_space_total = fill_plaintext_space_markov_keyspace(markov_keyspace, plaintext_len_max, plaintext_space_up_to_index);
