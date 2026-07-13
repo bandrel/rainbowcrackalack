@@ -18,6 +18,7 @@
 #include "test_precompute_collate.h"
 #include "test_markov.h"
 #include "test_mask_parse.h"
+#include "test_markov_mask.h"
 #include "test_hcmask.h"
 #include "test_golden.h"
 
@@ -92,6 +93,14 @@ int run_cpu_only_tests(void) {
   /* Mask parser tests (CPU-only, no kernel needed). */
   printf("Running Mask parser tests... "); fflush(stdout);
   if (!test_mask_parse()) {
+    all_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  /* Markov+mask restricted-table tests (CPU-only, no kernel needed). */
+  printf("Running Markov+mask tests... "); fflush(stdout);
+  if (!test_markov_mask()) {
     all_passed = 0;
     PRINT_FAILED();
   } else
