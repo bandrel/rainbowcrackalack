@@ -92,15 +92,14 @@ static int verify_hcmask_batch(const char *hcmask_path, const char *dir) {
       fprintf(stderr, "hcmask entry %d: cannot encode mask\n", e + 1);
       rc = 1; continue;
     }
-    /* Expected filename fragment: "_<field>#<len>-<len>_".  This is
-     * hash-agnostic and unique per mask given the format
-     * {hash}_{field}#{min}-{max}_{...}.rt . */
+    /* Match "_<field>#<len>-<len>_" as a filename fragment.  Distinct per mask
+     * because mask_encode_charset_field round-trips each field uniquely. */
     snprintf(prefix, sizeof(prefix), "_%s#%d-%d_", field, m.length, m.length);
 
     d = opendir(dir);
     if (!d) { perror("opendir"); free(entries); return 1; }
     while ((de = readdir(d)) != NULL) {
-      char path[1024];
+      char path[4096];
       size_t nlen = strlen(de->d_name);
       if (nlen < 3 || strcmp(de->d_name + nlen - 3, ".rt") != 0) continue;
       if (strstr(de->d_name, prefix) == NULL) continue;
