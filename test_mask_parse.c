@@ -533,6 +533,15 @@ static int group_custom_charsets(void)
         }
     }
 
+    /* MP-31: oversized custom charset via mask_parse_ex is rejected */
+    {
+        static MaskPosition big;
+        big.size = MAX_CHARSET_LEN + 1;
+        if (mask_parse_ex("?1", &m, &big, NULL, NULL, NULL) == 0) {
+            fprintf(stderr, "MP-31 failed: oversized custom charset accepted\n"); ok = 0;
+        }
+    }
+
     return ok;
 }
 

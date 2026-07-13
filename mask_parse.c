@@ -68,26 +68,21 @@ static int build_position(char spec, MaskPosition *pos,
         return -1;
     }
 
-    if (spec == '1' || spec == '2' || spec == '3' || spec == '4') {
-        if (cust != NULL) {                 /* custom charset: copy by length */
-            if (cust->size == 0) {
-                fprintf(stderr, "mask_parse: empty custom charset\n");
-                return -1;
-            }
-            memcpy(pos->chars, cust->chars, cust->size);
-            pos->size = cust->size;
-            return 0;
+    if (cust != NULL) {
+        if (cust->size == 0) {
+            fprintf(stderr, "mask_parse: empty custom charset\n");
+            return -1;
         }
-        /* ?1-?4 requested but not provided */
-        fprintf(stderr, "mask_parse: custom charset ?%c not provided\n", spec);
-        return -1;
+        if (cust->size > MAX_CHARSET_LEN) {
+            fprintf(stderr, "mask_parse: custom charset size %u exceeds "
+                    "MAX_CHARSET_LEN (%d)\n", cust->size, MAX_CHARSET_LEN);
+            return -1;
+        }
+        memcpy(pos->chars, cust->chars, cust->size);
+        pos->size = cust->size;
+        return 0;
     }
-
-    if (src == NULL) {
-        fprintf(stderr, "mask_parse: custom charset ?%c was not provided\n", spec);
-        return -1;
-    }
-
+    /* built-in specifier: src was set by the switch */
     while (*src && pos->size < MAX_CHARSET_LEN)
         pos->chars[pos->size++] = *src++;
 
@@ -175,7 +170,7 @@ int mask_parse_ex(const char *mask_str, Mask *out,
 
     while (mask_str[i] != '\0') {
         if (pos >= MAX_PLAINTEXT_LEN) {
-            fprintf(stderr, "mask_parse: mask exceeds MAX_PLAINTEXT_LEN (%d)\n",
+            fprintf(stderr, "mask_parse_ex: mask exceeds MAX_PLAINTEXT_LEN (%d)\n",
                     MAX_PLAINTEXT_LEN);
             return -1;
         }
