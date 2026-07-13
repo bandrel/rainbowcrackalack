@@ -86,6 +86,11 @@ static int build_position(char spec, MaskPosition *pos,
         pos->size = cust->size;
         return 0;
     }
+    if (src == NULL) {   /* ?1-?4 referenced in mask but no -N charset provided */
+        fprintf(stderr, "mask_parse: custom charset '?%c' referenced but not "
+                "provided (use -%c)\n", spec, spec);
+        return -1;
+    }
     /* built-in specifier: src was set by the switch */
     while (*src && pos->size < MAX_CHARSET_LEN)
         pos->chars[pos->size++] = *src++;
@@ -392,6 +397,22 @@ int mask_encode_charset_field(const char *mask_str,
         fprintf(stderr, "mask_encode_charset_field: encoded mask too long (%zu > "
                 "%d); use a smaller custom charset\n", strlen(dst), MASK_FIELD_MAX);
         return -1;
+    }
+
+    /* Reject filesystem-unsafe literal characters in the encoded field.
+     * (Only literal chars in the mask body can introduce these; tokens become
+     * %x and custom charsets become hex in !N- blocks.) */
+    {
+        const char *bad = "?/\\:*\"<>|#";
+        size_t bi;
+        for (bi = 0; dst[bi]; bi++) {
+            if (strchr(bad, dst[bi])) {
+                fprintf(stderr, "mask_encode_charset_field: mask produces a "
+                        "filesystem-unsafe character '%c' in the table filename; "
+                        "avoid literal %c (or ?? ) in mask\n", dst[bi], dst[bi]);
+                return -1;
+            }
+        }
     }
 
     /* Encode-time round-trip self-check: decode back and compare Masks. */

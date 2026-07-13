@@ -237,6 +237,11 @@ static int group_negative(void)
         ok = 0;
     }
 
+    /* MP-11b: ?1 referenced in mask but -1 not provided must return -1, not crash */
+    if (mask_parse("?1?d", &m, NULL, NULL, NULL, NULL) != -1) {
+        fprintf(stderr, "MP-11b failed: ?1 without -1 should return -1\n"); ok = 0;
+    }
+
     return ok;
 }
 
@@ -651,6 +656,12 @@ static int group_charset_field_codec(void)
                                   field, sizeof(field)) != 0 ||
         strcmp(field, "%1!1-30313233343536373839") != 0) {
         fprintf(stderr, "MP-35 failed: token def encode = \"%s\"\n", field); ok = 0;
+    }
+
+    /* MP-38: mask with literal '?' (??) is rejected as filesystem-unsafe */
+    if (mask_encode_charset_field("a??b", NULL, NULL, NULL, NULL,
+                                  field, sizeof(field)) == 0) {
+        fprintf(stderr, "MP-38 failed: literal '?' in filename accepted\n"); ok = 0;
     }
 
     /* MP-36: mask body containing literal "!1-" is rejected (ambiguous sentinel) */
