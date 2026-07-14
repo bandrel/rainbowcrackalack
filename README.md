@@ -268,7 +268,7 @@ The `nvidia-cuda-toolkit` package from the Ubuntu repositories may lag behind th
 
 ## Testing
 
-The test suite has two tiers — a GPU-accelerated suite and a CPU-only suite that needs no GPU — plus sanitizer and regression harnesses under `scripts/bench/`.
+The test suite has two tiers — a GPU-accelerated suite and a CPU-only suite that needs no GPU. The sanitizer, coverage, and crack-regression harnesses live in the companion **rainbowcrackalack-docs** repo (`code-repo-extracts/scripts/bench/`); see below.
 
 **GPU unit tests** (require a GPU; CUDA on Linux, OpenCL on Windows, Metal on macOS):
 
@@ -284,15 +284,14 @@ This is what runs in **CI**: a GitHub Actions workflow builds and runs `crackala
 
 **Golden vectors** (`test_golden.c`) pin committed input→output pairs for the rainbow-table primitives (independently-verified NTLM/MD5 vectors plus regression-pinned reductions), giving every GPU backend a fixed ground truth to validate against. They run in both test binaries.
 
-**Sanitizers and regression harness** (`scripts/bench/`, require a GPU):
+**Sanitizers, coverage, and the crack-regression harness** are maintained in the companion **rainbowcrackalack-docs** repo under `code-repo-extracts/scripts/bench/` (they require a GPU); CI fetches them at run time. That harness includes AddressSanitizer/ThreadSanitizer smoke tests, a coverage runner, and `run_regression.sh` (crack round-trip + differential false-negative checks, plus `mask` / `hcmask` / `mask-markov` end-to-end phases).
 
-|Command                                  |Purpose                                                        |
-|------------------------------------------|---------------------------------------------------------------|
-|`scripts/bench/asan_smoke_test.sh`        |AddressSanitizer smoke over gen → sort → lookup (heap safety).  |
-|`scripts/bench/tsan_smoke_test.sh`        |ThreadSanitizer over the threaded lookup pipeline (data races). |
-|`make tsan-sort`                          |ThreadSanitizer over the multi-threaded sort (CPU-only).        |
-|`scripts/bench/coverage.sh` / `make COVERAGE=1`|gcov/llvm-cov line-coverage report for the host code.      |
-|`scripts/bench/run_regression.sh`         |Crack round-trip + differential (false-negative) regression checks, including an `asan-smoke` phase.|
+Two instrumentation entry points remain in-tree via the Makefile:
+
+|Command                     |Purpose                                                  |
+|-----------------------------|---------------------------------------------------------|
+|`make tsan-sort`             |ThreadSanitizer over the multi-threaded sort (CPU-only). |
+|`make COVERAGE=1 <target>`   |gcov/llvm-cov line-coverage build for the host code.     |
 
 ## Change Log
 ### v1.5

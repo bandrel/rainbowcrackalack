@@ -1,6 +1,0 @@
-{
-  "netntlmv1_7": {
-    "base": {"compute_sm_pct": 97.9, "dram_pct": 0.02, "achieved_occupancy_pct": 31.2, "registers_per_thread": 119, "spills": 0},
-    "cand": {"compute_sm_pct": 92.0, "dram_pct": 0.02, "achieved_occupancy_pct": 45.0, "registers_per_thread": 96, "spills": 0}
-  }
-}
