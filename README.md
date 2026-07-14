@@ -294,6 +294,9 @@ Two instrumentation entry points remain in-tree via the Makefile:
 |`make COVERAGE=1 <target>`   |gcov/llvm-cov line-coverage build for the host code.     |
 
 ## Change Log
+### v1.5.2
+ - Added a compiled-PTX disk cache to the CUDA backend (`cuda_setup.c`). NVRTC compilation (~0.1–1s per kernel) was repeated on every process launch, so batch workflows that invoke `crackalack_gen` many times (e.g. `--hcmask`, or one invocation per mask over a large mask set) paid it thousands of times even though the emitted PTX is identical for a given (resolved source, arch, build flags). The PTX is now cached on disk keyed by an FNV-1a content hash and reused across processes, roughly halving per-launch startup. Location honors `RCRACK_KERNEL_CACHE` (set to `off` to disable), else `$XDG_CACHE_HOME/rainbowcrackalack`, else `$HOME/.cache/rainbowcrackalack`. Purely an optimization — any cache miss/error falls back to compiling. Atomic writes (temp + rename) make it safe under the concurrent multi-GPU workers on one host.
+
 ### v1.5.1
  - Added `gen_markov_hcmask.sh`, a helper that drives combined mask+Markov generation over a hashcat `.hcmask` file. Native `--hcmask` batch mode is mutually exclusive with `--markov`, so the script parses the `.hcmask` file itself (matching the binary's line/escape rules), derives each mask's length by counting positions (not raw characters), and runs one `crackalack_gen --mask <mask> --markov <model>` invocation per line with `min_len == max_len` set to that mask's length. Honors inline per-line custom charsets (which override global `-1..-4` defaults), `--markov-keyspace`, and `-gws`.
 

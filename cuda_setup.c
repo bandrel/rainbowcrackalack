@@ -16,6 +16,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include <cuda.h>
 #include <nvrtc.h>
@@ -334,6 +336,77 @@ static void cuda_rewrite_cl_path(const char *in, char *out, size_t out_size) {
   }
 }
 
+/* ---- Compiled-PTX disk cache -------------------------------------------
+ * NVRTC compilation of the kernels costs ~seconds and is repeated by every
+ * process launch.  Batch workflows (--hcmask, or one gen invocation per
+ * mask) pay it thousands of times even though the emitted PTX is identical
+ * for a given (resolved source, arch, build flags).  Cache the PTX on disk
+ * keyed by a content hash so all but the first launch skip NVRTC entirely.
+ * Purely an optimization: any failure falls back to compiling.  Disable by
+ * setting RCRACK_KERNEL_CACHE=off (or an empty writable dir to relocate it). */
+
+/* FNV-1a 64-bit over a NUL-terminated string, chained via *h. */
+static void cuda_fnv1a(uint64_t *h, const char *s) {
+  uint64_t x = *h;
+  for (; *s; s++) { x ^= (unsigned char)*s; x *= 1099511628211ULL; }
+  *h = x;
+}
+
+/* mkdir -p (best effort; ignores EEXIST). */
+static void cuda_mkdir_p(const char *path) {
+  char tmp[512];
+  size_t len = strlen(path);
+  if (len == 0 || len >= sizeof(tmp)) return;
+  memcpy(tmp, path, len + 1);
+  if (tmp[len - 1] == '/') tmp[len - 1] = '\0';
+  for (char *p = tmp + 1; *p; p++) {
+    if (*p == '/') { *p = '\0'; mkdir(tmp, 0777); *p = '/'; }
+  }
+  mkdir(tmp, 0777);
+}
+
+/* Resolve the kernel cache directory into `out`; returns 1 if caching is
+ * enabled, 0 if disabled/unavailable. */
+static int cuda_cache_dir(char *out, size_t out_size) {
+  const char *base = getenv("RCRACK_KERNEL_CACHE");
+  if (base && (strcmp(base, "off") == 0 || strcmp(base, "0") == 0)) return 0;
+  if (base && base[0]) { snprintf(out, out_size, "%s", base); return 1; }
+  const char *xdg = getenv("XDG_CACHE_HOME");
+  const char *home = getenv("HOME");
+  if (xdg && xdg[0]) { snprintf(out, out_size, "%s/rainbowcrackalack", xdg); return 1; }
+  if (home && home[0]) { snprintf(out, out_size, "%s/.cache/rainbowcrackalack", home); return 1; }
+  return 0;
+}
+
+/* Read an entire cache file, NUL-terminating it.  Returns NULL on any miss. */
+static char *cuda_read_cache(const char *path, size_t *out_size) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return NULL;
+  if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+  long n = ftell(f);
+  if (n <= 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
+  char *buf = malloc((size_t)n + 1);
+  if (!buf) { fclose(f); return NULL; }
+  size_t rd = fread(buf, 1, (size_t)n, f);
+  fclose(f);
+  if (rd != (size_t)n) { free(buf); return NULL; }
+  buf[n] = '\0';
+  *out_size = (size_t)n + 1;   /* include the NUL, matching nvrtcGetPTXSize */
+  return buf;
+}
+
+/* Write PTX to the cache atomically (temp file + rename).  Best effort. */
+static void cuda_write_cache(const char *path, const char *ptx, size_t ptx_size) {
+  char tmp[600];
+  snprintf(tmp, sizeof(tmp), "%s.tmp.%ld", path, (long)getpid());
+  FILE *f = fopen(tmp, "wb");
+  if (!f) return;
+  size_t n = ptx_size ? ptx_size - 1 : 0;   /* drop trailing NUL; re-added on read */
+  if (n && fwrite(ptx, 1, n, f) != n) { fclose(f); unlink(tmp); return; }
+  fclose(f);
+  if (rename(tmp, path) != 0) unlink(tmp);
+}
+
 void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *devices,
                  const char *path, const char *kernel_name,
                  gpu_program *program, gpu_kernel *kernel, unsigned int hash_type) {
@@ -374,49 +447,79 @@ void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *de
   char arch_opt[64];
   snprintf(arch_opt, sizeof(arch_opt), "--gpu-architecture=compute_%d%d", cc_major, cc_minor);
 
-  /* NVRTC compile. */
-  nvrtcProgram prog;
-  nvrtcResult nres = nvrtcCreateProgram(&prog, full, resolved_path, 0, NULL, NULL);
-  if (nres != NVRTC_SUCCESS) {
-    fprintf(stderr, "nvrtcCreateProgram failed: %s\n", nvrtcGetErrorString(nres));
-    free(full);
-    exit(-1);
-  }
   char hash_type_opt[64];
   snprintf(hash_type_opt, sizeof(hash_type_opt), "-DHASH_TYPE=%u", hash_type);
-  const char *options[] = { arch_opt, "--use_fast_math", hash_type_opt };
-  struct timespec t0, t1;
-  clock_gettime(CLOCK_MONOTONIC, &t0);
-  nres = nvrtcCompileProgram(prog, 3, options);
-  clock_gettime(CLOCK_MONOTONIC, &t1);
-  double compile_secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
 
-  if (nres != NVRTC_SUCCESS) {
-    fprintf(stderr, "nvrtcCompileProgram failed: %s\n", nvrtcGetErrorString(nres));
-    size_t log_size = 0;
-    nvrtcGetProgramLogSize(prog, &log_size);
-    if (log_size > 0) {
-      char *log = malloc(log_size);
-      if (log) {
-        nvrtcGetProgramLog(prog, log);
-        fprintf(stderr, "NVRTC log:\n%s\n", log);
-        free(log);
-      }
+  /* Cache key: content hash of resolved source + arch + build flags. */
+  uint64_t key = 1469598103934665603ULL;   /* FNV-1a offset basis */
+  cuda_fnv1a(&key, "rcrack-ptx-v1|");       /* bump to invalidate all entries */
+  cuda_fnv1a(&key, full);
+  cuda_fnv1a(&key, arch_opt);
+  cuda_fnv1a(&key, hash_type_opt);
+
+  char cache_path[640];
+  int have_cache = 0;
+  { char cdir[512];
+    if (cuda_cache_dir(cdir, sizeof(cdir))) {
+      cuda_mkdir_p(cdir);
+      snprintf(cache_path, sizeof(cache_path), "%s/k_%016llx.ptx", cdir,
+               (unsigned long long)key);
+      have_cache = 1;
     }
-    nvrtcDestroyProgram(&prog);
-    free(full);
-    exit(-1);
   }
 
-  /* Retrieve PTX. */
   size_t ptx_size = 0;
-  nvrtcGetPTXSize(prog, &ptx_size);
-  char *ptx = malloc(ptx_size);
-  nvrtcGetPTX(prog, ptx);
-  fprintf(stderr, "  [cuda] %s: compiled in %.2fs, PTX size %zu bytes (arch=compute_%d%d)\n",
-          kernel_name, compile_secs, ptx_size, cc_major, cc_minor);
-  nvrtcDestroyProgram(&prog);
-  free(full);
+  char *ptx = have_cache ? cuda_read_cache(cache_path, &ptx_size) : NULL;
+
+  if (ptx) {
+    /* Cache hit: skip NVRTC entirely. */
+    fprintf(stderr, "  [cuda] %s: loaded cached PTX (%zu bytes, arch=compute_%d%d)\n",
+            kernel_name, ptx_size ? ptx_size - 1 : 0, cc_major, cc_minor);
+    free(full);
+  } else {
+    /* NVRTC compile. */
+    nvrtcProgram prog;
+    nvrtcResult nres = nvrtcCreateProgram(&prog, full, resolved_path, 0, NULL, NULL);
+    if (nres != NVRTC_SUCCESS) {
+      fprintf(stderr, "nvrtcCreateProgram failed: %s\n", nvrtcGetErrorString(nres));
+      free(full);
+      exit(-1);
+    }
+    const char *options[] = { arch_opt, "--use_fast_math", hash_type_opt };
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    nres = nvrtcCompileProgram(prog, 3, options);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    double compile_secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+
+    if (nres != NVRTC_SUCCESS) {
+      fprintf(stderr, "nvrtcCompileProgram failed: %s\n", nvrtcGetErrorString(nres));
+      size_t log_size = 0;
+      nvrtcGetProgramLogSize(prog, &log_size);
+      if (log_size > 0) {
+        char *log = malloc(log_size);
+        if (log) {
+          nvrtcGetProgramLog(prog, log);
+          fprintf(stderr, "NVRTC log:\n%s\n", log);
+          free(log);
+        }
+      }
+      nvrtcDestroyProgram(&prog);
+      free(full);
+      exit(-1);
+    }
+
+    /* Retrieve PTX. */
+    nvrtcGetPTXSize(prog, &ptx_size);
+    ptx = malloc(ptx_size);
+    nvrtcGetPTX(prog, ptx);
+    fprintf(stderr, "  [cuda] %s: compiled in %.2fs, PTX size %zu bytes (arch=compute_%d%d)\n",
+            kernel_name, compile_secs, ptx_size, cc_major, cc_minor);
+    nvrtcDestroyProgram(&prog);
+    free(full);
+
+    if (have_cache) cuda_write_cache(cache_path, ptx, ptx_size);
+  }
 
   /* Load PTX as a CUmodule and look up the entry function. */
   CUmodule mod;
