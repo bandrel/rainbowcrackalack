@@ -294,6 +294,9 @@ Two instrumentation entry points remain in-tree via the Makefile:
 |`make COVERAGE=1 <target>`   |gcov/llvm-cov line-coverage build for the host code.     |
 
 ## Change Log
+### v1.5.1
+ - Added `gen_markov_hcmask.sh`, a helper that drives combined mask+Markov generation over a hashcat `.hcmask` file. Native `--hcmask` batch mode is mutually exclusive with `--markov`, so the script parses the `.hcmask` file itself (matching the binary's line/escape rules), derives each mask's length by counting positions (not raw characters), and runs one `crackalack_gen --mask <mask> --markov <model>` invocation per line with `min_len == max_len` set to that mask's length. Honors inline per-line custom charsets (which override global `-1..-4` defaults), `--markov-keyspace`, and `-gws`.
+
 ### v1.5
  - Added hashcat-style mask attacks: `--mask` on `crackalack_gen`/`crackalack_verify`/`gen_known_hash` with tokens `?l ?u ?d ?s ?a ?b ?h ?H` and `??` escaping. Masks restrict each position's charset for far smaller tables on structured passwords. Fixed-length; NTLM/MD5.
  - Added custom charsets `?1`-`?4` via `-1`/`-2`/`-3`/`-4` (definitions may contain built-in tokens and `\xNN` hex). Custom sets are encoded into the `.rt` filename (`!N-<hex>` blocks) so mask tables are self-describing — `crackalack_lookup` reconstructs the mask with no extra flags.
