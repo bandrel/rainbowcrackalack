@@ -50,6 +50,17 @@ cpu-tests:
 gpu-suite:
   stage: gpu
   resource_group: gpuhost3-gpu
+  # The scripts/bench regression harness lives in the docs repo (extracted from
+  # this code repo). Fetch it into ./scripts/bench at CI time so run_regression.sh
+  # resolves THIS_REPO to the code repo. Define DOCS_HARNESS_URL as a *masked*
+  # CI/CD variable (Settings > CI/CD > Variables) pointing at a clone URL of the
+  # docs repo, e.g.
+  #   https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/<namespace>/rainbowcrackalack-docs.git
+  before_script:
+    - test -n "$DOCS_HARNESS_URL"   # fail fast if the harness URL isn't configured
+    - rm -rf "$CI_PROJECT_DIR/.ci-harness"
+    - git clone --depth 1 "$DOCS_HARNESS_URL" "$CI_PROJECT_DIR/.ci-harness"
+    - rm -rf scripts/bench && cp -R "$CI_PROJECT_DIR/.ci-harness/code-repo-extracts/scripts/bench" scripts/bench
   script:
     - make clean
     # prepare builds `make linux` (all binaries incl. crackalack_unit_tests and,
