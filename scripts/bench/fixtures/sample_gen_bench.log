@@ -1,6 +1,0 @@
-Note: optimized NetNTLMv1-7 kernel will be used.
-  [cuda] crackalack_netntlmv1_7: compiled in 0.34s, PTX size 108183 bytes (arch=compute_86)
-GPU #0 is using user-provided GWS value of 163840
-GPU #0 auto-calibrated: 8676 max chain steps/pass, 102 passes (probe: 2000 steps in 0.692s)
-Run time: 22.2 secs; Chains generated: 163840; Rate: 7389/s
-Generation complete!

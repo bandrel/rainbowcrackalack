@@ -1,4 +1,0 @@
-{
-  "netntlmv1_7": {"base": {"chains_per_s": 7000.0}, "cand": {"chains_per_s": 8500.0}},
-  "ntlm8": {"base": {"chains_per_s": 120000.0}, "cand": {"chains_per_s": 121000.0}}
-}
