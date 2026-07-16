@@ -74,22 +74,11 @@ int main(int ac, char **av) {
 #endif
   get_platforms_and_devices(-1, MAX_NUM_PLATFORMS, platforms, &num_platforms, MAX_NUM_DEVICES, devices, &num_devices, 1);
 
-#if defined(USE_METAL) || defined(USE_CUDA)
   context = gpu_create_context(devices[0]);
   if (context == NULL) {
     fprintf(stderr, "Failed to create context\n");
     exit(-1);
   }
-#else
-  {
-    int err = 0;
-    context = rc_clCreateContext(NULL, num_devices, devices, context_callback, NULL, &err);
-    if (err < 0) {
-      fprintf(stderr, "Failed to create context: %d\n", err);
-      exit(-1);
-    }
-  }
-#endif
 
 
   /* PRNG test */

@@ -105,6 +105,32 @@ typedef cl_bool  gpu_bool;
 #define CL_RW GPU_RW
 
 
+/* --- Kernel source paths ---
+ *
+ * Callers use GPU_KERNEL_PATH("basename") to build the correct backend-
+ * specific path at compile time, e.g. GPU_KERNEL_PATH("crackalack_ntlm8")
+ * expands to "crackalack_ntlm8.metal" on Metal, "CUDA/crackalack_ntlm8.cu"
+ * on CUDA, and "crackalack_ntlm8.cl" on OpenCL.  This replaces the
+ * per-kernel #ifdef ladders that used to appear at every kernel-load site.
+ *
+ * The dir prefix inconsistency (CUDA embeds "CUDA/", Metal/OpenCL don't)
+ * is historical: metal_setup.m and opencl_setup.c prepend the kernel dir
+ * at runtime, while cuda_setup.c loads by literal path.
+ */
+#ifdef USE_METAL
+#define GPU_KERNEL_DIR ""
+#define GPU_KERNEL_EXT ".metal"
+#elif defined(USE_CUDA)
+#define GPU_KERNEL_DIR "CUDA/"
+#define GPU_KERNEL_EXT ".cu"
+#else
+#define GPU_KERNEL_DIR ""
+#define GPU_KERNEL_EXT ".cl"
+#endif
+
+#define GPU_KERNEL_PATH(basename) GPU_KERNEL_DIR basename GPU_KERNEL_EXT
+
+
 /* --- Function declarations --- */
 
 void context_callback(const char *errinfo, const void *private_info, size_t cb, void *user_data);
@@ -227,7 +253,9 @@ void *rc_dlopen(char *library_name);
 int rc_dlclose(void *module);
 void *rc_dlsym(void *module, char *function_name);
 char *rc_dlerror(void);
+gpu_context gpu_create_context(gpu_device device);
 int gpu_get_free_memory(gpu_device device, uint64_t *free_bytes, uint64_t *total_bytes);
+int gpu_get_kernel_work_group_info(gpu_kernel kernel, gpu_device device, unsigned int param, size_t param_size, void *param_value);
 
 extern cl_int (*rc_clBuildProgram)(cl_program, cl_uint, const cl_device_id *, const char *, void (CL_CALLBACK *)(cl_program, void *), void *);
 extern cl_mem (*rc_clCreateBuffer)(cl_context, cl_mem_flags, size_t, void *, cl_int *);
