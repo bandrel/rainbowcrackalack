@@ -7,9 +7,13 @@ GPU-accelerated rainbow table generator and hash lookup tool. C with CUDA (Linux
 Requires libgcrypt. GPU backend depends on platform.
 
 ```bash
-# Linux (Ubuntu) - CUDA backend
-apt install nvidia-cuda-toolkit libgcrypt20-dev
+# Linux (Ubuntu) - OpenCL backend (default; works with any OpenCL ICD)
+apt install opencl-headers libgcrypt20-dev
 make clean; make linux
+
+# Linux (Ubuntu) - CUDA backend (NVIDIA only, faster)
+apt install nvidia-cuda-toolkit libgcrypt20-dev
+make clean; make cuda
 
 # macOS (Apple Silicon) - Metal backend
 brew install libgcrypt
@@ -20,7 +24,7 @@ apt install mingw-w64 opencl-headers libgcrypt-mingw-w64-dev
 make clean; make windows
 ```
 
-Note: `nvidia-cuda-toolkit` from the Ubuntu repo may lag behind the installed NVIDIA driver. If NVRTC version mismatches surface at runtime, install a newer toolkit from NVIDIA's apt repo (e.g., `cuda-toolkit-13-x`). Use `make linux CUDA_PATH=/opt/cuda` to point at a non-default install location.
+Note: `nvidia-cuda-toolkit` from the Ubuntu repo may lag behind the installed NVIDIA driver. If NVRTC version mismatches surface at runtime, install a newer toolkit from NVIDIA's apt repo (e.g., `cuda-toolkit-13-x`). Use `make cuda CUDA_PATH=/opt/cuda` to point at a non-default install location. `make linux` produces the OpenCL build; `make cuda` produces the CUDA build — both write binaries to the project root, so `make clean` between them when switching backends.
 
 `make clean` removes `build/` and all binaries/DLLs from the project root.
 

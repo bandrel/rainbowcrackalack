@@ -28,7 +28,10 @@ EXE :=
 LIBS :=
 PREP := prep_none
 
-ifeq ($(BUILD),linux)
+ifeq ($(BUILD),cuda)
+  # CUDA backend on Linux (NVIDIA only).  Requires nvidia-cuda-toolkit and an
+  # installed NVIDIA driver; NVRTC is used to JIT-compile CUDA/*.cu at runtime.
+  # See CLAUDE.md for driver / toolkit version notes.
   CC := $(CC_linux)
   EXE :=
   CUDA_PATH ?= /usr/local/cuda
@@ -49,16 +52,13 @@ ifeq ($(BUILD),macos)
   GPU_BACKEND_OBJ := $(OBJDIR)/metal_setup.o
 endif
 
-ifeq ($(BUILD),linux-opencl)
-  # Native Linux build using the OpenCL backend (instead of CUDA).  Useful for
-  # exercising the OpenCL (.cl) kernels on Linux hosts that have an OpenCL ICD
-  # (e.g. NVIDIA's, or PoCL).  Binaries go under build/linux-opencl/ so they do
-  # not clobber the CUDA binaries in the project root.  Run them from the repo
-  # root so the CL/ kernel dir is found.  Requires OpenCL headers (/usr/include/CL)
-  # -- opencl_setup.c dlopen()s libOpenCL at runtime, so no -lOpenCL is needed.
+ifeq ($(BUILD),linux)
+  # OpenCL backend on Linux (default).  Works with any OpenCL ICD (NVIDIA, AMD,
+  # PoCL, etc.).  Requires OpenCL headers (/usr/include/CL) -- opencl_setup.c
+  # dlopen()s libOpenCL at runtime, so no -lOpenCL is needed at link time.
+  # For NVIDIA-specific CUDA acceleration, use `make cuda` instead.
   CC := $(CC_linux)
   EXE :=
-  OUTDIR := $(BUILD_DIR)
   CPPFLAGS := $(CPPFLAGS_common)
   CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
   LDFLAGS  := $(LDFLAGS_common) -flto=auto
@@ -257,8 +257,11 @@ all: $(PREP) $(BINARIES)
 linux:
 	$(MAKE) BUILD=linux all
 
-linux-opencl:
-	$(MAKE) BUILD=linux-opencl all
+cuda:
+	$(MAKE) BUILD=cuda all
+
+# Back-compat alias — the CUDA build used to be reached via `make linux`.
+linux-cuda: cuda
 
 macos:
 	$(MAKE) BUILD=macos all
