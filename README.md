@@ -2,7 +2,13 @@
 
 [![CPU unit tests](https://github.com/example/rainbowcrackalack/actions/workflows/ci.yml/badge.svg)](https://github.com/example/rainbowcrackalack/actions/workflows/ci.yml)
 
-Author: [Joe Testa](https://www.positronsecurity.com/company/) ([@therealjoetesta](https://twitter.com/therealjoetesta))
+Original author: [Joe Testa](https://www.positronsecurity.com/company/) ([@therealjoetesta](https://twitter.com/therealjoetesta))
+
+## Origins
+
+This is an independent derivative of [jtesta/rainbowcrackalack](https://github.com/jtesta/rainbowcrackalack) — the original project by Joe Testa (initial commit 2019-06-10, last upstream commit 2021-08-04). A downstream fork, [blurbdust/rainbowcrackalack](https://github.com/blurbdust/rainbowcrackalack), continued the work after jtesta went dormant.
+
+This tree is **not a git fork** of either — the histories share no common ancestor. It re-seeds the codebase and adds CUDA and Metal GPU backends, mask/Markov generation, and other changes. Credit for the original design and OpenCL implementation goes to Joe Testa.
 
 ## About
 
