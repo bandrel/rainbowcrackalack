@@ -66,109 +66,37 @@
 #include "version.h"
 
 #define VERBOSE 1
-#define PRECOMPUTE_KERNEL_PATH "precompute.cl"
-#ifdef USE_METAL
-#define PRECOMPUTE_NTLM8_KERNEL_PATH "precompute_ntlm8.metal"
-#define PRECOMPUTE_NTLM9_KERNEL_PATH "precompute_ntlm9.metal"
-#define PRECOMPUTE_NTLM10_KERNEL_PATH "precompute_ntlm10.metal"
-#define PRECOMPUTE_MD5_8_KERNEL_PATH "precompute_md5_8.metal"
-#define PRECOMPUTE_MD5_9_KERNEL_PATH "precompute_md5_9.metal"
-#define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.metal"
-#define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.metal"
-#define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.metal"
-#define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.metal"
-#define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.metal"
-#define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "precompute_ntlm8_batch.metal"
-#define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH "precompute_netntlmv1_7_batch.metal"
-#elif defined(USE_CUDA)
-#define PRECOMPUTE_NTLM8_KERNEL_PATH "CUDA/precompute_ntlm8.cu"
-#define PRECOMPUTE_NTLM9_KERNEL_PATH "CUDA/precompute_ntlm9.cu"
-#define PRECOMPUTE_NTLM10_KERNEL_PATH "CUDA/precompute_ntlm10.cu"
-#define PRECOMPUTE_MD5_8_KERNEL_PATH "CUDA/precompute_md5_8.cu"
-#define PRECOMPUTE_MD5_9_KERNEL_PATH "CUDA/precompute_md5_9.cu"
-#define PRECOMPUTE_MARKOV_KERNEL_PATH "CUDA/precompute_markov.cu"
-#define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "CUDA/precompute_markov_ntlm8.cu"
-#define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "CUDA/precompute_markov_ntlm9.cu"
-#define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "CUDA/precompute_markov_ntlm10.cu"
-#define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "CUDA/precompute_markov_ntlm8_batch.cu"
-#define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "CUDA/precompute_ntlm8_batch.cu"
-#define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH "CUDA/precompute_netntlmv1_7_batch.cu"
-#else
-#define PRECOMPUTE_NTLM8_KERNEL_PATH "precompute_ntlm8.cl"
-#define PRECOMPUTE_NTLM9_KERNEL_PATH "precompute_ntlm9.cl"
-#define PRECOMPUTE_NTLM10_KERNEL_PATH "precompute_ntlm10.cl"
-#define PRECOMPUTE_MD5_8_KERNEL_PATH "precompute_md5_8.cl"
-#define PRECOMPUTE_MD5_9_KERNEL_PATH "precompute_md5_9.cl"
-#define PRECOMPUTE_MARKOV_KERNEL_PATH "precompute_markov.cl"
-#define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH "precompute_markov_ntlm8.cl"
-#define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH "precompute_markov_ntlm9.cl"
-#define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH "precompute_markov_ntlm10.cl"
-#define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH "precompute_markov_ntlm8_batch.cl"
-#define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH "precompute_ntlm8_batch.cl"
-#define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH "precompute_netntlmv1_7_batch.cl"
-#endif
+#define PRECOMPUTE_KERNEL_PATH                       "precompute.cl"
+#define PRECOMPUTE_NTLM8_KERNEL_PATH                 GPU_KERNEL_PATH("precompute_ntlm8")
+#define PRECOMPUTE_NTLM9_KERNEL_PATH                 GPU_KERNEL_PATH("precompute_ntlm9")
+#define PRECOMPUTE_NTLM10_KERNEL_PATH                GPU_KERNEL_PATH("precompute_ntlm10")
+#define PRECOMPUTE_MD5_8_KERNEL_PATH                 GPU_KERNEL_PATH("precompute_md5_8")
+#define PRECOMPUTE_MD5_9_KERNEL_PATH                 GPU_KERNEL_PATH("precompute_md5_9")
+#define PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH           GPU_KERNEL_PATH("precompute_netntlmv1_7")
+#define PRECOMPUTE_MARKOV_KERNEL_PATH                GPU_KERNEL_PATH("precompute_markov")
+#define PRECOMPUTE_MARKOV_NTLM8_KERNEL_PATH          GPU_KERNEL_PATH("precompute_markov_ntlm8")
+#define PRECOMPUTE_MARKOV_NTLM9_KERNEL_PATH          GPU_KERNEL_PATH("precompute_markov_ntlm9")
+#define PRECOMPUTE_MARKOV_NTLM10_KERNEL_PATH         GPU_KERNEL_PATH("precompute_markov_ntlm10")
+#define PRECOMPUTE_MARKOV_NTLM8_BATCH_KERNEL_PATH    GPU_KERNEL_PATH("precompute_markov_ntlm8_batch")
+#define PRECOMPUTE_NTLM8_BATCH_KERNEL_PATH           GPU_KERNEL_PATH("precompute_ntlm8_batch")
+#define PRECOMPUTE_NETNTLMV1_7_BATCH_KERNEL_PATH     GPU_KERNEL_PATH("precompute_netntlmv1_7_batch")
+#define PRECOMPUTE_MASK_KERNEL_PATH                  GPU_KERNEL_PATH("precompute_mask")
+#define PRECOMPUTE_MARKOV_MASK_KERNEL_PATH           GPU_KERNEL_PATH("precompute_markov_mask")
 
-#define FALSE_ALARM_KERNEL_PATH "false_alarm_check.cl"
-#ifdef USE_METAL
-#define FALSE_ALARM_NTLM10_KERNEL_PATH "false_alarm_check_ntlm10.metal"
-#define FALSE_ALARM_NTLM8_KERNEL_PATH "false_alarm_check_ntlm8.metal"
-#define FALSE_ALARM_NTLM9_KERNEL_PATH "false_alarm_check_ntlm9.metal"
-#define FALSE_ALARM_MD5_8_KERNEL_PATH "false_alarm_check_md5_8.metal"
-#define FALSE_ALARM_MD5_9_KERNEL_PATH "false_alarm_check_md5_9.metal"
-#define PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH "precompute_netntlmv1_7.metal"
-#define FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH "false_alarm_check_netntlmv1_7.metal"
-#elif defined(USE_CUDA)
-#define FALSE_ALARM_NTLM10_KERNEL_PATH "CUDA/false_alarm_check_ntlm10.cu"
-#define FALSE_ALARM_NTLM8_KERNEL_PATH "CUDA/false_alarm_check_ntlm8.cu"
-#define FALSE_ALARM_NTLM9_KERNEL_PATH "CUDA/false_alarm_check_ntlm9.cu"
-#define FALSE_ALARM_MD5_8_KERNEL_PATH "CUDA/false_alarm_check_md5_8.cu"
-#define FALSE_ALARM_MD5_9_KERNEL_PATH "CUDA/false_alarm_check_md5_9.cu"
-#define PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH "CUDA/precompute_netntlmv1_7.cu"
-#define FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH "CUDA/false_alarm_check_netntlmv1_7.cu"
-#else
-#define FALSE_ALARM_NTLM10_KERNEL_PATH "false_alarm_check_ntlm10.cl"
-#define FALSE_ALARM_NTLM8_KERNEL_PATH "false_alarm_check_ntlm8.cl"
-#define FALSE_ALARM_NTLM9_KERNEL_PATH "false_alarm_check_ntlm9.cl"
-#define FALSE_ALARM_MD5_8_KERNEL_PATH "false_alarm_check_md5_8.cl"
-#define FALSE_ALARM_MD5_9_KERNEL_PATH "false_alarm_check_md5_9.cl"
-#define PRECOMPUTE_NETNTLMV1_7_KERNEL_PATH "precompute_netntlmv1_7.cl"
-#define FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH "false_alarm_check_netntlmv1_7.cl"
-#endif
-#ifdef USE_METAL
-#define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.metal"
-#define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.metal"
-#define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "false_alarm_check_markov_ntlm9.metal"
-#define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.metal"
-#define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.metal"
-#elif defined(USE_CUDA)
-#define FALSE_ALARM_MARKOV_KERNEL_PATH "CUDA/false_alarm_check_markov.cu"
-#define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm8.cu"
-#define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm9.cu"
-#define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "CUDA/false_alarm_check_markov_ntlm10.cu"
-#define GPU_BINARY_SEARCH_KERNEL_PATH "CUDA/gpu_binary_search.cu"
-#else
-#define FALSE_ALARM_MARKOV_KERNEL_PATH "false_alarm_check_markov.cl"
-#define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH "false_alarm_check_markov_ntlm8.cl"
-#define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH "false_alarm_check_markov_ntlm9.cl"
-#define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH "false_alarm_check_markov_ntlm10.cl"
-#define GPU_BINARY_SEARCH_KERNEL_PATH "gpu_binary_search.cl"
-#endif
-#ifdef USE_METAL
-#define PRECOMPUTE_MASK_KERNEL_PATH "precompute_mask.metal"
-#define FALSE_ALARM_MASK_KERNEL_PATH "false_alarm_check_mask.metal"
-#define PRECOMPUTE_MARKOV_MASK_KERNEL_PATH "precompute_markov_mask.metal"
-#define FALSE_ALARM_MARKOV_MASK_KERNEL_PATH "false_alarm_check_markov_mask.metal"
-#elif defined(USE_CUDA)
-#define PRECOMPUTE_MASK_KERNEL_PATH "CUDA/precompute_mask.cu"
-#define FALSE_ALARM_MASK_KERNEL_PATH "CUDA/false_alarm_check_mask.cu"
-#define PRECOMPUTE_MARKOV_MASK_KERNEL_PATH "CUDA/precompute_markov_mask.cu"
-#define FALSE_ALARM_MARKOV_MASK_KERNEL_PATH "CUDA/false_alarm_check_markov_mask.cu"
-#else
-#define PRECOMPUTE_MASK_KERNEL_PATH "precompute_mask.cl"
-#define FALSE_ALARM_MASK_KERNEL_PATH "false_alarm_check_mask.cl"
-#define PRECOMPUTE_MARKOV_MASK_KERNEL_PATH "precompute_markov_mask.cl"
-#define FALSE_ALARM_MARKOV_MASK_KERNEL_PATH "false_alarm_check_markov_mask.cl"
-#endif
+#define FALSE_ALARM_KERNEL_PATH                      "false_alarm_check.cl"
+#define FALSE_ALARM_NTLM8_KERNEL_PATH                GPU_KERNEL_PATH("false_alarm_check_ntlm8")
+#define FALSE_ALARM_NTLM9_KERNEL_PATH                GPU_KERNEL_PATH("false_alarm_check_ntlm9")
+#define FALSE_ALARM_NTLM10_KERNEL_PATH               GPU_KERNEL_PATH("false_alarm_check_ntlm10")
+#define FALSE_ALARM_MD5_8_KERNEL_PATH                GPU_KERNEL_PATH("false_alarm_check_md5_8")
+#define FALSE_ALARM_MD5_9_KERNEL_PATH                GPU_KERNEL_PATH("false_alarm_check_md5_9")
+#define FALSE_ALARM_NETNTLMV1_7_KERNEL_PATH          GPU_KERNEL_PATH("false_alarm_check_netntlmv1_7")
+#define FALSE_ALARM_MARKOV_KERNEL_PATH               GPU_KERNEL_PATH("false_alarm_check_markov")
+#define FALSE_ALARM_MARKOV_NTLM8_KERNEL_PATH         GPU_KERNEL_PATH("false_alarm_check_markov_ntlm8")
+#define FALSE_ALARM_MARKOV_NTLM9_KERNEL_PATH         GPU_KERNEL_PATH("false_alarm_check_markov_ntlm9")
+#define FALSE_ALARM_MARKOV_NTLM10_KERNEL_PATH        GPU_KERNEL_PATH("false_alarm_check_markov_ntlm10")
+#define FALSE_ALARM_MASK_KERNEL_PATH                 GPU_KERNEL_PATH("false_alarm_check_mask")
+#define FALSE_ALARM_MARKOV_MASK_KERNEL_PATH          GPU_KERNEL_PATH("false_alarm_check_markov_mask")
+#define GPU_BINARY_SEARCH_KERNEL_PATH                GPU_KERNEL_PATH("gpu_binary_search")
 
 /* precomputed_and_potential_indices definition lives in ppi.h. */
 
@@ -1346,13 +1274,8 @@ void *host_thread_false_alarm(void *ptr) {
   queue = gpu->queue;
   kernel = gpu->kernel;
 
-#if defined(USE_METAL) || defined(USE_CUDA)
   if ((gpu_get_kernel_work_group_info(kernel, gpu->device, GPU_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &kernel_work_group_size) != GPU_SUCCESS) || \
       (gpu_get_kernel_work_group_info(kernel, gpu->device, GPU_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(size_t), &kernel_preferred_work_group_size_multiple) != GPU_SUCCESS)) {
-#else
-  if ((rc_clGetKernelWorkGroupInfo(kernel, gpu->device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &kernel_work_group_size, NULL) != CL_SUCCESS) || \
-      (rc_clGetKernelWorkGroupInfo(kernel, gpu->device, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(size_t), &kernel_preferred_work_group_size_multiple, NULL) != CL_SUCCESS)) {
-#endif
     fprintf(stderr, "Failed to get preferred work group size!\n");
     CLRELEASEKERNEL(gpu->kernel);
     CLRELEASEPROGRAM(gpu->program);
@@ -1685,11 +1608,7 @@ void *host_thread_precompute(void *ptr) {
   queue = gpu->queue;
   kernel = gpu->kernel;
 
-#if defined(USE_METAL) || defined(USE_CUDA)
   if (gpu_get_kernel_work_group_info(kernel, gpu->device, GPU_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &gws) != GPU_SUCCESS) {
-#else
-  if (rc_clGetKernelWorkGroupInfo(kernel, gpu->device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &gws, NULL) != CL_SUCCESS) {
-#endif
     fprintf(stderr, "Failed to get preferred work group size!\n");
     CLRELEASEKERNEL(gpu->kernel);
     CLRELEASEPROGRAM(gpu->program);
