@@ -197,7 +197,7 @@ All three directories contain the same kernel set: chain generation (`crackalack
 
 - **NTLM8/NTLM9 fast paths** - Separate, hand-optimized kernel files exist for 8-char and 9-char NTLM tables. The generic kernel handles other cases. All three phases (generation, precompute, false alarm check) have dedicated NTLM8/NTLM9 variants.
 - **Table filename format** - `{hash}_{charset}#{min_len}-{max_len}_{table_index}_{chain_len}x{num_chains}_{part}.rt`
-- **Flat source layout** - All `.c` and `.h` files live in the project root. GPU kernels live in `CL/`, `Metal/`, or `CUDA/`. No subdirectories for host code.
+- **Source layout** - Host code (`.c`/`.h`) lives in the project root. Unit-test sources (`test_*.c/h`, `cpu_tests_common.c/h`) live in `tests/`; the test binaries `crackalack_unit_tests.c` and `crackalack_cpu_tests.c` remain at the root as build entry points. GPU kernels live in `CL/`, `Metal/`, or `CUDA/`.
 - **Build artifacts** - Object files go to `build/{linux,windows}/obj/`. Final binaries are placed in the project root.
 - **Cross-platform** - `#ifdef _WIN32` and `#ifdef __APPLE__` guards throughout. Windows builds use mingw-w64 cross-compilation. macOS uses Metal via `#ifdef USE_METAL`. Linux uses CUDA via `#ifdef USE_CUDA`.
 - **Kernel loading** - Kernels are loaded at runtime from `CL/` (OpenCL), `Metal/` (Metal), or `CUDA/` (CUDA). The appropriate directory must be present alongside binaries.

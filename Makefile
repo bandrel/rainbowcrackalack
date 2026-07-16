@@ -21,7 +21,7 @@ SYSROOT_windows := /usr/$(TARGET_TRIPLE_windows)
 OBJDUMP_windows := $(TARGET_TRIPLE_windows)-objdump
 
 CFLAGS_common   := -Wall -O3 -g
-CPPFLAGS_common :=
+CPPFLAGS_common := -I. -Itests
 LDFLAGS_common  :=
 
 EXE :=
@@ -152,13 +152,13 @@ gen_known_hash: $(abspath $(OUTDIR)/$(GENKNOWN_PROG))
 CPU_TESTS_OBJDIR := build/cpu-tests/obj
 ifeq ($(shell uname -s),Darwin)
   CPU_TESTS_CC       := clang
-  CPU_TESTS_CPPFLAGS := -DUSE_METAL -I/opt/homebrew/include
+  CPU_TESTS_CPPFLAGS := -DUSE_METAL -I. -Itests -I/opt/homebrew/include
   CPU_TESTS_CFLAGS   := -Wall -O3 -g
   CPU_TESTS_LDFLAGS  := -L/opt/homebrew/lib
   CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm
 else
   CPU_TESTS_CC       := gcc
-  CPU_TESTS_CPPFLAGS := -I/usr/include
+  CPU_TESTS_CPPFLAGS := -I. -Itests -I/usr/include
   CPU_TESTS_CFLAGS   := -Wall -O3 -g
   CPU_TESTS_LDFLAGS  :=
   CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm
@@ -207,6 +207,9 @@ $(CPU_TESTS_OBJDIR):
 $(CPU_TESTS_OBJDIR)/%.o: %.c | $(CPU_TESTS_OBJDIR)
 	$(CPU_TESTS_CC) $(CPU_TESTS_CPPFLAGS) $(CPU_TESTS_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
+$(CPU_TESTS_OBJDIR)/%.o: tests/%.c | $(CPU_TESTS_OBJDIR)
+	$(CPU_TESTS_CC) $(CPU_TESTS_CPPFLAGS) $(CPU_TESTS_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
 cpu-tests: $(CPU_TESTS_OBJS)
 	$(CPU_TESTS_CC) $(CPU_TESTS_LDFLAGS) $^ -o $(OUTDIR)/$(CPU_TESTS_PROG) $(CPU_TESTS_LIBS)
 	@echo "Built $(OUTDIR)/$(CPU_TESTS_PROG)"
@@ -238,7 +241,7 @@ TSAN_SORT_LDFLAGS := -fsanitize=thread
 $(TSAN_SORT_OBJDIR):
 	mkdir -p $@
 
-$(TSAN_SORT_OBJDIR)/test_parallel_sort_tsan.o: test_parallel_sort_tsan.c | $(TSAN_SORT_OBJDIR)
+$(TSAN_SORT_OBJDIR)/test_parallel_sort_tsan.o: tests/test_parallel_sort_tsan.c | $(TSAN_SORT_OBJDIR)
 	$(TSAN_SORT_CC) $(TSAN_SORT_INC) $(TSAN_SORT_CFLAGS) -c $< -o $@
 
 $(TSAN_SORT_OBJDIR)/parallel_sort.o: parallel_sort.c | $(TSAN_SORT_OBJDIR)
@@ -284,6 +287,9 @@ DEPFLAGS = -MMD -MP
 DEPS := $(OBJS:.o=.d)
 
 $(OBJDIR)/%.o: %.c | $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(OBJDIR)/%.o: tests/%.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(OBJDIR)/%.o: %.m | $(OBJDIR)
