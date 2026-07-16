@@ -252,19 +252,47 @@ However, if you prefer to build a complete package (which is useful for testing 
 
 ## Linux Build
 
-On Linux the GPU backend is **CUDA** (NVIDIA only); kernels are compiled at runtime via NVRTC. A 64-bit build can be achieved on an Ubuntu host machine by installing the following prerequisites:
+Two GPU backends are supported on Linux: **OpenCL** (default, portable) and **CUDA** (NVIDIA only, typically faster).
+
+### OpenCL (default)
+
+Works with any OpenCL ICD (NVIDIA, AMD, Intel, PoCL, etc.):
+
+    # apt install opencl-headers libgcrypt20-dev
+    $ make clean; make linux
+
+Binaries are written to the project root. `opencl_setup.c` `dlopen()`s `libOpenCL` at runtime, so no OpenCL library is needed at link time.
+
+### CUDA (NVIDIA only)
+
+Kernels are JIT-compiled at runtime via NVRTC. Requires the NVIDIA driver and CUDA toolkit:
 
     # apt install nvidia-cuda-toolkit libgcrypt20-dev
+    $ make clean; make cuda
 
-Then starting the build with:
+Binaries are written to the project root (same location as the OpenCL build), so `make clean` is required when switching between backends.
 
-    # make clean; make linux
+#### NVRTC / toolkit version notes
 
-The `nvidia-cuda-toolkit` package from the Ubuntu repositories may lag behind the installed NVIDIA driver. If you hit an NVRTC version mismatch or a PTX "unsupported toolchain" error at runtime, install a newer toolkit from NVIDIA's apt repository (e.g. `cuda-toolkit-13-x`) and point the build at it:
+The `nvidia-cuda-toolkit` package from the Ubuntu repositories may lag behind the installed NVIDIA driver. Two failure modes to watch for:
 
-    # make clean; make linux CUDA_PATH=/opt/cuda
+* **NVRTC version mismatch** at runtime — NVRTC linked against a toolkit newer than the driver can consume, or vice versa.
+* **PTX "unsupported toolchain"** at runtime — the generated PTX targets a compute capability the driver does not implement.
 
-(Earlier releases used OpenCL on Linux; the Linux backend has since been ported to CUDA. Windows still uses OpenCL — see above.)
+Both are resolved by installing a driver-compatible toolkit from NVIDIA's apt repository (e.g. `cuda-toolkit-13-x` for a recent driver, or `cuda-toolkit-12-8` for a driver stuck on CUDA 12) and pointing the build at it:
+
+    $ make clean; make cuda CUDA_PATH=/opt/cuda
+    $ make clean; make cuda CUDA_PATH=/usr/local/cuda-12.8
+
+The `CUDA_PATH` variable overrides `/usr/local/cuda` (the default install location).
+
+#### Compiled-PTX disk cache
+
+The CUDA backend caches compiled PTX on disk keyed by an FNV-1a content hash of the resolved kernel source, target arch, and build flags. This makes repeated launches of `crackalack_gen` (e.g. one invocation per mask over a `.hcmask` file) skip the ~0.1–1 s NVRTC compile per kernel. Location: `$RCRACK_KERNEL_CACHE` (set to `off` to disable), else `$XDG_CACHE_HOME/rainbowcrackalack`, else `$HOME/.cache/rainbowcrackalack`. Purely an optimization — any cache miss falls back to compiling.
+
+### Historical note
+
+Earlier releases used `make linux` for the CUDA build. The Makefile targets were flipped so `make linux` is the portable OpenCL build and `make cuda` is the NVIDIA-specific build. `make linux-cuda` remains as an alias for `make cuda`.
 
 ## Testing
 

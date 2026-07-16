@@ -1,4 +1,4 @@
-name: CPU unit tests
+name: CI
 
 on:
   push:
@@ -7,9 +7,9 @@ on:
     branches: [master]
 
 jobs:
-  cpu-tests:
+  cpu-tests-linux:
+    name: CPU unit tests (Linux)
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -21,3 +21,45 @@ jobs:
 
       - name: Run CPU tests
         run: ./crackalack_cpu_tests
+
+  build-linux-opencl:
+    name: Build - Linux OpenCL
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libgcrypt20-dev opencl-headers
+
+      - name: Build (make linux)
+        # Compile-only smoke: CI runners have no GPU, so we cannot execute the
+        # GPU-accelerated unit tests here.  This job catches build breaks that
+        # affect the default Linux (OpenCL) backend.
+        run: make clean && make linux
+
+      - name: List binaries
+        run: ls -la crackalack_gen crackalack_lookup crackalack_verify crackalack_unit_tests
+
+  build-macos-metal:
+    name: Build - macOS Metal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install libgcrypt
+
+      - name: Build (make macos)
+        # Compile-only smoke: macos-latest runners have Metal capability but
+        # GitHub-hosted runners cannot execute GPU kernels reliably.  This job
+        # catches build breaks that affect the Metal (Apple Silicon) backend.
+        run: make clean && make macos
+
+      - name: List binaries
+        run: ls -la crackalack_gen crackalack_lookup crackalack_verify crackalack_unit_tests
+
+  # NOTE: CUDA is intentionally not covered by hosted CI — GitHub-hosted
+  # runners have no NVIDIA GPU and NVRTC requires the CUDA driver at runtime.
+  # CUDA verification is performed manually on the maintainer's Linux boxes
+  # (dell2, dell3) using `make cuda && ./crackalack_unit_tests`.  See README
+  # "Linux Build" section for CUDA build instructions.
