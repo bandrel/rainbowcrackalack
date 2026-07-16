@@ -9,13 +9,15 @@ __kernel void precompute_ntlm9(
     __global unsigned int *unused4,
     __global unsigned int *unused5,
     __global unsigned int *unused6,
-    __global unsigned long *unused7,
+    __global unsigned long *g_chain_len,
     __global unsigned int *g_device_num,
     __global unsigned int *g_total_devices,
     __global unsigned int *g_exec_block_scaler,
     __global unsigned long *g_output) {
 
-  long target_chain_len = (803000 - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
+  /* Honor the host's chain_len (arg 7) instead of a hardcoded constant. */
+  long chain_len = (long)(*g_chain_len);
+  long target_chain_len = (chain_len - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
 
   if (target_chain_len < 1) {
     g_output[get_global_id(0)] = 0;
@@ -25,7 +27,7 @@ __kernel void precompute_ntlm9(
   unsigned char plaintext[9];
   unsigned long index = hash_char_to_index_ntlm9(g_hash, target_chain_len - 1);
 
-  for(unsigned int i = target_chain_len; i < 802999; i++) {
+  for(unsigned int i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_ntlm9(index, plaintext);
     index = hash_to_index_ntlm9(hash_ntlm9(plaintext), i);
   }
