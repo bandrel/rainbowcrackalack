@@ -53,66 +53,18 @@
 #include "verify.h"
 #include "version.h"
 
-#define CRACKALACK_KERNEL_PATH "crackalack.cl"
-#ifdef USE_CUDA
-#define CRACKALACK_NTLM8_KERNEL_PATH "CUDA/crackalack_ntlm8.cu"
-#else
-#define CRACKALACK_NTLM8_KERNEL_PATH "crackalack_ntlm8.cl"
-#endif
-#ifdef USE_CUDA
-#define CRACKALACK_NTLM9_KERNEL_PATH "CUDA/crackalack_ntlm9.cu"
-#else
-#define CRACKALACK_NTLM9_KERNEL_PATH "crackalack_ntlm9.cl"
-#endif
-#ifdef USE_CUDA
-#define CRACKALACK_NTLM10_KERNEL_PATH "CUDA/crackalack_ntlm10.cu"
-#else
-#define CRACKALACK_NTLM10_KERNEL_PATH "crackalack_ntlm10.cl"
-#endif
-#ifdef USE_CUDA
-#define CRACKALACK_MD5_8_KERNEL_PATH "CUDA/crackalack_md5_8.cu"
-#else
-#define CRACKALACK_MD5_8_KERNEL_PATH "crackalack_md5_8.cl"
-#endif
-#ifdef USE_CUDA
-#define CRACKALACK_MD5_9_KERNEL_PATH "CUDA/crackalack_md5_9.cu"
-#else
-#define CRACKALACK_MD5_9_KERNEL_PATH "crackalack_md5_9.cl"
-#endif
-#ifdef USE_CUDA
-#define CRACKALACK_NETNTLMV1_7_KERNEL_PATH "CUDA/crackalack_netntlmv1_7.cu"
-#else
-#define CRACKALACK_NETNTLMV1_7_KERNEL_PATH "crackalack_netntlmv1_7.cl"
-#endif
-#ifdef USE_METAL
-#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.metal"
-#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.metal"
-#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "crackalack_markov_ntlm10.metal"
-#elif defined(USE_CUDA)
-#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "CUDA/crackalack_markov_ntlm8.cu"
-#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "CUDA/crackalack_markov_ntlm9.cu"
-#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "CUDA/crackalack_markov_ntlm10.cu"
-#else
-#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH "crackalack_markov_ntlm8.cl"
-#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH "crackalack_markov_ntlm9.cl"
-#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH "crackalack_markov_ntlm10.cl"
-#endif
-
-#ifdef USE_METAL
-#define CRACKALACK_MASK_KERNEL_PATH "crackalack_mask.metal"
-#elif defined(USE_CUDA)
-#define CRACKALACK_MASK_KERNEL_PATH "CUDA/crackalack_mask.cu"
-#else
-#define CRACKALACK_MASK_KERNEL_PATH "crackalack_mask.cl"
-#endif
-
-#ifdef USE_METAL
-#define CRACKALACK_MARKOV_MASK_KERNEL_PATH "crackalack_markov_mask.metal"
-#elif defined(USE_CUDA)
-#define CRACKALACK_MARKOV_MASK_KERNEL_PATH "CUDA/crackalack_markov_mask.cu"
-#else
-#define CRACKALACK_MARKOV_MASK_KERNEL_PATH "crackalack_markov_mask.cl"
-#endif
+#define CRACKALACK_KERNEL_PATH               "crackalack.cl"
+#define CRACKALACK_NTLM8_KERNEL_PATH         GPU_KERNEL_PATH("crackalack_ntlm8")
+#define CRACKALACK_NTLM9_KERNEL_PATH         GPU_KERNEL_PATH("crackalack_ntlm9")
+#define CRACKALACK_NTLM10_KERNEL_PATH        GPU_KERNEL_PATH("crackalack_ntlm10")
+#define CRACKALACK_MD5_8_KERNEL_PATH         GPU_KERNEL_PATH("crackalack_md5_8")
+#define CRACKALACK_MD5_9_KERNEL_PATH         GPU_KERNEL_PATH("crackalack_md5_9")
+#define CRACKALACK_NETNTLMV1_7_KERNEL_PATH   GPU_KERNEL_PATH("crackalack_netntlmv1_7")
+#define CRACKALACK_MARKOV_NTLM8_KERNEL_PATH  GPU_KERNEL_PATH("crackalack_markov_ntlm8")
+#define CRACKALACK_MARKOV_NTLM9_KERNEL_PATH  GPU_KERNEL_PATH("crackalack_markov_ntlm9")
+#define CRACKALACK_MARKOV_NTLM10_KERNEL_PATH GPU_KERNEL_PATH("crackalack_markov_ntlm10")
+#define CRACKALACK_MASK_KERNEL_PATH          GPU_KERNEL_PATH("crackalack_mask")
+#define CRACKALACK_MARKOV_MASK_KERNEL_PATH   GPU_KERNEL_PATH("crackalack_markov_mask")
 
 #define VERBOSE 1
 
@@ -504,16 +456,8 @@ void *host_thread(void *ptr) {
           printf("%sNote: --markov cannot use fast-path kernels. Falling back to Markov generic kernel.%s\n", YELLOWB, CLR); fflush(stdout);
         }
       }
-#ifdef USE_METAL
-      kernel_path = "crackalack_markov.metal";
+      kernel_path = GPU_KERNEL_PATH("crackalack_markov");
       kernel_name = "crackalack_markov";
-#elif defined(USE_CUDA)
-      kernel_path = "CUDA/crackalack_markov.cu";
-      kernel_name = "crackalack_markov";
-#else
-      kernel_path = "crackalack_markov.cl";
-      kernel_name = "crackalack_markov";
-#endif
     }
   }
 

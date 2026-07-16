@@ -17,6 +17,10 @@ get_chain
 perfectify
 enumerate_chain
 crackalack_sort
+crackalack_plan
+crackalack_rt2rtc
+crackalack_cpu_tests
+gen_known_hash
 build/
 *.pwdump
 /generate_ntlm_8char_50-75.sh

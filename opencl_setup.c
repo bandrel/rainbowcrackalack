@@ -448,6 +448,28 @@ int gpu_get_free_memory(gpu_device device, uint64_t *free_bytes, uint64_t *total
 }
 
 
+/* Thin wrapper around clGetKernelWorkGroupInfo so callers can use the same
+ * signature across all three backends (CUDA/Metal implement this directly in
+ * their setup files).  Returns GPU_SUCCESS on success, non-zero on failure. */
+int gpu_get_kernel_work_group_info(gpu_kernel kernel, gpu_device device, unsigned int param, size_t param_size, void *param_value) {
+  return rc_clGetKernelWorkGroupInfo(kernel, device, param, param_size, param_value, NULL);
+}
+
+
+/* Wrapper for single-device context creation, matching the Metal/CUDA API.
+ * OpenCL's clCreateContext takes an N-device array, but for callers that
+ * only need a single-device context this is the equivalent shape.  Returns
+ * NULL on failure. */
+gpu_context gpu_create_context(gpu_device device) {
+  int err = 0;
+  gpu_device devices[1] = { device };
+  gpu_context context = rc_clCreateContext(NULL, 1, devices, context_callback, NULL, &err);
+  if (err < 0)
+    return NULL;
+  return context;
+}
+
+
 /* Prints debugging information about platforms. */
 void print_platform_info(cl_platform_id *platforms, cl_uint num_platforms) {
   unsigned int i = 0;
