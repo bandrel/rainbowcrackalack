@@ -446,7 +446,12 @@ void check_false_alarms(precomputed_and_potential_indices *ppi, thread_args *arg
       	/* Save the plaintext, clear the precomputed end indices list (since its
       	 * no longer useful, save the hash/plaintext combo into the pot file, and
       	 * tell the user. */
-      	ppi_refs[j]->plaintext = strdup(plaintext);
+      	if (args[i].hash_type == HASH_NETNTLMV1) {
+      	  ppi_refs[j]->plaintext = calloc(8, 1);
+      	  memcpy(ppi_refs[j]->plaintext, plaintext, 7);
+      	} else {
+      	  ppi_refs[j]->plaintext = strdup(plaintext);
+      	}
       	ppi_refs[j]->num_precomputed_end_indices = 0;
       	FREE(ppi_refs[j]->precomputed_end_indices);
 
@@ -1584,8 +1589,8 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
   FILE *jtr_file = fopen(jtr_pot_filename, "ab"), *hashcat_file = fopen(hashcat_pot_filename, "ab");
   unsigned int hash_len = 0, plaintext_len = 0;
   if (hash_type == HASH_NETNTLMV1) {
-    hash_len = 8;
-    plaintext_len = 8;
+    hash_len = strlen(ppi->hash);
+    plaintext_len = 7;
   }
   else {
     hash_len = strlen(ppi->hash);
@@ -2269,13 +2274,11 @@ int main(int ac, char **av) {
     ppi_cur = ppi_head;
     while(ppi_cur != NULL) {
       if (ppi_cur->plaintext != NULL) {
-        if (sizeof(ppi_cur->hash) == 8) {
-          char ptxt_hex[(sizeof(ppi_cur->plaintext) * 2) + 1] = {0};
+        if (rt_params.hash_type == HASH_NETNTLMV1) {
+          char ptxt_hex[15] = {0};
           bytes_to_hex((unsigned char*)ppi_cur->plaintext, 7, ptxt_hex, sizeof(ptxt_hex));
 	  printf(" %s  %s\n", (ppi_cur->username != NULL) ? ppi_cur->username : ppi_cur->hash, ptxt_hex);
-
-        }
-        else {
+        } else {
 	  printf(" %s  %s\n", (ppi_cur->username != NULL) ? ppi_cur->username : ppi_cur->hash, ppi_cur->plaintext);
         }
       }
