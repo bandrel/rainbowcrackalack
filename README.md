@@ -55,6 +55,8 @@ A 64-bit Windows build can be achieved on an Ubuntu host machine by installing t
 
     # apt install mingw-w64 opencl-headers libgcrypt-mingw-w64-dev
 
+For RAR-compressed rainbow table support, libunrar must also be cross-compiled or available as a MinGW package.
+
 Then starting the build with:
 
     # make clean; make windows
@@ -68,6 +70,10 @@ However, if you prefer to build a complete package (which is useful for testing 
 A 64-bit build can be achieved on an Ubuntu host machine by installing the following prerequisites:
 
     # apt install opencl-c-headers libgcrypt20-dev
+
+For RAR-compressed rainbow table support (optional):
+
+    # apt install libunrar-dev
 
 Then starting the build with:
 

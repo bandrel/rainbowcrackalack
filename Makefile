@@ -27,7 +27,7 @@ ifeq ($(BUILD),linux)
   CPPFLAGS := $(CPPFLAGS_common)
   CFLAGS   := $(CFLAGS_common)
   LDFLAGS  := $(LDFLAGS_common)
-  LIBS     := -lpthread -ldl -lgcrypt -lOpenCL
+  LIBS     := -lpthread -ldl -lgcrypt -lOpenCL -lunrar
 endif
 
 ifeq ($(BUILD),windows)
@@ -163,6 +163,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/opencl_setup.o \
+	$(OBJDIR)/rar_decompress.o \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/verify.o

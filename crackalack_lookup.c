@@ -45,6 +45,7 @@
 #include "cpu_rt_functions.h"
 #include "hash_validate.h"
 #include "misc.h"
+#include "rar_decompress.h"
 #include "rtc_decompress.h"
 #include "shared.h"
 #include "test_shared.h"  /* TODO: move hex_to_bytes() elsewhere. */
@@ -552,7 +553,7 @@ unsigned int count_tables(char *dir) {
     is_dir = (de->d_type == DT_DIR);
 #endif
 
-    if (is_file && (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")))
+    if (is_file && (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")))
       ret++;
     else if (is_dir && (strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0)) {
       char subdir_path[1024] = {0};
@@ -617,12 +618,19 @@ void find_rt_params(char *dir_name, rt_parameters *rt_params) {
       }
 
     /* If this is a compressed or uncompressed rainbow table, process it! */
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
+
+      /* For .rar files, strip the .rar suffix to get the inner table name for parsing. */
+      char parse_name[1024] = {0};
+      strncpy(parse_name, de->d_name, sizeof(parse_name) - 1);
+      if (str_ends_with(parse_name, ".rar")) {
+	parse_name[strlen(parse_name) - 4] = '\0';
+      }
 
       /* Try to parse them from this file name.  On success, return immediately
        * (no further processing needed), otherwise continue searching until the
        * first valid set of parameters is found. */
-      parse_rt_params(rt_params, de->d_name);
+      parse_rt_params(rt_params, parse_name);
       if (rt_params->parsed) {
 	closedir(dir); dir = NULL;
 	return;
@@ -1294,13 +1302,22 @@ void _preloading_thread(char *rt_dir) {
       _preloading_thread(filepath);
 
     /* If this is a compressed or uncompressed rainbow table, load it! */
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
       cl_ulong *rainbow_table = NULL;
       unsigned int num_chains = 0, is_uncompressed_table = 0;
       struct timespec start_time_io = {0};
 
 
-      if (str_ends_with(de->d_name, ".rtc")) {
+      if (str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
+	int ret = 0;
+
+	start_timer(&start_time_io);
+	if ((ret = rar_decompress(filepath, &rainbow_table, &num_chains)) != 0) {
+	  fprintf(stderr, "Error while decompressing RAR table %s: %d\n", filepath, ret);
+	  exit(-1);
+	}
+	time_io += get_elapsed(&start_time_io);
+      } else if (str_ends_with(de->d_name, ".rtc")) {
 	int ret = 0;
 
 	start_timer(&start_time_io);    /* For loading the table only. */
