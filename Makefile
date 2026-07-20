@@ -28,6 +28,21 @@ ifeq ($(BUILD),linux)
   CFLAGS   := $(CFLAGS_common)
   LDFLAGS  := $(LDFLAGS_common)
   LIBS     := -lpthread -ldl -lgcrypt -lOpenCL -lunrar
+  GPU_BACKEND_OBJ := $(OBJDIR)/opencl_setup.o
+endif
+
+ifeq ($(BUILD),linux-cuda)
+  # CUDA backend on Linux (NVIDIA only).  Opt-in via make linux-cuda.  Requires
+  # the CUDA toolkit + NVIDIA driver; NVRTC JIT-compiles CUDA/*.cu at runtime.
+  # The default make linux (OpenCL) path is completely unaffected.
+  CC := $(CC_linux)
+  EXE :=
+  CUDA_PATH ?= /usr/local/cuda
+  CPPFLAGS := $(CPPFLAGS_common) -DUSE_CUDA -I$(CUDA_PATH)/include
+  CFLAGS   := $(CFLAGS_common)
+  LDFLAGS  := $(LDFLAGS_common) -L$(CUDA_PATH)/lib64 -Wl,-rpath,$(CUDA_PATH)/lib64
+  LIBS     := -lpthread -ldl -lgcrypt -lcuda -lnvrtc -lunrar -lm
+  GPU_BACKEND_OBJ := $(OBJDIR)/cuda_setup.o
 endif
 
 ifeq ($(BUILD),windows)
@@ -41,9 +56,17 @@ ifeq ($(BUILD),windows)
   LIBS := -lwinpthread -lgcrypt -lgpg-error -lbcrypt -lws2_32
 
   PREP := prep_opencl_headers
+  GPU_BACKEND_OBJ := $(OBJDIR)/opencl_setup.o
 endif
 
-SRCS := $(wildcard *.c)
+# Both backend sources exist in the tree; compile only the one for this BUILD.
+# Default (OpenCL) build drops cuda_setup.c; the CUDA build drops opencl_setup.c.
+ALL_SRCS := $(wildcard *.c)
+ifeq ($(BUILD),linux-cuda)
+  SRCS := $(filter-out opencl_setup.c,$(ALL_SRCS))
+else
+  SRCS := $(filter-out cuda_setup.c,$(ALL_SRCS))
+endif
 OBJS := $(patsubst %.c,$(OBJDIR)/%.o,$(SRCS))
 
 GEN_PROG      := crackalack_gen$(EXE)
@@ -65,7 +88,7 @@ BINARIES := \
 	$(OUTDIR)/$(PERFECTIFY) \
 	$(OUTDIR)/$(ENUMERATE)
 
-.PHONY: all linux windows clean strip \
+.PHONY: all linux linux-cuda windows clean strip \
         prep_opencl_headers prep_none \
         bundle_windows
 
@@ -73,6 +96,9 @@ all: $(PREP) $(BINARIES)
 
 linux:
 	$(MAKE) BUILD=linux all
+
+linux-cuda:
+	$(MAKE) BUILD=linux-cuda all
 
 windows:
 	$(MAKE) BUILD=windows all bundle_windows
@@ -111,7 +137,7 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
-	$(OBJDIR)/opencl_setup.o \
+	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
@@ -122,7 +148,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/crackalack_unit_tests.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
-	$(OBJDIR)/opencl_setup.o \
+	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/test_chain.o \
 	$(OBJDIR)/test_chain_ntlm9.o \
 	$(OBJDIR)/test_hash.o \
@@ -162,7 +188,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
-	$(OBJDIR)/opencl_setup.o \
+	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rar_decompress.o \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/test_shared.o \
