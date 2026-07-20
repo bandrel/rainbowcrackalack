@@ -328,6 +328,9 @@ Two instrumentation entry points remain in-tree via the Makefile:
 |`make COVERAGE=1 <target>`   |gcov/llvm-cov line-coverage build for the host code.     |
 
 ## Change Log
+### v1.5.3
+ - `crackalack_verify` now accepts `--markov-keyspace N` and reports the Markov keyspace encoded in the table filename (the `-mk<N>` tag). The value is parsed from the filename only — table contents are not scanned to derive it. If `--markov-keyspace` is supplied, verify warns when it disagrees with the filename (the filename value is authoritative) or when the filename carries no keyspace tag.
+
 ### v1.5.2
  - Added a compiled-PTX disk cache to the CUDA backend (`cuda_setup.c`). NVRTC compilation (~0.1–1s per kernel) was repeated on every process launch, so batch workflows that invoke `crackalack_gen` many times (e.g. `--hcmask`, or one invocation per mask over a large mask set) paid it thousands of times even though the emitted PTX is identical for a given (resolved source, arch, build flags). The PTX is now cached on disk keyed by an FNV-1a content hash and reused across processes, roughly halving per-launch startup. Location honors `RCRACK_KERNEL_CACHE` (set to `off` to disable), else `$XDG_CACHE_HOME/rainbowcrackalack`, else `$HOME/.cache/rainbowcrackalack`. Purely an optimization — any cache miss/error falls back to compiling. Atomic writes (temp + rename) make it safe under the concurrent multi-GPU workers on one host.
 
