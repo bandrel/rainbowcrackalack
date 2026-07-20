@@ -21,6 +21,8 @@
 
 #include <dirent.h>
 #include <getopt.h>
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +46,7 @@ static struct option long_options[] = {
   {"truncate_on_err", no_argument, &truncate_on_err, VERIFY_TRUNCATE_ON_ERROR},
   {"num_chains", required_argument, 0, 'n'},
   {"markov", required_argument, 0, 'm'},
+  {"markov-keyspace", required_argument, 0, 'k'},
   {"mask", required_argument, 0, 'M'},
   {"hcmask", required_argument, 0, 'K'},
   {"challenge", required_argument, 0, 'c'},
@@ -56,7 +59,7 @@ static struct option long_options[] = {
 
 
 void print_usage(char *prog_name) {
-  fprintf(stderr, "This program verifies rainbow tables.\n\n\n  %s --raw [--truncate_on_err] [--num_chains X] [--markov FILE] [--mask MASKSTRING [-1 CHARS] [-2 CHARS] [-3 CHARS] [-4 CHARS]] table.rt\n\nThe above command will verify a newly-generated rainbow table.  This ensures that the table 1.) has sequential start points, and 2.) has non-zero ending points.  Optionally, it can truncate_on_err the file to just before the first error found, if any.\n\nWhen --markov is specified, the Markov model is used for CPU chain verification.  When --mask is specified, the mask (hashcat-style, e.g. ?u?l?l?d) is used for CPU chain verification; -1/-2/-3/-4 define custom charset slots.\n\n\n  %s --quick [--markov FILE] [--mask MASKSTRING [-1 CHARS] [-2 CHARS] [-3 CHARS] [-4 CHARS]] table.rt\n\nThe above command will quickly verify a newly-generated rainbow table.  It is similar to using '--raw', but does not examine the start & end points, and only verifies 5 random chains.  As a result, it can do basic verification without needing to read the entire table into memory first (which incurs a huge I/O cost).  The use case for this option is for quickly checking terabytes of tables for sanity.\n\n\n  %s --sorted [--num_chains X] table.rtc\n\nThe above command will verify a sorted rainbow table (i.e.: that it is suitable for lookups).  It ensures that the end indices are sorted in ascending order.  The table may be compressed or uncompressed.\n\n\nIn any case, --num_chains sets the number of random chains to verify using CPU code (hence, providing a large number here will have a dramatic effect on the speed of verification).  Unless overridden, this defaults to 100.\n\nFor NetNTLMv1 tables, --challenge HEX16 sets the 8-byte server challenge used for CPU chain verification (defaults to the standard challenge 1122334455667788).\n\n\n  %s --hcmask FILE table_dir/\n\nThe above command batch-verifies a mask campaign: for each mask line in the .hcmask FILE, it locates the matching table(s) in table_dir/, verifies each (quick mode), and reports any mask that has no matching table (MISSING).  Returns non-zero if any entry is missing or any table fails.\n\n\n", prog_name, prog_name, prog_name, prog_name);
+  fprintf(stderr, "This program verifies rainbow tables.\n\n\n  %s --raw [--truncate_on_err] [--num_chains X] [--markov FILE] [--markov-keyspace N] [--mask MASKSTRING [-1 CHARS] [-2 CHARS] [-3 CHARS] [-4 CHARS]] table.rt\n\nThe above command will verify a newly-generated rainbow table.  This ensures that the table 1.) has sequential start points, and 2.) has non-zero ending points.  Optionally, it can truncate_on_err the file to just before the first error found, if any.\n\nWhen --markov is specified, the Markov model is used for CPU chain verification.  When --mask is specified, the mask (hashcat-style, e.g. ?u?l?l?d) is used for CPU chain verification; -1/-2/-3/-4 define custom charset slots.\n\n\n  %s --quick [--markov FILE] [--markov-keyspace N] [--mask MASKSTRING [-1 CHARS] [-2 CHARS] [-3 CHARS] [-4 CHARS]] table.rt\n\nThe above command will quickly verify a newly-generated rainbow table.  It is similar to using '--raw', but does not examine the start & end points, and only verifies 5 random chains.  As a result, it can do basic verification without needing to read the entire table into memory first (which incurs a huge I/O cost).  The use case for this option is for quickly checking terabytes of tables for sanity.\n\n\n  %s --sorted [--num_chains X] table.rtc\n\nThe above command will verify a sorted rainbow table (i.e.: that it is suitable for lookups).  It ensures that the end indices are sorted in ascending order.  The table may be compressed or uncompressed.\n\n\nIn any case, --num_chains sets the number of random chains to verify using CPU code (hence, providing a large number here will have a dramatic effect on the speed of verification).  Unless overridden, this defaults to 100.\n\nFor NetNTLMv1 tables, --challenge HEX16 sets the 8-byte server challenge used for CPU chain verification (defaults to the standard challenge 1122334455667788).\n\n\n  %s --hcmask FILE table_dir/\n\nThe above command batch-verifies a mask campaign: for each mask line in the .hcmask FILE, it locates the matching table(s) in table_dir/, verifies each (quick mode), and reports any mask that has no matching table (MISSING).  Returns non-zero if any entry is missing or any table fails.\n\n\n", prog_name, prog_name, prog_name, prog_name);
 }
 
 
@@ -147,6 +150,8 @@ int main(int ac, char **av) {
 
   ENABLE_CONSOLE_COLOR();
   PRINT_PROJECT_HEADER();
+  uint64_t markov_keyspace_arg = 0;
+  int markov_keyspace_arg_given = 0;
   while ((c = getopt_long(ac, av, "1:2:3:4:", long_options, &option_index)) != -1) {
     switch(c) {
     case 0:
@@ -156,6 +161,10 @@ int main(int ac, char **av) {
       break;
     case 'm':
       markov_path = optarg;
+      break;
+    case 'k':
+      markov_keyspace_arg = strtoull(optarg, NULL, 10);
+      markov_keyspace_arg_given = 1;
       break;
     case 'M':
       mask_str = optarg;
@@ -227,6 +236,25 @@ int main(int ac, char **av) {
     exit(-1);
   }
   filename = av[optind];
+
+  /* Report the Markov keyspace encoded in the filename (e.g. the "-mk<N>" tag
+   * in "...ascii-32-95-mk1000000...").  Parsed from the filename only — the
+   * table contents are NOT scanned to derive this value.  If the user passed
+   * --markov-keyspace, note whether it agrees with the filename. */
+  {
+    rt_parameters rt_params_probe = {0};
+    parse_rt_params(&rt_params_probe, filename);
+    if (rt_params_probe.parsed && rt_params_probe.markov_keyspace > 0) {
+      printf("Markov keyspace (from filename, not from table contents): %" PRIu64 "\n",
+             rt_params_probe.markov_keyspace);
+      if (markov_keyspace_arg_given && markov_keyspace_arg != rt_params_probe.markov_keyspace) {
+        fprintf(stderr, "Warning: --markov-keyspace %" PRIu64 " does not match filename value %" PRIu64 "; filename value is authoritative for verification.\n",
+                markov_keyspace_arg, rt_params_probe.markov_keyspace);
+      }
+    } else if (markov_keyspace_arg_given) {
+      fprintf(stderr, "Warning: --markov-keyspace supplied but filename has no Markov keyspace tag; ignoring.\n");
+    }
+  }
 
   if (markov_path) {
     if (markov_load(markov_path, &markov) != 0) {
