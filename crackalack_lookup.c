@@ -3959,6 +3959,10 @@ int main(int ac, char **av) {
   char *rt_dir = NULL, *single_hash = NULL, *filename = NULL, *file_data = NULL, **usernames = NULL, **hashes = NULL, *pot_file_data = NULL;
   unsigned int i = 0, j = 0;
   int file_format = 0;
+  /* NetNTLMv1 server challenge supplied inline via "hash:challenge" input (hash
+   * file or single-hash arg), used to cross-check against the tables' challenge. */
+  unsigned char input_challenge[8] = {0};
+  int input_challenge_present = 0;
   FILE *f = NULL;
   struct stat st = {0};
   thread_args *args = NULL;
@@ -4104,6 +4108,19 @@ int main(int ac, char **av) {
   else {
     single_hash = av[2];
 
+    /* Accept a NetNTLMv1 "hash:challenge" pair (ntlmv1-multi / hashcat -m 14000)
+     * on the command line too: keep only the hash.  The supplied challenge is
+     * captured and cross-checked against the tables' challenge below. */
+    char *colon = strchr(single_hash, ':');
+    if (colon != NULL) {
+      *colon = '\0';
+      if (parse_challenge_str(colon + 1, input_challenge) != 0) {
+        fprintf(stderr, "Error: expected NetNTLMv1 'hash:challenge' but the challenge is not 16 hex digits: '%s'.\n", colon + 1);
+        exit(-1);
+      }
+      input_challenge_present = 1;
+    }
+
     /* Ensure that hash is lowercase. */
     str_to_lowercase(single_hash);
 
@@ -4138,7 +4155,8 @@ int main(int ac, char **av) {
     FCLOSE(f);
 
     if (parse_hash_file_data(file_data, pot_file_data, &hashes, &usernames,
-                             &num_hashes, &previously_cracked, &file_format) != 0)
+                             &num_hashes, &previously_cracked, &file_format,
+                             input_challenge, &input_challenge_present) != 0)
       goto err;
 
     FREE(file_data);
@@ -4214,6 +4232,18 @@ int main(int ac, char **av) {
       format_challenge_hex(g_challenge, a);
       format_challenge_hex(table_challenge, b);
       fprintf(stderr, "Error: --challenge %s does not match the loaded tables' challenge %s (charset '%s').\n",
+              a, b, first_cg->params.charset_name);
+      exit(-1);
+    }
+
+    /* A challenge supplied inline with the input ("hash:challenge") must match
+     * the tables, otherwise the responses were captured under a different
+     * challenge and none of them can crack against these tables. */
+    if (input_challenge_present && memcmp(input_challenge, table_challenge, 8) != 0) {
+      char a[17] = {0}, b[17] = {0};
+      format_challenge_hex(input_challenge, a);
+      format_challenge_hex(table_challenge, b);
+      fprintf(stderr, "Error: the input's NetNTLMv1 challenge %s does not match the loaded tables' challenge %s (charset '%s').  These tables cannot crack responses captured under a different challenge.\n",
               a, b, first_cg->params.charset_name);
       exit(-1);
     }

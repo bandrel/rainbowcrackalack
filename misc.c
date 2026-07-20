@@ -652,13 +652,17 @@ int parse_hash_file_data(char *file_data,
                          char ***out_usernames,
                          unsigned int *out_num_hashes,
                          unsigned int *out_num_previously_cracked,
-                         int *out_file_format) {
+                         int *out_file_format,
+                         unsigned char out_challenge[8],
+                         int *out_challenge_present) {
   unsigned int i = 0;
   unsigned int max_num_hashes = 0;
   unsigned int num_colons = 0;
   unsigned int num_hashes = 0;
   unsigned int previously_cracked = 0;
   int file_format = 0;
+  unsigned char file_challenge[8] = {0};
+  int file_challenge_present = 0;
   char **hashes = NULL;
   char **usernames = NULL;
   char *line = NULL;
@@ -684,11 +688,14 @@ int parse_hash_file_data(char *file_data,
   if (num_colons == 0) {
     file_format = HASH_FILE_FORMAT_PLAIN;
     printf("Hash file contains plain hashes.\n");
+  } else if (num_colons == 1) {
+    file_format = HASH_FILE_FORMAT_HASH_CHALLENGE;
+    printf("Hash file contains NetNTLMv1 hash:challenge pairs (the challenge is taken from the loaded tables).\n");
   } else if (num_colons == 6) {
     file_format = HASH_FILE_FORMAT_PWDUMP;
     printf("Hash file is pwdump format.\n");
   } else {
-    fprintf(stderr, "Error: hash file format is not recognized (number of colons in first line is %u, instead of 0 or 6).\n", num_colons);
+    fprintf(stderr, "Error: hash file format is not recognized (number of colons in first line is %u, instead of 0, 1, or 6).\n", num_colons);
     goto cleanup_err;
   }
 
@@ -725,6 +732,55 @@ int parse_hash_file_data(char *file_data,
             goto cleanup_err;
           }
           num_hashes++;
+        } else if (file_format == HASH_FILE_FORMAT_HASH_CHALLENGE) {
+          /* "hash:challenge" (NetNTLMv1, e.g. hashcat -m 14000 / ntlmv1-multi).
+           * Split on the colon: the hash is looked up; the challenge is only
+           * validated here (the active challenge comes from the tables). */
+          char *colon = strchr(line, ':');
+          char *hash = line;
+          unsigned char chal_tmp[8];
+
+          /* Format was detected from the first line; a later line missing its
+           * colon is malformed for this format. */
+          if (colon == NULL) {
+            fprintf(stderr, "Error: expected NetNTLMv1 'hash:challenge' but no ':' found in line: [%s]\n", line);
+            goto cleanup_err;
+          }
+          *colon = '\0';
+
+          if (parse_challenge_str(colon + 1, chal_tmp) != 0) {
+            fprintf(stderr, "Error: expected NetNTLMv1 'hash:challenge' but the challenge is not 16 hex digits: [%s]\n", colon + 1);
+            goto cleanup_err;
+          }
+
+          /* A rainbow table only ever covers one challenge, so every line must
+           * carry the same one; a mix is almost certainly a mistake. */
+          if (!file_challenge_present) {
+            memcpy(file_challenge, chal_tmp, 8);
+            file_challenge_present = 1;
+          } else if (memcmp(file_challenge, chal_tmp, 8) != 0) {
+            char a[17] = {0}, b[17] = {0};
+            format_challenge_hex(file_challenge, a);
+            format_challenge_hex(chal_tmp, b);
+            fprintf(stderr, "Error: hash file mixes multiple NetNTLMv1 challenges (%s and %s); a table only covers one challenge, so look up one at a time.\n", a, b);
+            goto cleanup_err;
+          }
+
+          /* Ensure that hash is lowercase. */
+          str_to_lowercase(hash);
+
+          /* A pot entry is stored as "hash:plaintext", so the whole
+           * "hash:challenge" line never matches; re-check the bare hash. */
+          if ((pot_contents != NULL) && strstr(pot_contents, hash) != NULL) {
+            previously_cracked++;
+          } else {
+            hashes[num_hashes] = strdup(hash);
+            if (hashes[num_hashes] == NULL) {
+              fprintf(stderr, "Error while allocating buffer for hashes.\n");
+              goto cleanup_err;
+            }
+            num_hashes++;
+          }
         } else {  /* HASH_FILE_FORMAT_PWDUMP */
           char *hash = NULL;
           unsigned int line_copy_len = 0;
@@ -804,6 +860,10 @@ int parse_hash_file_data(char *file_data,
   *out_num_hashes = num_hashes;
   *out_num_previously_cracked = previously_cracked;
   *out_file_format = file_format;
+  if (out_challenge_present != NULL)
+    *out_challenge_present = file_challenge_present;
+  if ((out_challenge != NULL) && file_challenge_present)
+    memcpy(out_challenge, file_challenge, 8);
   return 0;
 
 cleanup_err:
@@ -826,6 +886,8 @@ cleanup_err:
   *out_num_hashes = 0;
   *out_num_previously_cracked = 0;
   *out_file_format = 0;
+  if (out_challenge_present != NULL)
+    *out_challenge_present = 0;
   return -1;
 }
 

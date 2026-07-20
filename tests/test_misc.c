@@ -533,7 +533,7 @@ static int group_m(void)
     {
         char input[] = "AABBCCDDEEFF00112233445566778899\nBBCCDDEEFF00112233445566778899AA\nCCDDEEFF00112233445566778899AABB\n";
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
             { fprintf(stderr, "FAIL PHF-M01: parse returned error\n"); ok = 0; }
         else {
             if (num_hashes != 3)
@@ -551,7 +551,7 @@ static int group_m(void)
     {
         char input[] = "AABBCCDDEEFF00112233445566778899\r\n";
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
             { fprintf(stderr, "FAIL PHF-M02: parse returned error\n"); ok = 0; }
         else {
             if (num_hashes != 1)
@@ -567,7 +567,7 @@ static int group_m(void)
     {
         char input[] = "aabbccddeeff00112233445566778899\n\nbbccddeeff00112233445566778899aa\n";
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
             { fprintf(stderr, "FAIL PHF-M03: parse returned error\n"); ok = 0; }
         else if (num_hashes != 2)
             { fprintf(stderr, "FAIL PHF-M03: expected 2 hashes, got %u\n", num_hashes); ok = 0; }
@@ -579,7 +579,7 @@ static int group_m(void)
     {
         char input[] = "aabbccddeeff00112233445566778899\nbbccddeeff00112233445566778899aa\n";
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, "aabbccddeeff00112233445566778899", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+        if (parse_hash_file_data(input, "aabbccddeeff00112233445566778899", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
             { fprintf(stderr, "FAIL PHF-M04: parse returned error\n"); ok = 0; }
         else {
             if (num_hashes != 1)
@@ -597,7 +597,7 @@ static int group_m(void)
     {
         char input[] = "Administrator:500:AABBCCDDEEFF00112233445566778899:aabbccddeeff00112233445566778899:::\n";
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
             { fprintf(stderr, "FAIL PHF-M05: parse returned error\n"); ok = 0; }
         else {
             if (num_hashes != 1)
@@ -617,7 +617,7 @@ static int group_m(void)
     {
         char input[] = "aabbccddeeff00112233445566778899\n";
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, NULL, &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+        if (parse_hash_file_data(input, NULL, &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
             { fprintf(stderr, "FAIL PHF-M06: parse returned error\n"); ok = 0; }
         else if (num_hashes != 1)
             { fprintf(stderr, "FAIL PHF-M06: expected 1 hash, got %u\n", num_hashes); ok = 0; }
@@ -629,7 +629,7 @@ static int group_m(void)
     {
         char input[] = "aabbccddeeff00112233445566778899\n";
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
             { fprintf(stderr, "FAIL PHF-M07: parse returned error\n"); ok = 0; }
         else if (num_hashes != 1)
             { fprintf(stderr, "FAIL PHF-M07: expected 1 hash, got %u\n", num_hashes); ok = 0; }
@@ -642,7 +642,7 @@ static int group_m(void)
         char input[] = "aabbccddeeff00112233445566778899\n";
         char *pot = strdup("deadbeefdeadbeefdeadbeefdeadbeef");
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, pot, &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) != 0)
+        if (parse_hash_file_data(input, pot, &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
             { fprintf(stderr, "FAIL PHF-M08: parse returned error\n"); ok = 0; }
         else {
             if (num_hashes != 1)
@@ -665,7 +665,7 @@ static int group_m(void)
             "Administrator:500:AABBCCDDEEFF00112233445566778899:aabbccddeeff00112233445566778899:::\n"
             "BADLINE:oops\n";
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) == 0)
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) == 0)
             { fprintf(stderr, "FAIL PHF-M09: expected error, got success\n"); ok = 0; }
         if (hashes != NULL)
             { fprintf(stderr, "FAIL PHF-M09: out_hashes not NULL on error\n"); ok = 0; }
@@ -682,7 +682,7 @@ static int group_m(void)
         /* The NT-hash field (4th field) is only 8 characters. */
         char input[] = "Administrator:500:AABBCCDD:SHORT:::\n";
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) == 0)
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) == 0)
             { fprintf(stderr, "FAIL PHF-M10: expected error, got success\n"); ok = 0; }
         if (hashes != NULL)
             { fprintf(stderr, "FAIL PHF-M10: out_hashes not NULL on error\n"); ok = 0; }
@@ -697,7 +697,7 @@ static int group_m(void)
     {
         char input[] = "foo:bar:baz\n";
         hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
-        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format) == 0)
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) == 0)
             { fprintf(stderr, "FAIL PHF-M11: expected error, got success\n"); ok = 0; }
         if (hashes != NULL)
             { fprintf(stderr, "FAIL PHF-M11: out_hashes not NULL on error\n"); ok = 0; }
@@ -705,6 +705,132 @@ static int group_m(void)
             { fprintf(stderr, "FAIL PHF-M11: out_usernames not NULL on error\n"); ok = 0; }
         if (num_hashes != 0)
             { fprintf(stderr, "FAIL PHF-M11: out_num_hashes not 0 on error (got %u)\n", num_hashes); ok = 0; }
+    }
+
+    /* M-12: NetNTLMv1 "hash:challenge" format → hash stored (lowercased),
+     * challenge dropped, format flagged HASH_FILE_FORMAT_HASH_CHALLENGE. */
+    {
+        char input[] = "1C86E4DC9C0EE49F:1122334455667788\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
+            { fprintf(stderr, "FAIL PHF-M12: parse returned error\n"); ok = 0; }
+        else {
+            if (num_hashes != 1)
+                { fprintf(stderr, "FAIL PHF-M12: expected 1 hash, got %u\n", num_hashes); ok = 0; }
+            if (file_format != HASH_FILE_FORMAT_HASH_CHALLENGE)
+                { fprintf(stderr, "FAIL PHF-M12: wrong format %d\n", file_format); ok = 0; }
+            if (hashes && num_hashes >= 1 && strcmp(hashes[0], "1c86e4dc9c0ee49f") != 0)
+                { fprintf(stderr, "FAIL PHF-M12: hashes[0]=\"%s\"\n", hashes[0]); ok = 0; }
+        }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-13: multiple "hash:challenge" lines, CRLF endings. */
+    {
+        char input[] = "1c86e4dc9c0ee49f:1122334455667788\r\n2233445566778899:1122334455667788\r\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
+            { fprintf(stderr, "FAIL PHF-M13: parse returned error\n"); ok = 0; }
+        else {
+            if (num_hashes != 2)
+                { fprintf(stderr, "FAIL PHF-M13: expected 2 hashes, got %u\n", num_hashes); ok = 0; }
+            if (hashes && num_hashes >= 2 && strcmp(hashes[1], "2233445566778899") != 0)
+                { fprintf(stderr, "FAIL PHF-M13: hashes[1]=\"%s\"\n", hashes[1]); ok = 0; }
+        }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-14: already-cracked skip — pot holds the bare hash (as "hash:plain"). */
+    {
+        char input[] = "1c86e4dc9c0ee49f:1122334455667788\n2233445566778899:1122334455667788\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "1c86e4dc9c0ee49f:password", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) != 0)
+            { fprintf(stderr, "FAIL PHF-M14: parse returned error\n"); ok = 0; }
+        else {
+            if (num_hashes != 1)
+                { fprintf(stderr, "FAIL PHF-M14: expected 1 hash, got %u\n", num_hashes); ok = 0; }
+            if (previously_cracked != 1)
+                { fprintf(stderr, "FAIL PHF-M14: expected previously_cracked=1, got %u\n", previously_cracked); ok = 0; }
+            if (hashes && num_hashes >= 1 && strcmp(hashes[0], "2233445566778899") != 0)
+                { fprintf(stderr, "FAIL PHF-M14: hashes[0]=\"%s\"\n", hashes[0]); ok = 0; }
+        }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-15: Error path — single colon but challenge is not 16 hex digits.
+     * Expects non-zero return AND out-params NULLed/zeroed. */
+    {
+        char input[] = "1c86e4dc9c0ee49f:nothex\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) == 0)
+            { fprintf(stderr, "FAIL PHF-M15: expected error, got success\n"); ok = 0; }
+        if (hashes != NULL)
+            { fprintf(stderr, "FAIL PHF-M15: out_hashes not NULL on error\n"); ok = 0; }
+        if (num_hashes != 0)
+            { fprintf(stderr, "FAIL PHF-M15: out_num_hashes not 0 on error (got %u)\n", num_hashes); ok = 0; }
+    }
+
+    /* M-16: Error path — first line sets hash:challenge format but a later line
+     * has no colon.  Expects non-zero return AND out-params NULLed/zeroed. */
+    {
+        char input[] = "1c86e4dc9c0ee49f:1122334455667788\ndeadbeefdeadbeef\n";
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, NULL, NULL) == 0)
+            { fprintf(stderr, "FAIL PHF-M16: expected error, got success\n"); ok = 0; }
+        if (hashes != NULL)
+            { fprintf(stderr, "FAIL PHF-M16: out_hashes not NULL on error\n"); ok = 0; }
+        if (num_hashes != 0)
+            { fprintf(stderr, "FAIL PHF-M16: out_num_hashes not 0 on error (got %u)\n", num_hashes); ok = 0; }
+    }
+
+    /* M-17: out_challenge / out_challenge_present populated from the file. */
+    {
+        char input[] = "1c86e4dc9c0ee49f:aabbccddeeff0011\n2233445566778899:aabbccddeeff0011\n";
+        unsigned char chal[8] = {0};
+        int chal_present = -1;
+        unsigned char want[8] = {0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x00,0x11};
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, chal, &chal_present) != 0)
+            { fprintf(stderr, "FAIL PHF-M17: parse returned error\n"); ok = 0; }
+        else {
+            if (chal_present != 1)
+                { fprintf(stderr, "FAIL PHF-M17: chal_present=%d\n", chal_present); ok = 0; }
+            if (memcmp(chal, want, 8) != 0)
+                { fprintf(stderr, "FAIL PHF-M17: challenge bytes mismatch\n"); ok = 0; }
+        }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
+    }
+
+    /* M-18: Error path — a single file mixing two different challenges. */
+    {
+        char input[] = "1c86e4dc9c0ee49f:1122334455667788\n2233445566778899:aabbccddeeff0011\n";
+        unsigned char chal[8] = {0};
+        int chal_present = -1;
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, chal, &chal_present) == 0)
+            { fprintf(stderr, "FAIL PHF-M18: expected error, got success\n"); ok = 0; }
+        if (hashes != NULL)
+            { fprintf(stderr, "FAIL PHF-M18: out_hashes not NULL on error\n"); ok = 0; }
+        if (chal_present != 0)
+            { fprintf(stderr, "FAIL PHF-M18: chal_present not 0 on error (got %d)\n", chal_present); ok = 0; }
+    }
+
+    /* M-19: out_challenge_present is 0 for a plain (non-challenge) file. */
+    {
+        char input[] = "aabbccddeeff00112233445566778899\n";
+        unsigned char chal[8] = {0};
+        int chal_present = -1;
+        hashes = NULL; usernames = NULL; num_hashes = 0; previously_cracked = 0; file_format = 0;
+        if (parse_hash_file_data(input, "", &hashes, &usernames, &num_hashes, &previously_cracked, &file_format, chal, &chal_present) != 0)
+            { fprintf(stderr, "FAIL PHF-M19: parse returned error\n"); ok = 0; }
+        else if (chal_present != 0)
+            { fprintf(stderr, "FAIL PHF-M19: chal_present=%d for plain file\n", chal_present); ok = 0; }
+        if (hashes) { for (i = 0; i < num_hashes; i++) free(hashes[i]); free(hashes); }
+        if (usernames) { for (i = 0; i < num_hashes; i++) free(usernames[i]); free(usernames); }
     }
 
     return ok;

@@ -196,6 +196,10 @@ Looking up captured Net-NTLMv1 hashes works the same as NTLM:
 
 The hash file should contain 16-hex-character DES fragments (one per line). A full 48-character Net-NTLMv1 response must be split into three 16-character fragments before lookup.
 
+Each line may be either a bare fragment (`1c86e4dc9c0ee49f`) or the `fragment:challenge` form emitted by [`ntlmv1-multi`](https://github.com/evilmog/ntlmv1-multi) and hashcat's `-m 14000` (`1c86e4dc9c0ee49f:1122334455667788`) — the two formats may not be mixed within one file, since the format is detected from the first line. A single `fragment:challenge` value is also accepted directly on the command line in place of the hash-file argument.
+
+When a challenge is supplied inline it must be 16 hex digits, and it is enforced rather than ignored: the active challenge is always taken from the loaded tables (or `--challenge`), and `crackalack_lookup` **errors out** if the challenge attached to the input does not match the tables' challenge (or if a single file mixes more than one challenge). This turns the otherwise-silent "wrong tables for this capture" mistake — which would just crack nothing — into an immediate, explicit failure.
+
 #### Net-NTLMv1 server challenges
 
 Net-NTLMv1 responses are computed against a server challenge, so a rainbow table is only valid for the specific challenge it was generated with. The default challenge is `1122334455667788` (the fixed value commonly forced by relay/downgrade tooling). To target a different captured challenge, pass `--challenge` (16 hex digits) to `crackalack_gen`:
@@ -328,6 +332,10 @@ Two instrumentation entry points remain in-tree via the Makefile:
 |`make COVERAGE=1 <target>`   |gcov/llvm-cov line-coverage build for the host code.     |
 
 ## Change Log
+### v1.5.4
+ - `crackalack_lookup` now accepts NetNTLMv1 hashes in the `fragment:challenge` form emitted by [`ntlmv1-multi`](https://github.com/evilmog/ntlmv1-multi) and hashcat's `-m 14000`, in addition to the bare 16-hex-character fragment. Works for both hash-file and single-hash-argument input; the format is detected from the first line, so a file may not mix bare and `fragment:challenge` lines.
+ - An inline challenge is now enforced rather than ignored: lookup errors out if the challenge attached to the input does not match the loaded tables' challenge, or if a single hash file mixes more than one challenge. This turns the otherwise-silent "wrong tables for this capture" mistake (which would just crack nothing) into an explicit failure. The active challenge is still taken from the tables (or `--challenge`).
+
 ### v1.5.3
  - `crackalack_verify` now accepts `--markov-keyspace N` and reports the Markov keyspace encoded in the table filename (the `-mk<N>` tag). The value is parsed from the filename only — table contents are not scanned to derive it. If `--markov-keyspace` is supplied, verify warns when it disagrees with the filename (the filename value is authoritative) or when the filename carries no keyspace tag.
 

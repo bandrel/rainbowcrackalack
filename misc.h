@@ -111,8 +111,13 @@ int str_ends_with(const char *str, const char *suffix);
 void str_to_lowercase(char *s);
 
 /* Hash file format constants used by parse_hash_file_data(). */
-#define HASH_FILE_FORMAT_PLAIN  1
-#define HASH_FILE_FORMAT_PWDUMP 2
+#define HASH_FILE_FORMAT_PLAIN         1
+#define HASH_FILE_FORMAT_PWDUMP        2
+/* NetNTLMv1 "hash:challenge" pairs, e.g. hashcat -m 14000 / ntlmv1-multi
+ * output.  Only the hash (8-byte DES ciphertext, 16 hex chars) is stored; the
+ * server challenge is validated then dropped, since the challenge is derived
+ * from the loaded tables at lookup time. */
+#define HASH_FILE_FORMAT_HASH_CHALLENGE 3
 
 /* Parse hash-file CONTENTS (NUL-terminated, mutated by tokenization) into
  * newly-allocated hashes[]/usernames[] arrays.
@@ -128,7 +133,15 @@ void str_to_lowercase(char *s);
  *                   (entries may be NULL for PLAIN format).
  * out_num_hashes  - Set to the count of hashes stored.
  * out_num_previously_cracked - Set to the count of skipped already-cracked hashes.
- * out_file_format - Set to HASH_FILE_FORMAT_PLAIN or HASH_FILE_FORMAT_PWDUMP.
+ * out_file_format - Set to HASH_FILE_FORMAT_PLAIN, HASH_FILE_FORMAT_PWDUMP, or
+ *                   HASH_FILE_FORMAT_HASH_CHALLENGE.
+ * out_challenge   - If non-NULL and the file is HASH_FILE_FORMAT_HASH_CHALLENGE,
+ *                   set to the 8-byte server challenge shared by every line.
+ *                   All lines must carry the SAME challenge or the parse fails
+ *                   (a table only ever covers one challenge).  Untouched for
+ *                   other formats.  May be NULL if the caller doesn't need it.
+ * out_challenge_present - If non-NULL, set to 1 when a challenge was parsed into
+ *                   out_challenge, else 0.  May be NULL.
  *
  * Returns 0 on success, non-zero on parse/format/alloc error.
  * On error, all internal allocations are freed and the out-params are set to
@@ -139,7 +152,9 @@ int parse_hash_file_data(char *file_data,
                          char ***out_usernames,
                          unsigned int *out_num_hashes,
                          unsigned int *out_num_previously_cracked,
-                         int *out_file_format);
+                         int *out_file_format,
+                         unsigned char out_challenge[8],
+                         int *out_challenge_present);
 
 #ifdef _WIN32
 void windows_print_error(char *func_name);
