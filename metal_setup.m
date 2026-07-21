@@ -366,12 +366,14 @@ void load_kernel(gpu_context context, gpu_uint num_devices, const gpu_device *de
     if (dot != NULL && strcmp(dot, ".cl") == 0) {
       strcpy(dot, ".metal");
     }
+    /* Populate 'path' up front so all error messages below (compile / function
+     * lookup failures) report the kernel name, not an empty string. */
+    filepath_join(path, sizeof(path), "Metal", metal_filename);
 
     /* Resolve the kernel file relative to CWD first, then to the executable's
      * directory, so lookup/generation work from any working dir. */
     char *raw_source = read_kernel_file_anydir("Metal", metal_filename);
     if (raw_source == NULL) {
-      filepath_join(path, sizeof(path), "Metal", metal_filename);
       fprintf(stderr, "Failed to open Metal kernel: %s (tried CWD and executable dir)\n", path);
       exit(-1);
     }
