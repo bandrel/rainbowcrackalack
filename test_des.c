@@ -17,7 +17,6 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <CL/cl.h>
 
 #include "gpu_backend.h"
 #include "test_des.h"
