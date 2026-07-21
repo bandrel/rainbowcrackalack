@@ -580,7 +580,14 @@ int gpu_write_buffer(gpu_queue queue, gpu_buffer buffer, size_t size, const void
       gpu_finish(queue);
 
     id<MTLBuffer> buf = (__bridge id<MTLBuffer>)buffer;
-    memcpy([buf contents], ptr, size);
+    /* Private (GPU_RO) buffers have no host-accessible pointer; contents is nil.
+     * Guard so a misdirected write fails loudly instead of nil-deref crashing. */
+    void *dst = [buf contents];
+    if (dst == NULL) {
+      fprintf(stderr, "gpu_write_buffer: buffer is not host-accessible (private storage).\n");
+      return -1;
+    }
+    memcpy(dst, ptr, size);
     return 0;
   }
 }
@@ -594,7 +601,12 @@ int gpu_read_buffer(gpu_queue queue, gpu_buffer buffer, size_t size, void *ptr) 
       gpu_finish(queue);
 
     id<MTLBuffer> buf = (__bridge id<MTLBuffer>)buffer;
-    memcpy(ptr, [buf contents], size);
+    void *src = [buf contents];
+    if (src == NULL) {
+      fprintf(stderr, "gpu_read_buffer: buffer is not host-accessible (private storage).\n");
+      return -1;
+    }
+    memcpy(ptr, src, size);
     return 0;
   }
 }
