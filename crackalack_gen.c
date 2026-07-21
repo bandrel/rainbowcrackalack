@@ -840,7 +840,7 @@ int main(int ac, char **av) {
   }
 
   for (i = 0; i < num_devices; i++)
-    rc_clReleaseDevice(devices[i]);
+    gpu_release_device(devices[i]);
 
   pthread_barrier_destroy(&barrier);
   FREE(args);
