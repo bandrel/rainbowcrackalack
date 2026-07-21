@@ -190,6 +190,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rar_decompress.o \
 	$(OBJDIR)/rtc_decompress.o \
+	$(OBJDIR)/rti2_decompress.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)

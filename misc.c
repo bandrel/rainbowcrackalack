@@ -262,8 +262,8 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
   else
     strncpy(rt_filename, rt_filename_orig, sizeof(rt_filename) - 1);
 
-  /* Ensure that the filename ends in .rt or .rtc. */
-  if (!str_ends_with(rt_filename, ".rt") && !str_ends_with(rt_filename, ".rtc"))
+  /* Ensure that the filename ends in .rt, .rtc, or .rti2. */
+  if (!str_ends_with(rt_filename, ".rt") && !str_ends_with(rt_filename, ".rtc") && !str_ends_with(rt_filename, ".rti2"))
     return;
 
   /* Manually pick out the strings from the filename.  sscanf() can't be used because
