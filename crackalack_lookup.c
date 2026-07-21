@@ -53,6 +53,7 @@
 #include "ppi.h"
 #include "rar_decompress.h"
 #include "rtc_decompress.h"
+#include "rti2_decompress.h"
 #include "shared.h"
 #include "test_shared.h"  /* TODO: move hex_to_bytes() elsewhere. */
 #include "verify.h"
@@ -586,7 +587,7 @@ unsigned int count_tables(char *dir) {
     is_dir = (de->d_type == DT_DIR);
 #endif
 
-    if (is_file && (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")))
+    if (is_file && (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar") || str_ends_with(de->d_name, ".rti2")))
       ret++;
     else if (is_dir && (strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0)) {
       char subdir_path[1024] = {0};
@@ -651,7 +652,7 @@ void find_rt_params(char *dir_name, rt_parameters *rt_params) {
       }
 
     /* If this is a compressed or uncompressed rainbow table, process it! */
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar") || str_ends_with(de->d_name, ".rti2")) {
 
       /* For .rar files, strip the .rar suffix to get the inner table name for parsing. */
       char parse_name[1024] = {0};
@@ -1839,7 +1840,7 @@ static void collect_table_paths(const char *rt_dir, table_path_list *list) {
 
     if ((strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0) && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
       collect_table_paths(filepath, list);
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar") || str_ends_with(de->d_name, ".rti2")) {
       table_path_list_add(list, filepath);
     }
   }
@@ -1875,6 +1876,17 @@ static preloaded_table *load_one_table(const char *filepath, double *io_secs) {
       fprintf(stderr, "Error while decompressing RTC table %s: %d\n", filepath, ret);
       exit(-1);
     }
+    *io_secs += get_elapsed(&start_time_io);
+  } else if (str_ends_with(filepath, ".rti2")) {
+    int ret = 0;
+    uint64_t rti2_num_chains = 0;
+
+    start_timer(&start_time_io);    /* For loading the table only. */
+    if ((ret = rti2_decompress((char *)filepath, (uint64_t **)&rainbow_table, &rti2_num_chains)) != 0) {
+      fprintf(stderr, "Error while decompressing RTI2 table %s: %d\n", filepath, ret);
+      exit(-1);
+    }
+    num_chains = (unsigned int)rti2_num_chains;
     *io_secs += get_elapsed(&start_time_io);
   } else {
     FILE *f = NULL;
