@@ -1,12 +1,29 @@
-#define _UNIX
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <unrar/dll.hpp>
 
 #include "rar_decompress.h"
+
+#ifdef __APPLE__
+
+/* libunrar is not available on macOS (no Homebrew formula), so RAR-compressed
+ * table support is compiled out here.  Uncompressed .rt/.rtc tables are
+ * unaffected.  This stub keeps crackalack_lookup linkable under the Metal
+ * backend; a caller that passes a .rar file gets a clean error. */
+int rar_decompress(char *filename, uint64_t **ret_uncompressed_table, unsigned int *ret_num_chains) {
+  (void)filename;
+  *ret_uncompressed_table = NULL;
+  *ret_num_chains = 0;
+  fprintf(stderr, "Error: RAR-compressed tables are not supported on macOS (libunrar unavailable).\n");
+  return -1;
+}
+
+#else  /* non-Apple: real libunrar-backed implementation */
+
+#define _UNIX
+#include <unrar/dll.hpp>
 
 #define RAR_INITIAL_CAPACITY (64 * 1024 * 1024)
 
@@ -108,3 +125,5 @@ done:
 
   return ret;
 }
+
+#endif  /* __APPLE__ */

@@ -21,6 +21,9 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <unistd.h>
+#define O_BINARY 0
 #else
 #include <sys/sysinfo.h>
 #define O_BINARY 0
@@ -32,6 +35,7 @@
 #include <inttypes.h>
 #include <locale.h>
 #include <pthread.h>
+#include "compat.h"  /* pthread_barrier_* shim on macOS (no-op elsewhere) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -672,6 +676,8 @@ unsigned int get_num_cpu_cores() {
 
   GetSystemInfo(&sysinfo);
   return sysinfo.dwNumberOfProcessors;
+#elif defined(__APPLE__)
+  return (unsigned int)sysconf(_SC_NPROCESSORS_ONLN);
 #else
   return get_nprocs();
 #endif
@@ -749,6 +755,10 @@ void *host_thread_false_alarm(void *ptr) {
   queue = gpu->queue;
   kernel = gpu->kernel;
 
+#ifdef USE_METAL
+  kernel_work_group_size = 256;
+  kernel_preferred_work_group_size_multiple = 32;
+#else
   if ((rc_clGetKernelWorkGroupInfo(kernel, gpu->device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &kernel_work_group_size, NULL) != CL_SUCCESS) || \
       (rc_clGetKernelWorkGroupInfo(kernel, gpu->device, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(size_t), &kernel_preferred_work_group_size_multiple, NULL) != CL_SUCCESS)) {
     fprintf(stderr, "Failed to get preferred work group size!\n");
@@ -759,6 +769,7 @@ void *host_thread_false_alarm(void *ptr) {
     pthread_exit(NULL);
     return NULL;
   }
+#endif
 
   /* If the user provided a static GWS on the command line, use that.   Otherwise,
    * use the driver's work group size multiplied by the preferred multiple. */
@@ -934,6 +945,9 @@ void *host_thread_precompute(void *ptr) {
   queue = gpu->queue;
   kernel = gpu->kernel;
 
+#ifdef USE_METAL
+  gws = 256;
+#else
   if (rc_clGetKernelWorkGroupInfo(kernel, gpu->device, CL_KERNEL_WORK_GROUP_SIZE /*CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE*/, sizeof(size_t), &gws, NULL) != CL_SUCCESS) {
     fprintf(stderr, "Failed to get preferred work group size!\n");
     CLRELEASEKERNEL(gpu->kernel);
@@ -943,6 +957,7 @@ void *host_thread_precompute(void *ptr) {
     pthread_exit(NULL);
     return NULL;
   }
+#endif
   gws = gws * gpu->num_work_units;
 
   /* In the event that the global work size is larger than the number of outputs we
