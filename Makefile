@@ -84,7 +84,7 @@ BINARIES := \
 
 .PHONY: all linux macos windows clean strip \
         prep_opencl_headers prep_none \
-        bundle_windows
+        bundle_windows cpu-tests
 
 all: $(PREP) $(BINARIES)
 
@@ -126,6 +126,62 @@ $(OBJDIR)/%.o: %.m | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fobjc-arc -c $< -o $@
 
 -include $(DEPS)
+
+# cpu-tests: build crackalack_cpu_tests with no GPU backend.
+# Uses a dedicated build directory (build/cpu-tests/obj) so it never clobbers
+# the normal platform build.  Object files are recompiled from scratch with
+# CPU-tests-specific CPPFLAGS (no USE_CUDA, no USE_METAL on Linux; USE_METAL
+# on macOS so gpu_backend.h resolves types as void* without needing Metal libs).
+#
+# Linux requirements: build-essential libgcrypt20-dev opencl-headers
+# macOS requirements: brew install libgcrypt  (Xcode CLT already on PATH)
+CPU_TESTS_PROG   := crackalack_cpu_tests$(EXE)
+CPU_TESTS_OBJDIR := build/cpu-tests/obj
+ifeq ($(shell uname -s),Darwin)
+  CPU_TESTS_CC       := clang
+  CPU_TESTS_CPPFLAGS := -DUSE_METAL -I. -Itests -I/opt/homebrew/include
+  CPU_TESTS_CFLAGS   := -Wall -O3 -g
+  CPU_TESTS_LDFLAGS  := -L/opt/homebrew/lib
+  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm
+else
+  CPU_TESTS_CC       := gcc
+  CPU_TESTS_CPPFLAGS := -I. -Itests -I/usr/include
+  CPU_TESTS_CFLAGS   := -Wall -O3 -g
+  CPU_TESTS_LDFLAGS  :=
+  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm
+endif
+
+CPU_TESTS_OBJS := \
+	$(CPU_TESTS_OBJDIR)/crackalack_cpu_tests.o \
+	$(CPU_TESTS_OBJDIR)/cpu_tests_common.o \
+	$(CPU_TESTS_OBJDIR)/test_golden.o \
+	$(CPU_TESTS_OBJDIR)/test_shared.o \
+	$(CPU_TESTS_OBJDIR)/cpu_rt_functions.o \
+	$(CPU_TESTS_OBJDIR)/charset.o \
+	$(CPU_TESTS_OBJDIR)/misc.o \
+	$(CPU_TESTS_OBJDIR)/hash_validate.o \
+	$(CPU_TESTS_OBJDIR)/file_lock.o
+
+$(CPU_TESTS_OBJDIR):
+	mkdir -p $@
+
+# -MMD -MP emits per-object .d header-dependency files so that a change to a
+# header (e.g. the rt_parameters struct layout in misc.h) forces a rebuild of
+# every .o that includes it.  Without this, switching branches with a shared
+# build/cpu-tests/obj mixes objects compiled against different struct layouts,
+# producing an ABI mismatch and bogus test failures.
+$(CPU_TESTS_OBJDIR)/%.o: %.c | $(CPU_TESTS_OBJDIR)
+	$(CPU_TESTS_CC) $(CPU_TESTS_CPPFLAGS) $(CPU_TESTS_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(CPU_TESTS_OBJDIR)/%.o: tests/%.c | $(CPU_TESTS_OBJDIR)
+	$(CPU_TESTS_CC) $(CPU_TESTS_CPPFLAGS) $(CPU_TESTS_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+cpu-tests: $(CPU_TESTS_OBJS)
+	$(CPU_TESTS_CC) $(CPU_TESTS_LDFLAGS) $^ -o $(OUTDIR)/$(CPU_TESTS_PROG) $(CPU_TESTS_LIBS)
+	@echo "Built $(OUTDIR)/$(CPU_TESTS_PROG)"
+
+CPU_TESTS_DEPS := $(CPU_TESTS_OBJS:.o=.d)
+-include $(CPU_TESTS_DEPS)
 
 $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/charset.o \
@@ -239,5 +295,5 @@ bundle_windows:
 clean:
 	rm -rf build
 	rm -f *.exe \
-	      crackalack_gen crackalack_unit_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_lookup perfectify enumerate_chain \
+	      crackalack_gen crackalack_unit_tests crackalack_cpu_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_lookup perfectify enumerate_chain \
 	      libgcrypt-20.dll libgpg-error-0.dll libwinpthread-1.dll
