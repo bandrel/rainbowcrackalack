@@ -43,6 +43,24 @@ The following command shows how to look up a file of NTLM hashes (one per line) 
 
     # ./crackalack_lookup /export/ntlm8_tables/ /home/user/hashes.txt
 
+#### Sorting tables before lookup
+
+Tables must be sorted by end index before they can be used with `crackalack_lookup`. Pass one or more `.rt` files:
+
+    # ./crackalack_sort ntlm_ascii-32-95#8-8_0_422000x67108864_0.rt
+
+To sort an entire directory of tables in parallel, pass all files at once. The tool auto-detects the number of parallel workers based on available RAM and CPU cores:
+
+    # ./crackalack_sort /export/ntlm8_tables/*.rt
+
+To override the worker count explicitly:
+
+    # ./crackalack_sort --jobs 4 /export/ntlm8_tables/*.rt
+
+`--jobs 0` (or omitting `--jobs`) uses automatic detection, measuring available RAM and CPU cores to pick the largest worker count that fits each table into RAM simultaneously. Override with `--jobs N` to reserve resources for other concurrent processes.
+
+Files that are already sorted are detected and skipped automatically. It is safe to pass an entire directory glob even if some tables were previously sorted.
+
 ## Recommended Hardware
 
 The NVIDIA GTX & RTX lines of GPU hardware has been well-tested with the Rainbow Crackalack software, and offer an excellent price/performance ratio.  Specifically, the GTX 1660 Ti or RTX 2060 are the best choices for building a new cracking machine.  [This document](https://docs.google.com/spreadsheets/d/1jigNGvt9SUur_SNH7QDEACapJbrdL_wKYtprM23IDpM/edit?usp=sharing) contains the raw data that backs this recommendation.

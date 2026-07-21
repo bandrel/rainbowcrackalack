@@ -14,7 +14,7 @@ SYSROOT_windows := /usr/$(TARGET_TRIPLE_windows)
 OBJDUMP_windows := $(TARGET_TRIPLE_windows)-objdump
 
 CFLAGS_common   := -Wall -O3 -g
-CPPFLAGS_common :=
+CPPFLAGS_common := -I. -Itests
 LDFLAGS_common  :=
 
 EXE :=
@@ -71,6 +71,7 @@ RTC2RT_PROG   := crackalack_rtc2rt$(EXE)
 LOOKUP_PROG   := crackalack_lookup$(EXE)
 PERFECTIFY    := perfectify$(EXE)
 ENUMERATE     := enumerate_chain$(EXE)
+SORT_PROG     := crackalack_sort$(EXE)
 
 BINARIES := \
 	$(OUTDIR)/$(GEN_PROG) \
@@ -80,11 +81,12 @@ BINARIES := \
 	$(OUTDIR)/$(RTC2RT_PROG) \
 	$(OUTDIR)/$(LOOKUP_PROG) \
 	$(OUTDIR)/$(PERFECTIFY) \
-	$(OUTDIR)/$(ENUMERATE)
+	$(OUTDIR)/$(ENUMERATE) \
+	$(OUTDIR)/$(SORT_PROG)
 
 .PHONY: all linux macos windows clean strip \
         prep_opencl_headers prep_none \
-        bundle_windows
+        bundle_windows tsan-sort
 
 all: $(PREP) $(BINARIES)
 
@@ -118,6 +120,9 @@ DEPFLAGS = -MMD -MP
 DEPS := $(OBJS:.o=.d)
 
 $(OBJDIR)/%.o: %.c | $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(OBJDIR)/%.o: tests/%.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 # Objective-C rule for the Metal backend (macos build).  -fobjc-arc is required:
@@ -157,6 +162,9 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_index_to_plaintext.o \
 	$(OBJDIR)/test_index_to_plaintext_ntlm9.o \
 	$(OBJDIR)/test_shared.o \
+	$(OBJDIR)/test_sort.o \
+	$(OBJDIR)/parallel_sort.o \
+	$(OBJDIR)/sort_utils.o \
 	$(OBJDIR)/file_lock.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
@@ -205,6 +213,53 @@ $(OUTDIR)/$(ENUMERATE): \
 	$(OBJDIR)/test_shared.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
+$(OUTDIR)/$(SORT_PROG): \
+	$(OBJDIR)/crackalack_sort.o \
+	$(OBJDIR)/charset.o \
+	$(OBJDIR)/file_lock.o \
+	$(OBJDIR)/hash_validate.o \
+	$(OBJDIR)/gws.o \
+	$(OBJDIR)/misc.o \
+	$(OBJDIR)/parallel_sort.o \
+	$(OBJDIR)/sort_utils.o \
+	$(GPU_BACKEND_OBJ)
+	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
+
+# tsan-sort: build and run test_parallel_sort_tsan.c under ThreadSanitizer.
+# Uses a dedicated build directory (build/tsan-sort/obj) so it never clobbers
+# the normal platform build.
+TSAN_SORT_OBJDIR := build/tsan-sort/obj
+TSAN_SORT_BIN    := $(CURDIR)/build/tsan-sort/test_parallel_sort_tsan
+ifeq ($(shell uname -s),Darwin)
+  TSAN_SORT_CC    := clang
+  TSAN_SORT_INC   := -I. -I/opt/homebrew/include
+  TSAN_RUN_PREFIX :=
+else
+  TSAN_SORT_CC    := gcc
+  TSAN_SORT_INC   := -I.
+  # On Linux, high-entropy ASLR collides with TSan's fixed shadow mapping
+  # ("FATAL: ThreadSanitizer: unexpected memory mapping").  Run under
+  # `setarch -R` to disable ASLR for the process.  (setarch is util-linux;
+  # not present/needed on macOS.)
+  TSAN_RUN_PREFIX := setarch $(shell uname -m) -R
+endif
+TSAN_SORT_CFLAGS  := -Wall -O1 -g -fsanitize=thread
+TSAN_SORT_LDFLAGS := -fsanitize=thread
+
+$(TSAN_SORT_OBJDIR):
+	mkdir -p $@
+
+$(TSAN_SORT_OBJDIR)/test_parallel_sort_tsan.o: tests/test_parallel_sort_tsan.c | $(TSAN_SORT_OBJDIR)
+	$(TSAN_SORT_CC) $(TSAN_SORT_INC) $(TSAN_SORT_CFLAGS) -c $< -o $@
+
+$(TSAN_SORT_OBJDIR)/parallel_sort.o: parallel_sort.c | $(TSAN_SORT_OBJDIR)
+	$(TSAN_SORT_CC) $(TSAN_SORT_INC) $(TSAN_SORT_CFLAGS) -c $< -o $@
+
+tsan-sort: $(TSAN_SORT_OBJDIR)/test_parallel_sort_tsan.o $(TSAN_SORT_OBJDIR)/parallel_sort.o
+	$(TSAN_SORT_CC) $(TSAN_SORT_LDFLAGS) $^ -o $(TSAN_SORT_BIN) -lpthread
+	@echo "==> Running TSan sort test..."
+	$(TSAN_RUN_PREFIX) $(TSAN_SORT_BIN)
+
 bundle_windows:
 	@echo "Bundling runtime DLLs into $(OUTDIR)..."
 	@set -e; \
@@ -239,5 +294,5 @@ bundle_windows:
 clean:
 	rm -rf build
 	rm -f *.exe \
-	      crackalack_gen crackalack_unit_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_lookup perfectify enumerate_chain \
+	      crackalack_gen crackalack_unit_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_lookup perfectify enumerate_chain crackalack_sort \
 	      libgcrypt-20.dll libgpg-error-0.dll libwinpthread-1.dll
