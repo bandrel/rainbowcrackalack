@@ -15,6 +15,7 @@
 #include "test_bloom.h"
 #include "test_sort.h"
 #include "test_decompress.h"
+#include "test_zst.h"
 #include "test_precompute_collate.h"
 #include "test_markov.h"
 #include "test_mask_parse.h"
@@ -70,6 +71,14 @@ int run_cpu_only_tests(void) {
   /* Decompression tests (CPU-only, no kernel needed). */
   printf("Running decompress tests... "); fflush(stdout);
   if (!test_decompress()) {
+    all_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  /* zstd (.rt.zst) decompression tests (CPU-only, no kernel needed). */
+  printf("Running zst decompress tests... "); fflush(stdout);
+  if (!test_zst()) {
     all_passed = 0;
     PRINT_FAILED();
   } else

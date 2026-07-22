@@ -38,7 +38,7 @@ ifeq ($(BUILD),cuda)
   CPPFLAGS := $(CPPFLAGS_common) -DUSE_CUDA -DHAVE_UNRAR -I$(CUDA_PATH)/include
   CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
   LDFLAGS  := $(LDFLAGS_common) -flto=auto -L$(CUDA_PATH)/lib64 -Wl,-rpath,$(CUDA_PATH)/lib64
-  LIBS     := -lpthread -ldl -lgcrypt -lcuda -lnvrtc -lunrar -lm
+  LIBS     := -lpthread -ldl -lgcrypt -lcuda -lnvrtc -lunrar -lm -lzstd
   GPU_BACKEND_OBJ := $(OBJDIR)/cuda_setup.o
 endif
 
@@ -48,7 +48,7 @@ ifeq ($(BUILD),macos)
   CPPFLAGS := $(CPPFLAGS_common) -DUSE_METAL -I/opt/homebrew/include
   CFLAGS   := $(CFLAGS_common) -march=native -flto
   LDFLAGS  := $(LDFLAGS_common) -L/opt/homebrew/lib -flto
-  LIBS     := -lpthread -lgcrypt -lm -framework Metal -framework Foundation
+  LIBS     := -lpthread -lgcrypt -lm -lzstd -framework Metal -framework Foundation
   GPU_BACKEND_OBJ := $(OBJDIR)/metal_setup.o
 endif
 
@@ -62,7 +62,7 @@ ifeq ($(BUILD),linux)
   CPPFLAGS := $(CPPFLAGS_common) -DHAVE_UNRAR
   CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
   LDFLAGS  := $(LDFLAGS_common) -flto=auto
-  LIBS     := -lpthread -ldl -lgcrypt -lunrar -lm
+  LIBS     := -lpthread -ldl -lgcrypt -lunrar -lm -lzstd
   GPU_BACKEND_OBJ := $(OBJDIR)/opencl_setup.o
 endif
 
@@ -155,13 +155,13 @@ ifeq ($(shell uname -s),Darwin)
   CPU_TESTS_CPPFLAGS := -DUSE_METAL -I. -Itests -I/opt/homebrew/include
   CPU_TESTS_CFLAGS   := -Wall -O3 -g
   CPU_TESTS_LDFLAGS  := -L/opt/homebrew/lib
-  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm
+  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm -lzstd
 else
   CPU_TESTS_CC       := gcc
   CPU_TESTS_CPPFLAGS := -I. -Itests -I/usr/include
   CPU_TESTS_CFLAGS   := -Wall -O3 -g
   CPU_TESTS_LDFLAGS  :=
-  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm
+  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm -lzstd
 endif
 
 CPU_TESTS_OBJS := \
@@ -195,6 +195,8 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/precompute_collate.o \
 	$(CPU_TESTS_OBJDIR)/rtc_decompress.o \
 	$(CPU_TESTS_OBJDIR)/rti2_decompress.o \
+	$(CPU_TESTS_OBJDIR)/test_zst.o \
+	$(CPU_TESTS_OBJDIR)/zst_decompress.o \
 	$(CPU_TESTS_OBJDIR)/file_lock.o \
 	$(CPU_TESTS_OBJDIR)/hash_validate.o
 
@@ -373,11 +375,13 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/test_precompute_collate.o \
 	$(OBJDIR)/test_sort.o \
 	$(OBJDIR)/test_decompress.o \
+	$(OBJDIR)/test_zst.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/file_lock.o \
 	$(OBJDIR)/parallel_sort.o \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/rti2_decompress.o \
+	$(OBJDIR)/zst_decompress.o \
 	$(OBJDIR)/sort_utils.o \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
@@ -429,6 +433,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/rar_decompress.o \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/rti2_decompress.o \
+	$(OBJDIR)/zst_decompress.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
