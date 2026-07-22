@@ -410,7 +410,8 @@ void parse_rt_params(rt_parameters *rt_params, char *rt_filename_orig) {
     strncpy(rt_filename, rt_filename_orig, sizeof(rt_filename) - 1);
 
   /* Ensure that the filename ends in .rt, .rtc, or .rti2. */
-  if (!str_ends_with(rt_filename, ".rt") && !str_ends_with(rt_filename, ".rtc") && !str_ends_with(rt_filename, ".rti2"))
+  if (!str_ends_with(rt_filename, ".rt") && !str_ends_with(rt_filename, ".rtc") &&
+      !str_ends_with(rt_filename, ".rti2") && !str_ends_with(rt_filename, ".rt.zst"))
     return;
 
   /* Strip "_distrrtgen" and any bracketed tags from the part field (e.g.
