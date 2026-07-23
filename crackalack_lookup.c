@@ -57,6 +57,9 @@
 #include "misc.h"
 #include "fa_batch.h"
 #include "precompute_collate.h"
+#ifdef HAVE_UNRAR
+#include "rar_decompress.h"
+#endif
 #include "rtc_decompress.h"
 #include "rti2_decompress.h"
 #include "ppi.h"
@@ -758,7 +761,7 @@ unsigned int count_tables(char *dir) {
     is_dir = (de->d_type == DT_DIR);
 #endif
 
-    if (is_file && (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc")))
+    if (is_file && (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")))
       ret++;
     else if (is_dir && (strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0)) {
       char subdir_path[1024] = {0};
@@ -793,6 +796,18 @@ void free_loaded_hashes(char **usernames, char **hashes) {
 }
 
 
+/* Copy `src` into `dst`, stripping a trailing ".rar" if present, so the inner
+ * table name (e.g. foo.rtc.rar -> foo.rtc) can be parsed and dispatched on.
+ * RAR-wrapped tables (from the infocon mirror) carry a ".rt.rar" / ".rtc.rar"
+ * suffix; the parameters live in the inner name. */
+static void strip_rar_suffix(char *dst, size_t dst_size, const char *src) {
+  strncpy(dst, src, dst_size - 1);
+  dst[dst_size - 1] = '\0';
+  if (str_ends_with(dst, ".rar"))
+    dst[strlen(dst) - 4] = '\0';
+}
+
+
 /* Recursively searches the target directory for the first rainbow table file, and uses its filename to infer
  * the rainbow table parameters. */
 void find_rt_params(char *dir_name, rt_parameters *rt_params) {
@@ -823,12 +838,15 @@ void find_rt_params(char *dir_name, rt_parameters *rt_params) {
       }
 
     /* If this is a compressed or uncompressed rainbow table, process it! */
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
 
       /* Try to parse them from this file name.  On success, return immediately
        * (no further processing needed), otherwise continue searching until the
-       * first valid set of parameters is found. */
-      parse_rt_params(rt_params, filepath);
+       * first valid set of parameters is found.  RAR-wrapped tables carry the
+       * params in the inner name, so strip a trailing ".rar" before parsing. */
+      char parse_path[512] = {0};
+      strip_rar_suffix(parse_path, sizeof(parse_path), filepath);
+      parse_rt_params(rt_params, parse_path);
       if (rt_params->parsed) {
 	closedir(dir); dir = NULL;
 	return;
@@ -876,9 +894,11 @@ static void collect_config_groups_dir(char *dir_name, config_group **head) {
         && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
       collect_config_groups_dir(filepath, head);
 
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
       rt_parameters p = {0};
-      parse_rt_params(&p, filepath);
+      char parse_path[512] = {0};
+      strip_rar_suffix(parse_path, sizeof(parse_path), filepath);
+      parse_rt_params(&p, parse_path);
       if (!p.parsed)
         continue;
 
@@ -931,9 +951,11 @@ unsigned int count_tables_for_config(char *dir, const rt_parameters *filter) {
     if ((strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0)
         && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
       count += count_tables_for_config(filepath, filter);
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
       rt_parameters p = {0};
-      parse_rt_params(&p, filepath);
+      char parse_path[512] = {0};
+      strip_rar_suffix(parse_path, sizeof(parse_path), filepath);
+      parse_rt_params(&p, parse_path);
       if (p.parsed && configs_match(&p, filter))
         count++;
     }
@@ -1415,6 +1437,7 @@ void *host_thread_false_alarm(void *ptr) {
 
   CLFREEBUFFER(hash_type_buffer);
   CLFREEBUFFER(charset_buffer);
+  CLFREEBUFFER(charset_len_buffer);  /* Was leaked: created above but never freed, so one GPU buffer accumulated per config group until clCreateContext hit CL_OUT_OF_HOST_MEMORY. */
   CLFREEBUFFER(plaintext_len_min_buffer);
   CLFREEBUFFER(plaintext_len_max_buffer);
   CLFREEBUFFER(reduction_offset_buffer);
@@ -1786,6 +1809,7 @@ void *host_thread_precompute(void *ptr) {
   CLFREEBUFFER(hash_buffer);
   CLFREEBUFFER(hash_len_buffer);
   CLFREEBUFFER(charset_buffer);
+  CLFREEBUFFER(charset_len_buffer);  /* Was leaked: created above but never freed (same bug as the false-alarm path). */
   CLFREEBUFFER(plaintext_len_min_buffer);
   CLFREEBUFFER(plaintext_len_max_buffer);
   CLFREEBUFFER(table_index_buffer);
@@ -2539,12 +2563,15 @@ static char **collect_table_paths(char *rt_dir, const rt_parameters *filter,
     }
 
     if (!str_ends_with(de->d_name, ".rt") && !str_ends_with(de->d_name, ".rtc") &&
-        !str_ends_with(de->d_name, ".rti2"))
+        !str_ends_with(de->d_name, ".rti2") &&
+        !str_ends_with(de->d_name, ".rt.rar") && !str_ends_with(de->d_name, ".rtc.rar"))
       continue;
 
     if (filter != NULL) {
       rt_parameters pt_params = {0};
-      parse_rt_params(&pt_params, filepath);
+      char parse_path[512] = {0};
+      strip_rar_suffix(parse_path, sizeof(parse_path), filepath);
+      parse_rt_params(&pt_params, parse_path);
       if (!pt_params.parsed || !configs_match(&pt_params, filter))
         continue;
     }
@@ -2562,6 +2589,16 @@ static int load_single_table(const char *filepath, preloaded_table *pt) {
   gpu_ulong *rainbow_table = NULL;
   uint64_t num_chains = 0;
 
+#ifdef HAVE_UNRAR
+  if (str_ends_with(filepath, ".rt.rar") || str_ends_with(filepath, ".rtc.rar")) {
+    /* RAR-wrapped table (infocon mirror): the archive holds a single raw .rt
+     * table, so rar_decompress() yields the final start/end longs directly. */
+    unsigned int rar_num_chains = 0;
+    if (rar_decompress((char *)filepath, (uint64_t **)&rainbow_table, &rar_num_chains) != 0)
+      return -1;
+    num_chains = rar_num_chains;
+  } else
+#endif
   if (str_ends_with(filepath, ".rtc")) {
     if (rtc_decompress((char *)filepath, &rainbow_table, &num_chains) != 0)
       return -1;

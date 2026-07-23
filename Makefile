@@ -35,10 +35,10 @@ ifeq ($(BUILD),cuda)
   CC := $(CC_linux)
   EXE :=
   CUDA_PATH ?= /usr/local/cuda
-  CPPFLAGS := $(CPPFLAGS_common) -DUSE_CUDA -I$(CUDA_PATH)/include
+  CPPFLAGS := $(CPPFLAGS_common) -DUSE_CUDA -DHAVE_UNRAR -I$(CUDA_PATH)/include
   CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
   LDFLAGS  := $(LDFLAGS_common) -flto=auto -L$(CUDA_PATH)/lib64 -Wl,-rpath,$(CUDA_PATH)/lib64
-  LIBS     := -lpthread -ldl -lgcrypt -lcuda -lnvrtc -lm
+  LIBS     := -lpthread -ldl -lgcrypt -lcuda -lnvrtc -lunrar -lm
   GPU_BACKEND_OBJ := $(OBJDIR)/cuda_setup.o
 endif
 
@@ -59,10 +59,10 @@ ifeq ($(BUILD),linux)
   # For NVIDIA-specific CUDA acceleration, use `make cuda` instead.
   CC := $(CC_linux)
   EXE :=
-  CPPFLAGS := $(CPPFLAGS_common)
+  CPPFLAGS := $(CPPFLAGS_common) -DHAVE_UNRAR
   CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
   LDFLAGS  := $(LDFLAGS_common) -flto=auto
-  LIBS     := -lpthread -ldl -lgcrypt -lm
+  LIBS     := -lpthread -ldl -lgcrypt -lunrar -lm
   GPU_BACKEND_OBJ := $(OBJDIR)/opencl_setup.o
 endif
 
@@ -421,6 +421,7 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/precompute_collate.o \
 	$(GPU_BACKEND_OBJ) \
+	$(OBJDIR)/rar_decompress.o \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/rti2_decompress.o \
 	$(OBJDIR)/test_shared.o \
