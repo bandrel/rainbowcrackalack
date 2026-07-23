@@ -1437,6 +1437,7 @@ void *host_thread_false_alarm(void *ptr) {
 
   CLFREEBUFFER(hash_type_buffer);
   CLFREEBUFFER(charset_buffer);
+  CLFREEBUFFER(charset_len_buffer);  /* Was leaked: created above but never freed, so one GPU buffer accumulated per config group until clCreateContext hit CL_OUT_OF_HOST_MEMORY. */
   CLFREEBUFFER(plaintext_len_min_buffer);
   CLFREEBUFFER(plaintext_len_max_buffer);
   CLFREEBUFFER(reduction_offset_buffer);
@@ -1808,6 +1809,7 @@ void *host_thread_precompute(void *ptr) {
   CLFREEBUFFER(hash_buffer);
   CLFREEBUFFER(hash_len_buffer);
   CLFREEBUFFER(charset_buffer);
+  CLFREEBUFFER(charset_len_buffer);  /* Was leaked: created above but never freed (same bug as the false-alarm path). */
   CLFREEBUFFER(plaintext_len_min_buffer);
   CLFREEBUFFER(plaintext_len_max_buffer);
   CLFREEBUFFER(table_index_buffer);
