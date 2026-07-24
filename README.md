@@ -264,16 +264,18 @@ Two GPU backends are supported on Linux: **OpenCL** (default, portable) and **CU
 
 Works with any OpenCL ICD (NVIDIA, AMD, Intel, PoCL, etc.):
 
-    # apt install opencl-headers libgcrypt20-dev
+    # apt install opencl-headers libgcrypt20-dev libunrar-dev
     $ make clean; make linux
 
 Binaries are written to the project root. `opencl_setup.c` `dlopen()`s `libOpenCL` at runtime, so no OpenCL library is needed at link time.
+
+`libunrar-dev` enables `crackalack_lookup` to read RAR-wrapped tables (`.rt.rar` / `.rtc.rar`, e.g. the infocon mirror) by decompressing them in memory. It is a Linux-only dependency; the macOS (Metal) and Windows builds omit RAR support.
 
 ### CUDA (NVIDIA only)
 
 Kernels are JIT-compiled at runtime via NVRTC. Requires the NVIDIA driver and CUDA toolkit:
 
-    # apt install nvidia-cuda-toolkit libgcrypt20-dev
+    # apt install nvidia-cuda-toolkit libgcrypt20-dev libunrar-dev
     $ make clean; make cuda
 
 Binaries are written to the project root (same location as the OpenCL build), so `make clean` is required when switching between backends.
