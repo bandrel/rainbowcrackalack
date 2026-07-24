@@ -231,6 +231,7 @@ unsigned int count_tables_for_config(char *dir, const rt_parameters *filter);
 void find_rt_params(char *dir, rt_parameters *rt_params);
 void collect_config_groups(char *dir, config_group **head);
 void free_config_groups(config_group **head);
+void sort_config_groups(config_group **head);
 precomputed_and_potential_indices *ppi_find(precomputed_and_potential_indices *head, const char *hash);
 void ppi_reset_endpoints(precomputed_and_potential_indices *head);
 void setup_args_for_config(thread_args *args, unsigned int num_devices, const rt_parameters *params);
@@ -933,6 +934,59 @@ void free_config_groups(config_group **head) {
     cg = next;
   }
   *head = NULL;
+}
+
+
+/* Ordering for config-group processing.  Lookup precompute costs ~chain_len^2
+ * per hash per config group, so process the cheapest groups first; break ties
+ * by smaller Markov keyspace (the most-probable-candidate tables, likelier to
+ * crack a hash early), then table_index for a deterministic order.
+ *
+ * This is purely a scheduling optimization -- every still-uncracked hash is
+ * precomputed against every config group until it cracks, so the set of results
+ * is identical regardless of order.  But running cheap / high-yield groups first
+ * lets the cracks they produce drop those hashes out of the uncracked set before
+ * the expensive groups run, cutting total precompute on partial-crack runs (e.g.
+ * a mask+Markov campaign mixing chain_len 200000 and 803000 tables). */
+static int config_group_cost_cmp(const void *a, const void *b) {
+  const config_group *ca = *(const config_group *const *)a;
+  const config_group *cb = *(const config_group *const *)b;
+  if (ca->params.chain_len != cb->params.chain_len)
+    return (ca->params.chain_len < cb->params.chain_len) ? -1 : 1;
+  if (ca->params.markov_keyspace != cb->params.markov_keyspace)
+    return (ca->params.markov_keyspace < cb->params.markov_keyspace) ? -1 : 1;
+  if (ca->params.table_index != cb->params.table_index)
+    return (ca->params.table_index < cb->params.table_index) ? -1 : 1;
+  return 0;
+}
+
+/* Reorder the config-group list cheapest-precompute-first (see cmp above).
+ * On allocation failure the list is left in its original order (correctness is
+ * unaffected; only the scheduling optimization is skipped). */
+void sort_config_groups(config_group **head) {
+  unsigned int n = 0, i = 0;
+  config_group **arr = NULL;
+
+  for (config_group *cg = *head; cg != NULL; cg = cg->next)
+    n++;
+  if (n < 2)
+    return;
+
+  arr = malloc((size_t)n * sizeof(config_group *));
+  if (arr == NULL)
+    return;
+
+  for (config_group *cg = *head; cg != NULL; cg = cg->next)
+    arr[i++] = cg;
+
+  qsort(arr, n, sizeof(config_group *), config_group_cost_cmp);
+
+  for (i = 0; i + 1 < n; i++)
+    arr[i]->next = arr[i + 1];
+  arr[n - 1]->next = NULL;
+  *head = arr[0];
+
+  free(arr);
 }
 
 /* Count only tables whose parsed params match filter. */
@@ -4212,6 +4266,10 @@ int main(int ac, char **av) {
     fprintf(stderr, "Failed to find any valid rainbow table files in %s (and/or its sub-directories).\n", rt_dir);
     exit(-1);
   }
+
+  /* Process cheapest-precompute / highest-yield config groups first so cracks
+   * shrink the uncracked-hash set before the expensive groups run. */
+  sort_config_groups(&cg_head);
 
   /* Use the first config group's hash type for hash format validation. */
   if (cg_head->params.hash_type == HASH_NTLM) {
