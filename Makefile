@@ -110,6 +110,7 @@ ENUMERATE     := enumerate_chain$(EXE)
 SORT_PROG     := crackalack_sort$(EXE)
 PLAN_PROG     := crackalack_plan$(EXE)
 RT2RTC_PROG   := crackalack_rt2rtc$(EXE)
+RT2ZST_PROG   := crackalack_rt2zst$(EXE)
 GENKNOWN_PROG    := gen_known_hash$(EXE)
 CPU_TESTS_PROG   := crackalack_cpu_tests$(EXE)
 
@@ -120,6 +121,7 @@ BINARIES := \
 	$(OUTDIR)/$(VERIFY_PROG) \
 	$(OUTDIR)/$(RTC2RT_PROG) \
 	$(OUTDIR)/$(RT2RTC_PROG) \
+	$(OUTDIR)/$(RT2ZST_PROG) \
 	$(OUTDIR)/$(LOOKUP_PROG) \
 	$(OUTDIR)/$(PERFECTIFY) \
 	$(OUTDIR)/$(ENUMERATE) \
@@ -414,6 +416,12 @@ $(OUTDIR)/$(RTC2RT_PROG): \
 $(OUTDIR)/$(RT2RTC_PROG): \
 	$(OBJDIR)/rtc_compress.o \
 	$(OBJDIR)/crackalack_rt2rtc.o
+	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
+
+$(OUTDIR)/$(RT2ZST_PROG): \
+	$(OBJDIR)/zst_compress.o \
+	$(OBJDIR)/zst_decompress.o \
+	$(OBJDIR)/crackalack_rt2zst.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 $(OUTDIR)/$(LOOKUP_PROG): \
