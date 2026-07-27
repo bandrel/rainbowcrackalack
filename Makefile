@@ -470,6 +470,7 @@ $(OUTDIR)/$(SORT_PROG): \
 	$(OBJDIR)/misc.o \
 	$(OBJDIR)/parallel_sort.o \
 	$(OBJDIR)/sort_utils.o \
+	$(OBJDIR)/zst_compress.o \
 	$(GPU_BACKEND_OBJ)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
