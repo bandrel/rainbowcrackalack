@@ -48,6 +48,21 @@ def sweep_levels(rt2zst, table, levels, workdir):
     return rows
 
 
+CRACKED_RE = re.compile(r"Of the \d+ hashes loaded, (\d+) were cracked")
+
+
+def _clear_pot_files(workdir):
+    """Remove any stale john/hashcat pot files from workdir so each lookup run
+    starts from a clean state.  Without this, crackalack_lookup can hit its
+    "All hashes have already been cracked!" early-exit path against a pot file
+    left over from a previous format's run, making the lookup look instant and
+    the RSS look tiny regardless of the format actually being read."""
+    for name in ("rainbowcrackalack_jtr.pot", "rainbowcrackalack_hashcat.pot"):
+        path = os.path.join(workdir, name)
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def compare_formats(bins, table, hashfile, workdir, level):
     results = {}
     for fmt in ("rt", "rtc", "zst"):
@@ -64,9 +79,17 @@ def compare_formats(bins, table, hashfile, workdir, level):
             subprocess.run([bins["rt2zst"], "-l", str(level), dst, dst + ".zst"],
                            check=True, capture_output=True)
             os.remove(dst)
+        # crackalack_lookup writes its pot file(s) relative to its own cwd, which
+        # is the cwd this script was invoked from (subprocess.run below does not
+        # chdir), not `d` or `workdir` -- clear all three to be safe.
+        _clear_pot_files(os.getcwd())
+        _clear_pot_files(workdir)
+        _clear_pot_files(d)
         elapsed, rss, out = run_timed([bins["lookup"], d, hashfile])
+        m = CRACKED_RE.search(out)
+        cracked = bool(m) and int(m.group(1)) > 0
         results[fmt] = {"lookup_s": elapsed, "lookup_rss": rss,
-                        "cracked": "cracked" in out.lower()}
+                        "cracked": cracked}
     return results
 
 

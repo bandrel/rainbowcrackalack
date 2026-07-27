@@ -235,6 +235,10 @@ Compress a sorted table with the bundled tool, or let the sorter do it:
     ./crackalack_rt2zst table.rt table.rt.zst      # level 19 by default
     ./crackalack_sort --zst *.rt                   # sort, compress, drop the raw .rt
 
+`crackalack_verify` only reads `.rt` files, so verify a table *before*
+compressing it with `--zst` (which deletes the raw `.rt`); if you need to
+verify a table later, decompress it first with `crackalack_rt2zst -d`.
+
 `crackalack_rt2zst -d table.rt.zst table.rt` reverses it. Files are interoperable
 with the standard `zstd` CLI in both directions. At lookup time no flags are
 needed — `.rt.zst` is auto-detected alongside `.rt`/`.rtc`/`.rti2`/`.rt.rar`.
