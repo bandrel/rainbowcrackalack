@@ -84,6 +84,15 @@ int run_cpu_only_tests(void) {
   } else
     PRINT_PASSED();
 
+  /* zstd (.rt.zst) compression tests (CPU-only, no kernel needed). */
+  printf("Running zst compress tests... "); fflush(stdout);
+  if (!test_zst_compress_roundtrip() || !test_zst_compress_declares_size() ||
+      !test_zst_compress_rejects_bad_size()) {
+    all_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
   /* Batched-precompute collation tests (CPU-only, no kernel needed). */
   printf("Running batched-precompute collation tests... "); fflush(stdout);
   if (!test_precompute_collate()) {
