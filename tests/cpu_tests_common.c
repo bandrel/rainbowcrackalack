@@ -20,6 +20,7 @@
 #include "test_mask_parse.h"
 #include "test_markov_mask.h"
 #include "test_hcmask.h"
+#include "test_chain_writer.h"
 #include "test_golden.h"
 
 /* terminal_color.h defines these as globals; declare them extern here to
@@ -119,6 +120,15 @@ int run_cpu_only_tests(void) {
    * hash_to_index, and index_to_plaintext so backend drift is caught. */
   printf("Running golden vector tests... "); fflush(stdout);
   if (!test_golden()) {
+    all_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  /* Chain writer file-offset tests: a resumed table must be appended to, not
+   * overwritten from the start. */
+  printf("Running chain writer tests... "); fflush(stdout);
+  if (!test_chain_writer()) {
     all_passed = 0;
     PRINT_FAILED();
   } else

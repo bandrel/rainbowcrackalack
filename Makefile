@@ -181,6 +181,8 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/hcmask.o \
 	$(CPU_TESTS_OBJDIR)/test_golden.o \
 	$(CPU_TESTS_OBJDIR)/test_shared.o \
+	$(CPU_TESTS_OBJDIR)/test_chain_writer.o \
+	$(CPU_TESTS_OBJDIR)/chain_writer.o \
 	$(CPU_TESTS_OBJDIR)/misc.o \
 	$(CPU_TESTS_OBJDIR)/fa_batch.o \
 	$(CPU_TESTS_OBJDIR)/bloom.o \
@@ -301,6 +303,7 @@ $(OBJDIR)/%.o: %.m | $(OBJDIR)
 -include $(DEPS)
 
 $(OUTDIR)/$(GEN_PROG): \
+	$(OBJDIR)/chain_writer.o \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/checkpoint.o \
 	$(OBJDIR)/clock.o \
@@ -321,6 +324,8 @@ $(OUTDIR)/$(GEN_PROG): \
 
 $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/bloom.o \
+	$(OBJDIR)/chain_writer.o \
+	$(OBJDIR)/test_chain_writer.o \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/cpu_tests_common.o \
