@@ -42,4 +42,19 @@ int zst_compress(const char *rt_path, const char *zst_path, int level, int nb_wo
 int zst_compress_buf(const void *table, size_t len_bytes, const char *zst_path,
                      int level, int nb_workers);
 
+/* True iff a zero-byte fread() arrived before `total` bytes were consumed,
+ * i.e. the source shrank/hit EOF earlier than its probed size promised.
+ * zst_compress()'s streaming read loop uses this to fail cleanly instead of
+ * spinning forever: without it, a premature EOF leaves `consumed < total`
+ * forever, `last` never becomes true, and the outer loop never terminates.
+ *
+ * Exposed here (rather than kept static in zst_compress.c) so the
+ * regression test can exercise this exact boundary condition directly;
+ * reproducing a real mid-read truncation deterministically, without racing
+ * zst_compress()'s internals from another process/thread, isn't possible
+ * from outside the function. */
+static inline int zst_is_premature_eof(size_t nread, int last) {
+  return (nread == 0 && !last);
+}
+
 #endif

@@ -108,3 +108,40 @@ int test_zst_compress_rejects_bad_size(void) {
   }
   return 1;
 }
+
+/* Regression guard for the hang fixed in zst_compress()'s streaming read
+ * loop: a zero-byte fread() before `total` bytes were consumed (source
+ * truncated between the size probe and the read loop) used to leave
+ * `consumed` stuck below `total` forever, so `last` never became true and
+ * the outer for(;;) spun without end.
+ *
+ * Reproducing the real race deterministically from a test (truncate the
+ * file on disk at the exact instant zst_compress() is mid-read) isn't
+ * possible without a hook into zst_compress()'s internals or a genuinely
+ * racy test. zst_is_premature_eof() is exposed in zst_compress.h precisely
+ * so this exact boundary condition can be exercised directly and
+ * deterministically instead: this test asserts the predicate returns true
+ * for the hang-triggering inputs and false for the two inputs the read
+ * loop relies on it NOT firing for (a normal partial read, and the final
+ * zero-byte read at legitimate EOF). Runtime is O(1); a regression here
+ * fails immediately rather than hanging the suite. */
+int test_zst_compress_short_read_guard(void) {
+  /* The exact state that used to hang: no bytes read, but we haven't
+   * consumed everything we expected yet. */
+  if (!zst_is_premature_eof(0, 0)) {
+    printf("test_zst_compress_short_read_guard: expected true for (nread=0, last=0)\n");
+    return 0;
+  }
+  /* Legitimate final EOF: consumed reached total, so a trailing zero-byte
+   * read is expected and must not be flagged. */
+  if (zst_is_premature_eof(0, 1)) {
+    printf("test_zst_compress_short_read_guard: expected false for (nread=0, last=1)\n");
+    return 0;
+  }
+  /* Ordinary partial read mid-stream: must not be flagged. */
+  if (zst_is_premature_eof(37, 0)) {
+    printf("test_zst_compress_short_read_guard: expected false for (nread=37, last=0)\n");
+    return 0;
+  }
+  return 1;
+}

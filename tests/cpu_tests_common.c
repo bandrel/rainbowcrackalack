@@ -87,7 +87,7 @@ int run_cpu_only_tests(void) {
   /* zstd (.rt.zst) compression tests (CPU-only, no kernel needed). */
   printf("Running zst compress tests... "); fflush(stdout);
   if (!test_zst_compress_roundtrip() || !test_zst_compress_declares_size() ||
-      !test_zst_compress_rejects_bad_size()) {
+      !test_zst_compress_rejects_bad_size() || !test_zst_compress_short_read_guard()) {
     all_passed = 0;
     PRINT_FAILED();
   } else
