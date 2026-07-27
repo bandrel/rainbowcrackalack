@@ -67,40 +67,73 @@ int zst_decompress(char *filename, uint64_t **uncompressed_table, uint64_t *num_
 
   out.dst = dbuf; out.size = (size_t)dsize; out.pos = 0;
 
-  /* The header bytes already read are the first input chunk. */
+  /* last_zr tracks ZSTD_decompressStream()'s own completion signal: it
+   * returns 0 exactly when the current frame has been fully decoded and
+   * flushed. A nonzero (non-error) return is a hint that more input/output
+   * is still expected, even if our destination buffer happens to be full.
+   * We must not treat "out.pos == out.size" alone as "frame complete" --
+   * a corrupted/short content-size field in the header could make the
+   * buffer fill before the frame actually finishes, and the one-shot API
+   * this replaced would have caught that via dstSize_tooSmall. Initialize
+   * nonzero so a frame that never calls decompressStream (impossible here,
+   * since the header chunk always feeds it at least once) can't slip
+   * through as "complete". */
   {
-    ZSTD_inBuffer in = { hdr, hdr_read, 0 };
-    for (;;) {
-      size_t r = ZSTD_decompressStream(dctx, &out, &in);
-      if (ZSTD_isError(r)) {
-        fprintf(stderr, "zst_decompress: %s: %s\n", filename, ZSTD_getErrorName(r));
+    size_t last_zr = (size_t)-1;
+
+    /* The header bytes already read are the first input chunk. */
+    {
+      ZSTD_inBuffer in = { hdr, hdr_read, 0 };
+      for (;;) {
+        last_zr = ZSTD_decompressStream(dctx, &out, &in);
+        if (ZSTD_isError(last_zr)) {
+          fprintf(stderr, "zst_decompress: %s: %s\n", filename, ZSTD_getErrorName(last_zr));
+          ret = 8; goto done;
+        }
+        if (in.pos == in.size)
+          break;
+        if (out.pos == out.size)
+          break;
+      }
+    }
+
+    while (out.pos < out.size) {
+      size_t nread = fread(ibuf, 1, ibuf_size, f);
+      ZSTD_inBuffer in = { ibuf, nread, 0 };
+      if (nread == 0) {
+        fprintf(stderr, "zst_decompress: truncated frame in %s\n", filename);
         ret = 8; goto done;
       }
-      if (in.pos == in.size)
-        break;
+      while (in.pos < in.size && out.pos < out.size) {
+        last_zr = ZSTD_decompressStream(dctx, &out, &in);
+        if (ZSTD_isError(last_zr)) {
+          fprintf(stderr, "zst_decompress: %s: %s\n", filename, ZSTD_getErrorName(last_zr));
+          ret = 8; goto done;
+        }
+      }
     }
-  }
 
-  while (out.pos < out.size) {
-    size_t nread = fread(ibuf, 1, ibuf_size, f);
-    ZSTD_inBuffer in = { ibuf, nread, 0 };
-    if (nread == 0) {
-      fprintf(stderr, "zst_decompress: truncated frame in %s\n", filename);
+    if (out.pos != (size_t)dsize) {
+      fprintf(stderr, "zst_decompress: got %zu of %llu bytes from %s\n",
+              out.pos, dsize, filename);
       ret = 8; goto done;
     }
-    while (in.pos < in.size && out.pos < out.size) {
-      size_t r = ZSTD_decompressStream(dctx, &out, &in);
-      if (ZSTD_isError(r)) {
-        fprintf(stderr, "zst_decompress: %s: %s\n", filename, ZSTD_getErrorName(r));
-        ret = 8; goto done;
-      }
-    }
-  }
 
-  if (out.pos != (size_t)dsize) {
-    fprintf(stderr, "zst_decompress: got %zu of %llu bytes from %s\n",
-            out.pos, dsize, filename);
-    ret = 8; goto done;
+    /* out.pos == dsize here, but that can happen because our destination
+     * buffer merely filled up, not because the frame actually finished.
+     * ZSTD_decompressStream signals genuine completion by returning 0 on
+     * the call that ended the frame. If the last call returned nonzero,
+     * the frame (per its own internal accounting) still expects more
+     * output than the declared content size provided -- i.e. the header's
+     * content-size field under-reported the true size. Treat that as
+     * corruption, same error code as any other decompress failure. */
+    if (last_zr != 0) {
+      fprintf(stderr,
+              "zst_decompress: frame not finished when declared size %llu bytes was reached "
+              "(declared content size likely understates the real frame size): %s\n",
+              dsize, filename);
+      ret = 8; goto done;
+    }
   }
 
   *uncompressed_table = (uint64_t *)dbuf;

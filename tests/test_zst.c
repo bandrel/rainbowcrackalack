@@ -33,6 +33,104 @@ int test_zst(void) {
   return 1;
 }
 
+/* Regression guard for the "buffer-full is not the same as frame-complete"
+ * bug: craft a real zstd frame whose header understates its own decoded
+ * content size by patching the header's Frame_Content_Size field in place
+ * (the field's location and width are derived from the Frame_Header_Descriptor
+ * byte per the zstd frame format spec, not hardcoded, so this doesn't depend
+ * on incidental layout choices made by a particular zstd version). The frame
+ * body itself is untouched and still decodes to the full, original data --
+ * exactly what a bit-flipped/corrupted content-size field in an otherwise
+ * intact frame would look like. zst_decompress() must not treat "destination
+ * buffer (sized off the bogus small declared size) filled up" as "frame
+ * done"; it must notice the frame's decoder state says there's still more to
+ * flush and return an error rather than silently returning truncated data. */
+int test_zst_decompress_rejects_undersized_content_size(void) {
+  uint64_t table[30];  /* 15 chains = 240 bytes, well clear of overflowing a byte field twice over */
+  size_t rawbytes = sizeof(table);
+  size_t i;
+  unsigned char fhd;
+  unsigned fcs_flag, single_seg, window_desc_size, fcs_field_size, offset;
+  unsigned long long old_raw, new_raw;
+  size_t cbound, csize;
+  unsigned char *cbuf;
+  const char *fn = "test_zst_undersize_tmp.rt.zst";
+  FILE *f;
+  uint64_t *out = NULL, nchains = 0;
+  int rc;
+
+  for (i = 0; i < 30; i++) table[i] = i;
+
+  cbound = ZSTD_compressBound(rawbytes);
+  cbuf = malloc(cbound);
+  csize = ZSTD_compress(cbuf, cbound, table, rawbytes, 19);
+  if (ZSTD_isError(csize)) {
+    printf("test_zst_decompress_rejects_undersized_content_size: ZSTD_compress failed\n");
+    free(cbuf); return 0;
+  }
+  if (ZSTD_getFrameContentSize(cbuf, csize) != (unsigned long long)rawbytes) {
+    printf("test_zst_decompress_rejects_undersized_content_size: unexpected declared size before patch\n");
+    free(cbuf); return 0;
+  }
+
+  /* Decode the Frame_Header_Descriptor (byte 4, after the 4-byte magic
+   * number) to find the Frame_Content_Size field: its width and whether a
+   * 1-byte Window_Descriptor precedes it. No dictionary ID is used here. */
+  fhd = cbuf[4];
+  fcs_flag = (fhd >> 6) & 3;
+  single_seg = (fhd >> 5) & 1;
+  window_desc_size = single_seg ? 0 : 1;
+  switch (fcs_flag) {
+    case 0: fcs_field_size = single_seg ? 1 : 0; break;
+    case 1: fcs_field_size = 2; break;
+    case 2: fcs_field_size = 4; break;
+    default: fcs_field_size = 8; break;
+  }
+  if (fcs_field_size == 0) {
+    printf("test_zst_decompress_rejects_undersized_content_size: frame has no content-size field to patch\n");
+    free(cbuf); return 0;
+  }
+  offset = 5 + window_desc_size;
+
+  old_raw = 0;
+  for (i = 0; i < fcs_field_size; i++)
+    old_raw |= ((unsigned long long)cbuf[offset + i]) << (8 * i);
+
+  /* Understate the declared size by one chain (16 bytes). The 2-byte field
+   * encoding stores (actual - 256), but that offset is constant, so shaving
+   * 16 off the actual size shaves 16 off the raw stored value too,
+   * regardless of which field width is in play. */
+  new_raw = old_raw - 16;
+  for (i = 0; i < fcs_field_size; i++)
+    cbuf[offset + i] = (unsigned char)((new_raw >> (8 * i)) & 0xFF);
+
+  if (ZSTD_getFrameContentSize(cbuf, csize) != (unsigned long long)(rawbytes - 16)) {
+    printf("test_zst_decompress_rejects_undersized_content_size: patch did not shrink declared size as expected\n");
+    free(cbuf); return 0;
+  }
+
+  f = fopen(fn, "wb");
+  if (f == NULL) {
+    printf("test_zst_decompress_rejects_undersized_content_size: cannot write temp\n");
+    free(cbuf); return 0;
+  }
+  fwrite(cbuf, 1, csize, f);
+  fclose(f);
+  free(cbuf);
+
+  rc = zst_decompress((char *)fn, &out, &nchains);
+  remove(fn);
+
+  if (rc == 0) {
+    printf("test_zst_decompress_rejects_undersized_content_size: zst_decompress returned success "
+           "for a frame whose declared content size understates its real decoded size -- "
+           "truncated data would have been silently accepted\n");
+    free(out);
+    return 0;
+  }
+  return 1;
+}
+
 /* Round trip: compress an in-memory table, decompress it, expect byte identity. */
 int test_zst_compress_roundtrip(void) {
   uint64_t table[8] = {0,10, 1,20, 2,30, 3,40};
