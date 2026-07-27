@@ -192,6 +192,19 @@ int zst_compress(const char *rt_path, const char *zst_path, int level, int nb_wo
     consumed += (long long)nread;
     last = (consumed >= total);
 
+    /* Reaching EOF before we've consumed `total` bytes means the file
+     * shrank out from under us between the size probe and this read (or
+     * some other short-read condition without errno set).  Treat it as a
+     * hard error instead of spinning: a zero-byte read with `last` still
+     * false would otherwise never advance `consumed`, so this loop would
+     * never terminate. */
+    if (zst_is_premature_eof(nread, last)) {
+      fprintf(stderr,
+              "zst_compress: unexpected EOF on %s after %lld of %lld bytes\n",
+              rt_path, consumed, total);
+      ret = 15; goto done;
+    }
+
     for (;;) {
       ZSTD_outBuffer o = { obuf, obuf_size, 0 };
       size_t remaining = ZSTD_compressStream2(cctx, &o, &ib,
