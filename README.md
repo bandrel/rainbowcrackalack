@@ -330,6 +330,9 @@ Two instrumentation entry points remain in-tree via the Makefile:
 |`make COVERAGE=1 <target>`   |gcov/llvm-cov line-coverage build for the host code.     |
 
 ## Change Log
+### v1.5.4
+ - Fixed a data-destroying bug in `crackalack_gen` when resuming a partially generated table. `write_chains()` derived each chain's file offset from `first_generated_chain`, which holds `total_chains_in_table * part_index` on a fresh run (correct: that is the chain stored at file offset 0) but is reassigned to the resume point when an unfinished table is picked back up. The first chain written after a resume therefore landed at offset 0 and overwrote the table from the beginning, while the file size stayed frozen at its pre-resume value. Both the checkpoint resume path and the legacy (no `.state`) resume path were affected, on every backend. The chain index stored at file offset 0 is now tracked separately in `file_base_chain`, set once from the part index and never adjusted by resume logic. `write_chains()` moved to `chain_writer.c` so it can be linked into the test binaries, and `tests/test_chain_writer.c` covers both resume-append and non-zero part index in the CPU-only suite.
+
 ### v1.5.3
  - `crackalack_verify` now accepts `--markov-keyspace N` and reports the Markov keyspace encoded in the table filename (the `-mk<N>` tag). The value is parsed from the filename only — table contents are not scanned to derive it. If `--markov-keyspace` is supplied, verify warns when it disagrees with the filename (the filename value is authoritative) or when the filename carries no keyspace tag.
 
