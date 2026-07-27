@@ -78,7 +78,7 @@ int run_cpu_only_tests(void) {
 
   /* zstd (.rt.zst) decompression tests (CPU-only, no kernel needed). */
   printf("Running zst decompress tests... "); fflush(stdout);
-  if (!test_zst()) {
+  if (!test_zst() || !test_zst_decompress_rejects_undersized_content_size()) {
     all_passed = 0;
     PRINT_FAILED();
   } else
