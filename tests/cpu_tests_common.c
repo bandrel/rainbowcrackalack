@@ -15,7 +15,9 @@
 #include "test_bloom.h"
 #include "test_sort.h"
 #include "test_decompress.h"
+#ifdef HAVE_ZSTD
 #include "test_zst.h"
+#endif
 #include "test_precompute_collate.h"
 #include "test_markov.h"
 #include "test_mask_parse.h"
@@ -76,6 +78,7 @@ int run_cpu_only_tests(void) {
   } else
     PRINT_PASSED();
 
+#ifdef HAVE_ZSTD
   /* zstd (.rt.zst) decompression tests (CPU-only, no kernel needed). */
   printf("Running zst decompress tests... "); fflush(stdout);
   if (!test_zst() || !test_zst_decompress_rejects_undersized_content_size()) {
@@ -92,6 +95,7 @@ int run_cpu_only_tests(void) {
     PRINT_FAILED();
   } else
     PRINT_PASSED();
+#endif /* HAVE_ZSTD */
 
   /* Batched-precompute collation tests (CPU-only, no kernel needed). */
   printf("Running batched-precompute collation tests... "); fflush(stdout);
