@@ -228,13 +228,19 @@ The following command shows how to look up a file of NTLM hashes (one per line) 
 
 ## Compressed tables (.rt.zst)
 
-`crackalack_lookup` ingests zstd-compressed tables directly. Compress a (sorted) `.rt` with the standard zstd tool and drop the raw file:
+`crackalack_lookup` ingests zstd-compressed tables directly.
 
-    zstd -19 -T0 --rm table.rt        # -> table.rt.zst
+Compress a sorted table with the bundled tool, or let the sorter do it:
 
-At lookup time no flags are needed — `.rt.zst` files are auto-detected alongside `.rt`/`.rtc`/`.rti2` and decompressed in memory. Building the lookup with zstd support requires `libzstd-dev` (Linux: `apt install libzstd-dev`) or `brew install zstd` (macOS); zstd is BSD-licensed and available on all supported platforms (including the macOS/Metal build).
+    ./crackalack_rt2zst table.rt table.rt.zst      # level 19 by default
+    ./crackalack_sort --zst *.rt                   # sort, compress, drop the raw .rt
 
-Benchmarked on an NTLM8 table (2026-07-21): `zstd -19` is ~1.96x smaller than raw at roughly 4x faster load than a RAR-wrapped table and faster than the native `.rtc` format, making it the recommended on-disk compression for stored tables. Use a lower level (e.g. `zstd -12`) to trade a little ratio for much faster compression when generating many large tables.
+`crackalack_rt2zst -d table.rt.zst table.rt` reverses it. Files are interoperable
+with the standard `zstd` CLI in both directions. At lookup time no flags are
+needed — `.rt.zst` is auto-detected alongside `.rt`/`.rtc`/`.rti2`/`.rt.rar`.
+Building requires `libzstd-dev` (Linux) or `brew install zstd` (macOS).
+
+See `docs/benchmarks/2026-07-27-zstd-rt.md` for level/ratio/throughput numbers.
 
 ## Recommended Hardware
 

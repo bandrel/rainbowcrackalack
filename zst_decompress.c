@@ -18,52 +18,99 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#define ZSTD_STATIC_LINKING_ONLY
 #include <zstd.h>
 #include "zst_decompress.h"
 
 int zst_decompress(char *filename, uint64_t **uncompressed_table, uint64_t *num_chains) {
   FILE *f = NULL;
-  unsigned char *cbuf = NULL;
-  void *dbuf = NULL;
-  long csize = 0;
+  ZSTD_DCtx *dctx = NULL;
+  void *ibuf = NULL, *dbuf = NULL;
+  size_t ibuf_size = 0;
+  unsigned char hdr[ZSTD_FRAMEHEADERSIZE_MAX];
+  size_t hdr_read = 0;
   unsigned long long dsize = 0;
-  size_t r = 0;
+  ZSTD_outBuffer out;
+  int ret = 0;
 
   *uncompressed_table = NULL;
   *num_chains = 0;
 
   f = fopen(filename, "rb");
   if (f == NULL) { fprintf(stderr, "zst_decompress: cannot open %s\n", filename); return 1; }
-  fseek(f, 0, SEEK_END); csize = ftell(f); fseek(f, 0, SEEK_SET);
-  if (csize <= 0) { fprintf(stderr, "zst_decompress: empty/bad file %s\n", filename); fclose(f); return 2; }
 
-  cbuf = malloc((size_t)csize);
-  if (cbuf == NULL) { fclose(f); return 3; }
-  if (fread(cbuf, 1, (size_t)csize, f) != (size_t)csize) { free(cbuf); fclose(f); return 4; }
-  fclose(f);
-
-  dsize = ZSTD_getFrameContentSize(cbuf, (size_t)csize);
+  hdr_read = fread(hdr, 1, sizeof(hdr), f);
+  if (hdr_read == 0) {
+    fprintf(stderr, "zst_decompress: empty/bad file %s\n", filename);
+    ret = 2; goto done;
+  }
+  dsize = ZSTD_getFrameContentSize(hdr, hdr_read);
   if (dsize == ZSTD_CONTENTSIZE_ERROR || dsize == ZSTD_CONTENTSIZE_UNKNOWN) {
     fprintf(stderr, "zst_decompress: not a valid zstd frame / unknown size: %s\n", filename);
-    free(cbuf); return 5;
+    ret = 5; goto done;
   }
-  if ((dsize % (sizeof(uint64_t) * 2)) != 0) {
-    fprintf(stderr, "zst_decompress: size %llu not a multiple of 16: %s\n", dsize, filename);
-    free(cbuf); return 6;
+  if (dsize == 0 || (dsize % (sizeof(uint64_t) * 2)) != 0) {
+    fprintf(stderr, "zst_decompress: size %llu not a positive multiple of 16: %s\n",
+            dsize, filename);
+    ret = 6; goto done;
   }
 
   dbuf = malloc((size_t)dsize);
-  if (dbuf == NULL) { free(cbuf); return 7; }
+  if (dbuf == NULL) { ret = 7; goto done; }
 
-  r = ZSTD_decompress(dbuf, (size_t)dsize, cbuf, (size_t)csize);
-  free(cbuf);
-  if (ZSTD_isError(r) || r != (size_t)dsize) {
-    fprintf(stderr, "zst_decompress: decompress failed for %s: %s\n", filename,
-            ZSTD_isError(r) ? ZSTD_getErrorName(r) : "size mismatch");
-    free(dbuf); return 8;
+  dctx = ZSTD_createDCtx();
+  if (dctx == NULL) { ret = 3; goto done; }
+
+  ibuf_size = ZSTD_DStreamInSize();
+  ibuf = malloc(ibuf_size);
+  if (ibuf == NULL) { ret = 3; goto done; }
+
+  out.dst = dbuf; out.size = (size_t)dsize; out.pos = 0;
+
+  /* The header bytes already read are the first input chunk. */
+  {
+    ZSTD_inBuffer in = { hdr, hdr_read, 0 };
+    for (;;) {
+      size_t r = ZSTD_decompressStream(dctx, &out, &in);
+      if (ZSTD_isError(r)) {
+        fprintf(stderr, "zst_decompress: %s: %s\n", filename, ZSTD_getErrorName(r));
+        ret = 8; goto done;
+      }
+      if (in.pos == in.size)
+        break;
+    }
+  }
+
+  while (out.pos < out.size) {
+    size_t nread = fread(ibuf, 1, ibuf_size, f);
+    ZSTD_inBuffer in = { ibuf, nread, 0 };
+    if (nread == 0) {
+      fprintf(stderr, "zst_decompress: truncated frame in %s\n", filename);
+      ret = 8; goto done;
+    }
+    while (in.pos < in.size && out.pos < out.size) {
+      size_t r = ZSTD_decompressStream(dctx, &out, &in);
+      if (ZSTD_isError(r)) {
+        fprintf(stderr, "zst_decompress: %s: %s\n", filename, ZSTD_getErrorName(r));
+        ret = 8; goto done;
+      }
+    }
+  }
+
+  if (out.pos != (size_t)dsize) {
+    fprintf(stderr, "zst_decompress: got %zu of %llu bytes from %s\n",
+            out.pos, dsize, filename);
+    ret = 8; goto done;
   }
 
   *uncompressed_table = (uint64_t *)dbuf;
   *num_chains = (uint64_t)(dsize / (sizeof(uint64_t) * 2));
-  return 0;
+  dbuf = NULL;  /* Ownership transferred to the caller. */
+
+done:
+  if (f != NULL) fclose(f);
+  if (dctx != NULL) ZSTD_freeDCtx(dctx);
+  free(ibuf);
+  free(dbuf);
+  return ret;
 }
