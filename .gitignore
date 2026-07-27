@@ -19,6 +19,7 @@ enumerate_chain
 crackalack_sort
 crackalack_plan
 crackalack_rt2rtc
+crackalack_rt2zst
 crackalack_cpu_tests
 gen_known_hash
 build/
