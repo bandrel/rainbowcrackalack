@@ -526,5 +526,5 @@ bundle_windows:
 clean:
 	rm -rf build
 	rm -f *.exe \
-	      crackalack_gen crackalack_unit_tests crackalack_cpu_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_rt2rtc crackalack_lookup perfectify enumerate_chain crackalack_sort crackalack_plan \
+	      crackalack_gen crackalack_unit_tests crackalack_cpu_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_rt2rtc crackalack_rt2zst crackalack_lookup perfectify enumerate_chain crackalack_sort crackalack_plan \
 	      libgcrypt-20.dll libgpg-error-0.dll libwinpthread-1.dll
