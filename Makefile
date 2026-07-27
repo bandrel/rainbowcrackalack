@@ -197,6 +197,7 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/rti2_decompress.o \
 	$(CPU_TESTS_OBJDIR)/test_zst.o \
 	$(CPU_TESTS_OBJDIR)/zst_decompress.o \
+	$(CPU_TESTS_OBJDIR)/zst_compress.o \
 	$(CPU_TESTS_OBJDIR)/file_lock.o \
 	$(CPU_TESTS_OBJDIR)/hash_validate.o
 
@@ -382,6 +383,7 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/rtc_decompress.o \
 	$(OBJDIR)/rti2_decompress.o \
 	$(OBJDIR)/zst_decompress.o \
+	$(OBJDIR)/zst_compress.o \
 	$(OBJDIR)/sort_utils.o \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
