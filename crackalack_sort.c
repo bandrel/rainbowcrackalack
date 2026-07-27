@@ -36,7 +36,9 @@
 #include "sort_utils.h"
 #include "terminal_color.h"
 #include "version.h"
+#ifdef HAVE_ZSTD
 #include "zst_compress.h"
+#endif
 
 #define CHAIN_SIZE (unsigned int)(sizeof(uint64_t) * 2)
 #define SORT_KERNEL_PATH "sort.cl"
@@ -214,6 +216,7 @@ static int gpu_sort(uint64_t *data, uint64_t num_chains) {
 }
 
 
+#ifdef HAVE_ZSTD
 /* Writes `data` out as "<filename>.zst" and removes the raw file.  The raw
  * table is only unlinked once the compressed output is safely in place, so an
  * interrupted run can lose work but never the table. */
@@ -237,6 +240,7 @@ static int compress_and_replace(const char *filename, const void *data,
   }
   return 0;
 }
+#endif /* HAVE_ZSTD */
 
 
 static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex, int zst_level) {
@@ -296,6 +300,7 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex, int zst_l
 
   /* Skip if already sorted. */
   if (is_sorted_rt(data, num_chains)) {
+#ifdef HAVE_ZSTD
     if (zst_level > 0) {
       printf("Compressing %s (already sorted)... ", filename);
       fflush(stdout);
@@ -303,6 +308,7 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex, int zst_l
         goto done;
       printf("%sdone.%s\n", GREENB, CLR);
     } else
+#endif
       printf("Skipping %s (already sorted).\n", filename);
     ret = 0;
     goto done;
@@ -321,10 +327,13 @@ static int sort_file(const char *filename, pthread_mutex_t *gpu_mutex, int zst_l
     }
   }
 
+#ifdef HAVE_ZSTD
   if (zst_level > 0) {
     if (compress_and_replace(filename, data, num_chains, zst_level) != 0)
       goto done;
-  } else {
+  } else
+#endif
+  {
     f = fopen(filename, "wb");
     if (f == NULL) {
       fprintf(stderr, "\n%sError: failed to open %s for writing: %s%s\n", REDB, filename, strerror(errno), CLR);
@@ -379,12 +388,19 @@ int main(int ac, char **av) {
   PRINT_PROJECT_HEADER();
 
   if (ac < 2) {
+#ifdef HAVE_ZSTD
     printf("Sorts rainbow tables by end index for use with crackalack_lookup.\n\n"
            "Usage: %s [--jobs N] [--zst[=LEVEL]] table1.rt [table2.rt ...]\n\n"
            "  --jobs N       use N parallel workers (0 = auto-detect, default: auto)\n"
            "  --zst[=LEVEL]  write each sorted table as <name>.rt.zst and remove the\n"
            "                 raw .rt (LEVEL defaults to %d)\n\n",
            av[0], ZST_DEFAULT_LEVEL);
+#else
+    printf("Sorts rainbow tables by end index for use with crackalack_lookup.\n\n"
+           "Usage: %s [--jobs N] table1.rt [table2.rt ...]\n\n"
+           "  --jobs N       use N parallel workers (0 = auto-detect, default: auto)\n\n",
+           av[0]);
+#endif
     return 0;
   }
 
@@ -402,6 +418,7 @@ int main(int ac, char **av) {
         return 1;
       }
       num_jobs = (val < 0) ? 0 : (int)val;
+#ifdef HAVE_ZSTD
     } else if (strncmp(av[first_file], "--zst", 5) == 0) {
       if (av[first_file][5] == '=') {
         char *endptr = NULL;
@@ -417,6 +434,7 @@ int main(int ac, char **av) {
         fprintf(stderr, "%sError: unknown option %s.%s\n", REDB, av[first_file], CLR);
         return 1;
       }
+#endif
     } else
       break;
   }

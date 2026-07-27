@@ -62,7 +62,9 @@
 #endif
 #include "rtc_decompress.h"
 #include "rti2_decompress.h"
+#ifdef HAVE_ZSTD
 #include "zst_decompress.h"
+#endif
 #include "ppi.h"
 #include "shared.h"
 #include "test_shared.h"  /* TODO: move hex_to_bytes() elsewhere. */
@@ -2669,9 +2671,11 @@ static int load_single_table(const char *filepath, preloaded_table *pt) {
   } else if (str_ends_with(filepath, ".rti2")) {
     if (rti2_decompress((char *)filepath, &rainbow_table, &num_chains) != 0)
       return -1;
+#ifdef HAVE_ZSTD
   } else if (str_ends_with(filepath, ".rt.zst")) {
     if (zst_decompress((char *)filepath, &rainbow_table, &num_chains) != 0)
       return -1;
+#endif
   } else {
     FILE *f = fopen(filepath, "rb");
     if (f == NULL) return -1;
