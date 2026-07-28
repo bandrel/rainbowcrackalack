@@ -89,6 +89,21 @@ static int group_c(void)
     if (is_ntlm9(HASH_NTLM, CHARSET_ASCII_32_95, 9, 9, 65536, 803000) != 0)
         { fprintf(stderr, "IN9-04 failed: non-zero reduction_offset accepted\n"); ok = 0; }
 
+    /* is_netntlmv1_7 - like is_ntlm8, matches any chain_len.  The optimized
+     * kernel loops on the runtime chain_len and its reduce includes
+     * reduction_offset, so nothing about it is specific to the 881689 used by
+     * the published table set. */
+    if (is_netntlmv1_7(HASH_NETNTLMV1, "byte", 7, 7, 881689) != 1)
+        { fprintf(stderr, "INV1-01 failed: published 881689 config rejected\n"); ok = 0; }
+    if (is_netntlmv1_7(HASH_NETNTLMV1, "byte", 7, 7, 2300000) != 1)
+        { fprintf(stderr, "INV1-02 failed: any chain_len should be accepted\n"); ok = 0; }
+    if (is_netntlmv1_7(HASH_NETNTLMV1, "ascii-32-95", 7, 7, 881689) != 0)
+        { fprintf(stderr, "INV1-03 failed: wrong charset accepted\n"); ok = 0; }
+    if (is_netntlmv1_7(HASH_NETNTLMV1, "byte", 8, 8, 881689) != 0)
+        { fprintf(stderr, "INV1-04 failed: wrong plaintext_len accepted\n"); ok = 0; }
+    if (is_netntlmv1_7(HASH_NTLM, "byte", 7, 7, 881689) != 0)
+        { fprintf(stderr, "INV1-05 failed: wrong hash_type accepted\n"); ok = 0; }
+
     return ok;
 }
 
