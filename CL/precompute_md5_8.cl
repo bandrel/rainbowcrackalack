@@ -20,7 +20,7 @@ __kernel void precompute_md5_8(
 
   /* Honor the host's chain_len (arg 8) instead of a hardcoded constant, so
    * lookups against tables of any chain length crack correctly. */
-  unsigned long chain_len = *g_chain_len;
+  long chain_len = (long)(*g_chain_len);
   long target_chain_len = (chain_len - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
 
   if (target_chain_len < 1) {

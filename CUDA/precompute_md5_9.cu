@@ -20,7 +20,7 @@ extern "C" __global__ void precompute_md5_9(
 
   /* Honor the host's chain_len (arg 8) instead of a hardcoded constant, so
    * lookups against tables of any chain length crack correctly. */
-  unsigned long long chain_len = *g_chain_len;
+  long long chain_len = (long long)(*g_chain_len);
   long long target_chain_len = (chain_len - *g_device_num) - (((blockIdx.x * blockDim.x + threadIdx.x) + *g_exec_block_scaler) * *g_total_devices) - 1;
 
   if (target_chain_len < 1) {
