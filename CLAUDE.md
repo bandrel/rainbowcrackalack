@@ -4,19 +4,19 @@ GPU-accelerated rainbow table generator and hash lookup tool. C with CUDA (Linux
 
 ## Build
 
-Requires libgcrypt. GPU backend depends on platform.
+Requires libgcrypt, and libzstd on Linux/macOS. GPU backend depends on platform.
 
 ```bash
 # Linux (Ubuntu) - OpenCL backend (default; works with any OpenCL ICD)
-apt install opencl-headers libgcrypt20-dev
+apt install opencl-headers libgcrypt20-dev libzstd-dev
 make clean; make linux
 
 # Linux (Ubuntu) - CUDA backend (NVIDIA only, faster)
-apt install nvidia-cuda-toolkit libgcrypt20-dev
+apt install nvidia-cuda-toolkit libgcrypt20-dev libzstd-dev
 make clean; make cuda
 
 # macOS (Apple Silicon) - Metal backend
-brew install libgcrypt
+brew install libgcrypt zstd
 make clean; make macos
 
 # Windows (cross-compile from Ubuntu) - OpenCL backend
@@ -37,6 +37,7 @@ Note: `nvidia-cuda-toolkit` from the Ubuntu repo may lag behind the installed NV
 | `crackalack_verify` | Verify generated tables for correctness |
 | `crackalack_unit_tests` | Run GPU-accelerated unit tests |
 | `crackalack_rtc2rt` | Decompress .rtc tables to .rt format |
+| `crackalack_rt2zst` | Compress .rt to .rt.zst (zstd), or `-d` to reverse |
 | `perfectify` | Remove duplicate endpoints from tables |
 | `get_chain` | Extract a single chain from a table |
 | `enumerate_chain` | Walk a chain and print each step |
@@ -49,6 +50,18 @@ Note: `nvidia-cuda-toolkit` from the Ubuntu repo may lag behind the installed NV
 
 # Lookup hashes against 8-char tables
 ./crackalack_lookup /path/to/ntlm8_tables/ /path/to/hashes.txt
+```
+
+### Compressed tables (.rt.zst)
+
+Tables round-trip to zstd in-tree at level 19 (~1.8x smaller), and `crackalack_lookup` ingests `.rt.zst` directly with no flags — the suffix is stripped before filename params are parsed, so compressed tables stay self-describing. Decompression is streamed to cap peak RSS. Files are interoperable with the standard `zstd` CLI in both directions.
+
+Sort before compressing: `--zst` deletes the raw `.rt`, and `crackalack_verify` needs an uncompressed table, so decompress with `-d` first if you need to verify later. Compression is CPU-bound and slow at level 19 (single-digit MB/s); decompression runs at hundreds of MB/s. The zstd paths are guarded by `HAVE_ZSTD` and are not wired into the Windows cross-build.
+
+```bash
+./crackalack_rt2zst table.rt table.rt.zst   # level 19 default; -l LEVEL, -T N, --rm
+./crackalack_rt2zst -d table.rt.zst table.rt
+./crackalack_sort --zst *.rt                # sort, compress, drop the raw .rt
 ```
 
 ### Mask attacks
@@ -150,7 +163,7 @@ Tests cover: chain generation, NTLM hashing, hash-to-index reduction, and index-
 ### Three-phase pipeline
 
 1. **Generation** (`crackalack_gen`) - GPU computes rainbow chains from start points using iterated hash + reduce cycles. Output: `.rt` binary table files.
-2. **Table storage** - Binary `.rt` files store (start_point, end_point) pairs. Compressed `.rtc` and `.rti2` (RTI 2.0 variable-length bit-packed) formats also supported. Table parameters are encoded in the filename: `ntlm_ascii-32-95#8-8_0_422000x67108864_0.rt`.
+2. **Table storage** - Binary `.rt` files store (start_point, end_point) pairs. Compressed `.rtc`, `.rti2` (RTI 2.0 variable-length bit-packed), and `.rt.zst` (zstd) formats also supported. Table parameters are encoded in the filename: `ntlm_ascii-32-95#8-8_0_422000x67108864_0.rt`.
 3. **Lookup** (`crackalack_lookup`) - Uses a pipelined two-phase approach: (1) bulk-load tables into RAM up to an auto-detected memory budget, then (2) batch precompute hashes using GPU + CPU threads in parallel, binary search all loaded tables, and run false alarm checks. If tables exceed RAM, the pipeline processes them in chunks. The GPU/CPU hash split is auto-tuned based on measured timing.
 
 ### GPU abstraction layer
