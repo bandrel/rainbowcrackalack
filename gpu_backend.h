@@ -304,6 +304,32 @@ void gpu_thread_detach(void);
 #endif
 
 
+/* --- Launch granularity -------------------------------------------------
+ * OpenCL (clEnqueueNDRangeKernel) and Metal (dispatchThreads:) launch
+ * EXACTLY the requested global work size, so a kernel never observes a
+ * global id >= gws.  The CUDA backend has no such primitive: it launches
+ * ceil(gws / block_size) blocks of block_size threads, so up to
+ * block_size - 1 EXTRA threads run with ids >= gws.
+ *
+ * Those extra threads are usually harmless because the kernels derive a
+ * work item from the id and bail when it falls out of range -- but any
+ * kernel that stores to a buffer at its raw global id BEFORE bailing
+ * (e.g. `g_output[tid] = 0;` in every precompute*.cu) writes past the end
+ * of that buffer.  Every device buffer indexed by the raw global id must
+ * therefore be sized with GPU_GWS_PAD() so those stores stay in bounds.
+ *
+ * GPU_LAUNCH_GRANULARITY MUST match the block size used by
+ * cuda_setup.c:gpu_enqueue_kernel() (which references this macro). */
+#ifdef USE_CUDA
+#define GPU_LAUNCH_GRANULARITY 256
+#else
+#define GPU_LAUNCH_GRANULARITY 1
+#endif
+
+#define GPU_GWS_PAD(_n) \
+  ((((size_t)(_n) + (size_t)(GPU_LAUNCH_GRANULARITY) - 1) / (size_t)(GPU_LAUNCH_GRANULARITY)) * (size_t)(GPU_LAUNCH_GRANULARITY))
+
+
 /* --- Convenience macros (backward compatible) --- */
 
 #define CLMAKETESTVARS() \
