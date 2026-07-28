@@ -2375,12 +2375,32 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
       exit(-1);
     }
 
-    /* Write the unfiltered output to the disk cache before we apply the
-     * non-zero filter below.  blurbdust's on-disk format is the full
-     * chain_len-1 array including zeros, so the cache is interchangeable
-     * with rcracki and with the pre-refactor crackalack_lookup. */
-    if (index_data_array != NULL && index_data_array[h] != NULL)
-      save_precompute_cache(index_data_array[h], hash_output, positions_per_hash);
+    /* Write the disk cache in the same column-ordered, chain_len-1-length
+     * layout the single-hash (non-batch) path's "output" array uses (see
+     * precompute_hash() above), so cache files are byte-identical between
+     * the two precompute paths and interchangeable with rcracki/blurbdust.
+     *
+     * hash_output[p] (p ascending, this batch kernel's absolute_pos) is the
+     * exact same per-position value the single-hash path computes at
+     * results[p] for num_devices==1 -- both are indexed by ascending
+     * absolute chain position.  The single-hash path then descending-fills
+     * its output array (see the "GPU0: 100 94 88 ..." collation above), which
+     * is precisely the reversal hash_output[p] -> array[positions_per_hash-2-p]
+     * that collate_batched_precompute_endpoints() below also performs for the
+     * ppi.  Previously this wrote hash_output straight through with no
+     * reversal and one entry too many (chain_len instead of chain_len-1),
+     * producing a cache file that didn't match the single-hash path's layout
+     * (caught by lookup test #3's precalc-hash-mismatch check). Missing
+     * slots stay 0 (not the ppi's UINT64_MAX sentinel) to match the raw
+     * hash_output zeros the single-hash path also leaves in place. */
+    if (index_data_array != NULL && index_data_array[h] != NULL) {
+      gpu_ulong *cache_array = calloc(positions_per_hash - 1, sizeof(gpu_ulong));
+      if (cache_array == NULL) { fprintf(stderr, "Error allocating batch cache array.\n"); exit(-1); }
+      for (unsigned int cp = 0; cp + 2 <= positions_per_hash; cp++)
+        cache_array[positions_per_hash - 2 - cp] = hash_output[cp];
+      save_precompute_cache(index_data_array[h], cache_array, positions_per_hash - 1);
+      free(cache_array);
+    }
 
     /* Create ppi node. */
     precomputed_and_potential_indices *ppi = calloc(1, sizeof(precomputed_and_potential_indices));
