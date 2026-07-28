@@ -509,7 +509,7 @@ $(OUTDIR)/$(PLAN_PROG): \
 	$(OBJDIR)/markov.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o
-	$(CC) $(LDFLAGS) $^ -o $@ -lgcrypt -lm
+	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 $(abspath $(OUTDIR)/$(GENKNOWN_PROG)): \
 	$(OBJDIR)/gen_known_hash.o \
