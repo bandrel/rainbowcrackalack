@@ -1,3 +1,5 @@
+#include "shared.h"
+
 /* CUDA-equivalent typedefs for OpenCL scalar types. */
 typedef unsigned char  uchar;
 typedef unsigned short ushort;
@@ -165,12 +167,12 @@ __device__ inline unsigned long long hash_ntlm8(unsigned char *plaintext) {
 }
 
 
-__device__ inline unsigned long long hash_to_index_ntlm8(unsigned long long hash, unsigned int pos) {
-  return (hash + pos) % 6634204312890625ULL;
+__device__ inline unsigned long long hash_to_index_ntlm8(unsigned long long hash, unsigned int reduction_offset, unsigned int pos) {
+  return (hash + reduction_offset + pos) % 6634204312890625ULL;
 }
 
 
-__device__ inline unsigned long long hash_char_to_index_ntlm8(unsigned char *hash_value, unsigned int pos) {
+__device__ inline unsigned long long hash_char_to_index_ntlm8(unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   unsigned long long ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -187,5 +189,5 @@ __device__ inline unsigned long long hash_char_to_index_ntlm8(unsigned char *has
   ret <<= 8;
   ret |= hash_value[0];
 
-  return (ret + pos) % 6634204312890625ULL;
+  return (ret + reduction_offset + pos) % 6634204312890625ULL;
 }

@@ -7,7 +7,7 @@ extern "C" __global__ void precompute_ntlm8_batch(
     unsigned char *g_hashes,
     unsigned int *g_num_hashes,
     unsigned int *g_chunk_positions,
-    unsigned int *g_charset_len,
+    unsigned int *g_table_index,
     unsigned long long *g_chain_len,
     unsigned int *g_pos_start,
     unsigned int *g_total_positions,
@@ -39,11 +39,12 @@ extern "C" __global__ void precompute_ntlm8_batch(
 
   unsigned char *hash = g_hashes + hash_idx * 16;
   unsigned char plaintext[8];
-  unsigned long long index = hash_char_to_index_ntlm8(hash, target_chain_len - 1);
+  unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
+  unsigned long long index = hash_char_to_index_ntlm8(hash, reduction_offset, target_chain_len - 1);
 
   for (unsigned long long i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_ntlm8(index, charset, plaintext);
-    index = hash_to_index_ntlm8(hash_ntlm8(plaintext), i);
+    index = hash_to_index_ntlm8(hash_ntlm8(plaintext), reduction_offset, i);
   }
 
   g_output[(unsigned long long)hash_idx * total_positions + absolute_pos] = index;

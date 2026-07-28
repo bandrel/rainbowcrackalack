@@ -7,7 +7,7 @@ __kernel void false_alarm_check_ntlm8(
     __global unsigned int *unused3,
     __global unsigned int *unused4,
     __global unsigned int *unused5,
-    __global unsigned long *unused6,
+    __global unsigned int *g_reduction_offset,
     __global unsigned long *unused7,
     __global unsigned long *unused_pspace_table,
     __global unsigned int *g_device_num,
@@ -27,12 +27,13 @@ __kernel void false_alarm_check_ntlm8(
   unsigned long index = g_start_indices[index_pos], previous_index = 0;
   unsigned long hash_base_index = g_hash_base_indices[index_pos] % 6634204312890625UL;
   unsigned int endpoint = g_start_index_positions[index_pos];
+  unsigned int reduction_offset = *g_reduction_offset;
 
   for (unsigned int pos = 0; pos < endpoint + 1; pos++) {
     index_to_plaintext_ntlm8(index, charset, plaintext);
 
     previous_index = index;
-    index = hash_to_index_ntlm8(hash_ntlm8(plaintext), pos);
+    index = hash_to_index_ntlm8(hash_ntlm8(plaintext), reduction_offset, pos);
 
     if ((index == (hash_base_index + pos)) || (index == (hash_base_index + pos - 6634204312890625UL))) {
       g_plaintext_indices[index_pos] = previous_index;

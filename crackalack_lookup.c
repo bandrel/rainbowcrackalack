@@ -2237,8 +2237,10 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   gpu_uint positions_uint = positions_per_hash;
 
   /* Set kernel arguments.  Args 0-2 and 4-7 are shared across all batch
-   * kernels.  Arg 3 differs: charset_len for NTLM, reduction_offset for
-   * NetNTLMv1. */
+   * kernels.  Arg 3 differs by kernel: charset_len for Markov NTLM8,
+   * reduction_offset for NetNTLMv1, table_index for plain (standard) NTLM8 --
+   * the plain NTLM8 batch kernel derives reduction_offset from table_index
+   * itself via TABLE_INDEX_TO_REDUCTION_OFFSET(), matching precompute.cl. */
   CLCREATEARG_ARRAY(0, hashes_buffer, CL_RO, all_hashes_bin, num_hashes * 16);
   CLCREATEARG(1, num_hashes_buffer, CL_RO, num_hashes_uint, sizeof(gpu_uint));
   CLCREATEARG(2, positions_buffer, CL_RO, positions_uint, sizeof(gpu_uint));
@@ -2246,9 +2248,12 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   if (use_netntlmv1_batch) {
     gpu_uint reduction_offset = args[0].reduction_offset;
     CLCREATEARG(3, charset_len_buffer, CL_RO, reduction_offset, sizeof(gpu_uint));
-  } else {
+  } else if (use_markov_batch) {
     int charset_len = strlen(args[0].charset);
     CLCREATEARG(3, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
+  } else {
+    gpu_uint table_index = args[0].table_index;
+    CLCREATEARG(3, charset_len_buffer, CL_RO, table_index, sizeof(gpu_uint));
   }
 
   CLCREATEARG(4, chain_len_buffer, CL_RO, chain_len_ulong, sizeof(gpu_ulong));
