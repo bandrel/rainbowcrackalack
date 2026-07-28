@@ -311,13 +311,22 @@ unsigned int is_ntlm9(unsigned int hash_type, char *charset, unsigned int plaint
 }
 
 
-/* Returns 1 if the parameters form the standard NetNTLMv1 7-byte set, otherwise 0. */
+/* Returns 1 if the parameters form the NetNTLMv1 7-byte set, otherwise 0.
+ *
+ * chain_len is deliberately not constrained.  This used to require exactly
+ * 881689 (the chain length of the published .rtc set), which silently routed
+ * every other chain length through the generic kernel -- measured at 1/12th the
+ * throughput.  Nothing in the optimized path depends on that value: the kernel
+ * loops on the runtime chain_len it is handed, and hash_to_index_netntlmv1_7()
+ * is (hash + reduction_offset + pos) & 0x00FFFFFFFFFFFFFF, which is correct for
+ * any chain length and any table index.  Matches is_ntlm8's behavior.
+ *
+ * chain_len is kept in the signature so callers need no change. */
 unsigned int is_netntlmv1_7(unsigned int hash_type, char *charset_name, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int chain_len) {
   if ((hash_type == HASH_NETNTLMV1) && \
       (strcmp(charset_name, "byte") == 0) && \
       (plaintext_len_min == 7) && \
-      (plaintext_len_max == 7) && \
-      (chain_len == 881689))
+      (plaintext_len_max == 7))
     return 1;
   else
     return 0;
