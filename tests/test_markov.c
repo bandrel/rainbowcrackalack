@@ -89,6 +89,76 @@ static int group_a(void)
 
 
 /* -------------------------------------------------------------------------
+ * Group A2: markov_build_sorted tie-break behavior
+ * Tests MS-05 through MS-06
+ *
+ * On a frequency tie, the sort must break ties by ascending charset index
+ * (this matches the old qsort_r comparators' `return (int)ia - (int)ib`
+ * semantics, which sorted ties ascending by index).
+ * ------------------------------------------------------------------------- */
+
+static int group_a2(void)
+{
+    int ok = 1;
+
+    /* pos0_freq: indices 1 and 3 tie at 20 (the max); index 0 and 2 are
+     * lower. Expect rank-0 = index 1, rank-1 = index 3 (ascending on tie). */
+    uint64_t pos0_freq[4]   = {10, 20, 5, 20};
+    uint64_t bigram_freq[16] = {
+        /* prev='a'(0): indices 0 and 2 tie at 30 (the max) */
+        30, 1, 30, 2,
+        /* remaining rows unused by this test but must be valid */
+        1, 2, 3, 4,
+        4, 3, 2, 1,
+        1, 1, 1, 1
+    };
+
+    markov_model m;
+    memset(&m, 0, sizeof(m));
+    m.charset_len   = 4;
+    m.max_positions = 1;
+    memcpy(m.charset, "abcd", 4);
+    m.pos0_freq    = pos0_freq;
+    m.bigram_freq  = bigram_freq;
+    m.sorted_pos0  = malloc(4 * sizeof(uint8_t));
+    m.sorted_bigram = malloc(16 * sizeof(uint8_t));
+
+    if (!m.sorted_pos0 || !m.sorted_bigram) {
+        fprintf(stderr, "group_a2: out of memory\n");
+        free(m.sorted_pos0);
+        free(m.sorted_bigram);
+        return 0;
+    }
+
+    markov_build_sorted(&m);
+
+    /* MS-05: pos0_freq tie between index 1 and 3 (both 20) -> ascending
+     * index means rank-0 is index 1, rank-1 is index 3. */
+    if (m.sorted_pos0[0] != 1 || m.sorted_pos0[1] != 3) {
+        fprintf(stderr, "MS-05 failed: sorted_pos0=[%u,%u,%u,%u], expected rank0=1, rank1=3\n",
+                (unsigned)m.sorted_pos0[0], (unsigned)m.sorted_pos0[1],
+                (unsigned)m.sorted_pos0[2], (unsigned)m.sorted_pos0[3]);
+        ok = 0;
+    }
+
+    /* MS-06: bigram row for prev='a' ties between index 0 and 2 (both 30)
+     * -> ascending index means rank-0 is index 0, rank-1 is index 2. */
+    if (m.sorted_bigram[0] != 0 || m.sorted_bigram[1] != 2) {
+        fprintf(stderr, "MS-06 failed: sorted_bigram row 0=[%u,%u,%u,%u], expected rank0=0, rank1=2\n",
+                (unsigned)m.sorted_bigram[0], (unsigned)m.sorted_bigram[1],
+                (unsigned)m.sorted_bigram[2], (unsigned)m.sorted_bigram[3]);
+        ok = 0;
+    }
+
+    m.pos0_freq   = NULL;
+    m.bigram_freq = NULL;
+    markov_free(&m);
+
+    return ok;
+}
+
+
+/* -------------------------------------------------------------------------
  * Group B: index_to_plaintext_markov_cpu
  * Tests IMP-01 through IMP-02
  * ------------------------------------------------------------------------- */
@@ -1196,6 +1266,7 @@ int test_markov(void)
     int ok = 1;
 
     ok &= group_a();
+    ok &= group_a2();
     ok &= group_b();
     ok &= group_c();
     ok &= group_d();
