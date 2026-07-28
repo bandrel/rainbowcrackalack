@@ -2783,7 +2783,13 @@ static unsigned int compute_load_thread_count(void) {
     if (v >= 1 && v <= 64)
       return (unsigned int)v;
   }
+#ifdef _WIN32
+  SYSTEM_INFO sysinfo;
+  GetSystemInfo(&sysinfo);
+  long ncpu = (long)sysinfo.dwNumberOfProcessors;
+#else
   long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
   if (ncpu < 1) ncpu = 1;
   n = (unsigned int)ncpu;
   if (n > 8) n = 8;
