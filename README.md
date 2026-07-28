@@ -226,6 +226,26 @@ The following command shows how to look up a file of NTLM hashes (one per line) 
 |`--gpu-search`    |Offload per-table endpoint binary search to the GPU (off by default).                            |
 |`-gws GWS`        |Set the GPU global work size.                                                                    |
 
+## Compressed tables (.rt.zst)
+
+`crackalack_lookup` ingests zstd-compressed tables directly.
+
+Compress a sorted table with the bundled tool, or let the sorter do it:
+
+    ./crackalack_rt2zst table.rt table.rt.zst      # level 19 by default
+    ./crackalack_sort --zst *.rt                   # sort, compress, drop the raw .rt
+
+`crackalack_verify` only reads `.rt` files, so verify a table *before*
+compressing it with `--zst` (which deletes the raw `.rt`); if you need to
+verify a table later, decompress it first with `crackalack_rt2zst -d`.
+
+`crackalack_rt2zst -d table.rt.zst table.rt` reverses it. Files are interoperable
+with the standard `zstd` CLI in both directions. At lookup time no flags are
+needed — `.rt.zst` is auto-detected alongside `.rt`/`.rtc`/`.rti2`/`.rt.rar`.
+Building requires `libzstd-dev` (Linux) or `brew install zstd` (macOS).
+
+See `docs/benchmarks/2026-07-27-zstd-rt.md` for level/ratio/throughput numbers.
+
 ## Recommended Hardware
 
 The NVIDIA GTX & RTX lines of GPU hardware has been well-tested with the Rainbow Crackalack software, and offer an excellent price/performance ratio.  Specifically, the GTX 1660 Ti or RTX 2060 are the best choices for building a new cracking machine.  [This document](https://docs.google.com/spreadsheets/d/1jigNGvt9SUur_SNH7QDEACapJbrdL_wKYtprM23IDpM/edit?usp=sharing) contains the raw data that backs this recommendation.

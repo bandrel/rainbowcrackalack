@@ -62,6 +62,9 @@
 #endif
 #include "rtc_decompress.h"
 #include "rti2_decompress.h"
+#ifdef HAVE_ZSTD
+#include "zst_decompress.h"
+#endif
 #include "ppi.h"
 #include "shared.h"
 #include "test_shared.h"  /* TODO: move hex_to_bytes() elsewhere. */
@@ -762,7 +765,9 @@ unsigned int count_tables(char *dir) {
     is_dir = (de->d_type == DT_DIR);
 #endif
 
-    if (is_file && (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")))
+    if (is_file && (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") ||
+                    str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") ||
+                    str_ends_with(de->d_name, ".rtc.rar") || str_ends_with(de->d_name, ".rt.zst")))
       ret++;
     else if (is_dir && (strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0)) {
       char subdir_path[1024] = {0};
@@ -797,14 +802,14 @@ void free_loaded_hashes(char **usernames, char **hashes) {
 }
 
 
-/* Copy `src` into `dst`, stripping a trailing ".rar" if present, so the inner
- * table name (e.g. foo.rtc.rar -> foo.rtc) can be parsed and dispatched on.
- * RAR-wrapped tables (from the infocon mirror) carry a ".rt.rar" / ".rtc.rar"
- * suffix; the parameters live in the inner name. */
-static void strip_rar_suffix(char *dst, size_t dst_size, const char *src) {
+/* Copy `src` into `dst`, stripping a trailing ".rar" or ".zst" if present, so
+ * the inner table name (e.g. foo.rtc.rar -> foo.rtc, foo.rt.zst -> foo.rt) can
+ * be parsed and dispatched on.  Wrapped tables carry the table parameters in
+ * the inner name, not the wrapper's. */
+static void strip_wrapper_suffix(char *dst, size_t dst_size, const char *src) {
   strncpy(dst, src, dst_size - 1);
   dst[dst_size - 1] = '\0';
-  if (str_ends_with(dst, ".rar"))
+  if (str_ends_with(dst, ".rar") || str_ends_with(dst, ".zst"))
     dst[strlen(dst) - 4] = '\0';
 }
 
@@ -839,14 +844,16 @@ void find_rt_params(char *dir_name, rt_parameters *rt_params) {
       }
 
     /* If this is a compressed or uncompressed rainbow table, process it! */
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") ||
+               str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") ||
+               str_ends_with(de->d_name, ".rtc.rar") || str_ends_with(de->d_name, ".rt.zst")) {
 
       /* Try to parse them from this file name.  On success, return immediately
        * (no further processing needed), otherwise continue searching until the
-       * first valid set of parameters is found.  RAR-wrapped tables carry the
-       * params in the inner name, so strip a trailing ".rar" before parsing. */
+       * first valid set of parameters is found.  Wrapped tables carry the
+       * params in the inner name, so strip a trailing ".rar"/".zst" before parsing. */
       char parse_path[512] = {0};
-      strip_rar_suffix(parse_path, sizeof(parse_path), filepath);
+      strip_wrapper_suffix(parse_path, sizeof(parse_path), filepath);
       parse_rt_params(rt_params, parse_path);
       if (rt_params->parsed) {
 	closedir(dir); dir = NULL;
@@ -895,10 +902,12 @@ static void collect_config_groups_dir(char *dir_name, config_group **head) {
         && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
       collect_config_groups_dir(filepath, head);
 
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") ||
+               str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") ||
+               str_ends_with(de->d_name, ".rtc.rar") || str_ends_with(de->d_name, ".rt.zst")) {
       rt_parameters p = {0};
       char parse_path[512] = {0};
-      strip_rar_suffix(parse_path, sizeof(parse_path), filepath);
+      strip_wrapper_suffix(parse_path, sizeof(parse_path), filepath);
       parse_rt_params(&p, parse_path);
       if (!p.parsed)
         continue;
@@ -1005,10 +1014,12 @@ unsigned int count_tables_for_config(char *dir, const rt_parameters *filter) {
     if ((strcmp(de->d_name, ".") != 0) && (strcmp(de->d_name, "..") != 0)
         && (stat(filepath, &st) == 0) && S_ISDIR(st.st_mode)) {
       count += count_tables_for_config(filepath, filter);
-    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") || str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") || str_ends_with(de->d_name, ".rtc.rar")) {
+    } else if (str_ends_with(de->d_name, ".rt") || str_ends_with(de->d_name, ".rtc") ||
+               str_ends_with(de->d_name, ".rti2") || str_ends_with(de->d_name, ".rt.rar") ||
+               str_ends_with(de->d_name, ".rtc.rar") || str_ends_with(de->d_name, ".rt.zst")) {
       rt_parameters p = {0};
       char parse_path[512] = {0};
-      strip_rar_suffix(parse_path, sizeof(parse_path), filepath);
+      strip_wrapper_suffix(parse_path, sizeof(parse_path), filepath);
       parse_rt_params(&p, parse_path);
       if (p.parsed && configs_match(&p, filter))
         count++;
@@ -2618,13 +2629,14 @@ static char **collect_table_paths(char *rt_dir, const rt_parameters *filter,
 
     if (!str_ends_with(de->d_name, ".rt") && !str_ends_with(de->d_name, ".rtc") &&
         !str_ends_with(de->d_name, ".rti2") &&
-        !str_ends_with(de->d_name, ".rt.rar") && !str_ends_with(de->d_name, ".rtc.rar"))
+        !str_ends_with(de->d_name, ".rt.rar") && !str_ends_with(de->d_name, ".rtc.rar") &&
+        !str_ends_with(de->d_name, ".rt.zst"))
       continue;
 
     if (filter != NULL) {
       rt_parameters pt_params = {0};
       char parse_path[512] = {0};
-      strip_rar_suffix(parse_path, sizeof(parse_path), filepath);
+      strip_wrapper_suffix(parse_path, sizeof(parse_path), filepath);
       parse_rt_params(&pt_params, parse_path);
       if (!pt_params.parsed || !configs_match(&pt_params, filter))
         continue;
@@ -2659,6 +2671,11 @@ static int load_single_table(const char *filepath, preloaded_table *pt) {
   } else if (str_ends_with(filepath, ".rti2")) {
     if (rti2_decompress((char *)filepath, &rainbow_table, &num_chains) != 0)
       return -1;
+#ifdef HAVE_ZSTD
+  } else if (str_ends_with(filepath, ".rt.zst")) {
+    if (zst_decompress((char *)filepath, &rainbow_table, &num_chains) != 0)
+      return -1;
+#endif
   } else {
     FILE *f = fopen(filepath, "rb");
     if (f == NULL) return -1;

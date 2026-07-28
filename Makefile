@@ -35,20 +35,20 @@ ifeq ($(BUILD),cuda)
   CC := $(CC_linux)
   EXE :=
   CUDA_PATH ?= /usr/local/cuda
-  CPPFLAGS := $(CPPFLAGS_common) -DUSE_CUDA -DHAVE_UNRAR -I$(CUDA_PATH)/include
+  CPPFLAGS := $(CPPFLAGS_common) -DUSE_CUDA -DHAVE_UNRAR -DHAVE_ZSTD -I$(CUDA_PATH)/include
   CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
   LDFLAGS  := $(LDFLAGS_common) -flto=auto -L$(CUDA_PATH)/lib64 -Wl,-rpath,$(CUDA_PATH)/lib64
-  LIBS     := -lpthread -ldl -lgcrypt -lcuda -lnvrtc -lunrar -lm
+  LIBS     := -lpthread -ldl -lgcrypt -lcuda -lnvrtc -lunrar -lm -lzstd
   GPU_BACKEND_OBJ := $(OBJDIR)/cuda_setup.o
 endif
 
 ifeq ($(BUILD),macos)
   CC := clang
   EXE :=
-  CPPFLAGS := $(CPPFLAGS_common) -DUSE_METAL -I/opt/homebrew/include
+  CPPFLAGS := $(CPPFLAGS_common) -DUSE_METAL -DHAVE_ZSTD -I/opt/homebrew/include
   CFLAGS   := $(CFLAGS_common) -march=native -flto
   LDFLAGS  := $(LDFLAGS_common) -L/opt/homebrew/lib -flto
-  LIBS     := -lpthread -lgcrypt -lm -framework Metal -framework Foundation
+  LIBS     := -lpthread -lgcrypt -lm -lzstd -framework Metal -framework Foundation
   GPU_BACKEND_OBJ := $(OBJDIR)/metal_setup.o
 endif
 
@@ -59,10 +59,10 @@ ifeq ($(BUILD),linux)
   # For NVIDIA-specific CUDA acceleration, use `make cuda` instead.
   CC := $(CC_linux)
   EXE :=
-  CPPFLAGS := $(CPPFLAGS_common) -DHAVE_UNRAR
+  CPPFLAGS := $(CPPFLAGS_common) -DHAVE_UNRAR -DHAVE_ZSTD
   CFLAGS   := $(CFLAGS_common) -march=native -flto=auto
   LDFLAGS  := $(LDFLAGS_common) -flto=auto
-  LIBS     := -lpthread -ldl -lgcrypt -lunrar -lm
+  LIBS     := -lpthread -ldl -lgcrypt -lunrar -lm -lzstd
   GPU_BACKEND_OBJ := $(OBJDIR)/opencl_setup.o
 endif
 
@@ -97,6 +97,14 @@ endif
 GPU_BACKEND_OBJ ?= $(OBJDIR)/opencl_setup.o
 
 SRCS := $(wildcard *.c)
+ifeq ($(BUILD),windows)
+  # zstd is not wired up for the Windows (mingw-w64) build: no <zstd.h>/-lzstd
+  # in the Windows CPPFLAGS/LIBS above, and zst_compress.c uses fseeko/ftello,
+  # which MinGW doesn't provide.  Exclude the zstd sources (and the
+  # zstd-only crackalack_rt2zst tool) from the Windows build entirely, mirroring
+  # how HAVE_UNRAR keeps the RAR feature out of platforms that lack libunrar.
+  SRCS := $(filter-out zst_compress.c zst_decompress.c crackalack_rt2zst.c,$(SRCS))
+endif
 OBJS := $(patsubst %.c,$(OBJDIR)/%.o,$(SRCS))
 
 GEN_PROG      := crackalack_gen$(EXE)
@@ -110,6 +118,7 @@ ENUMERATE     := enumerate_chain$(EXE)
 SORT_PROG     := crackalack_sort$(EXE)
 PLAN_PROG     := crackalack_plan$(EXE)
 RT2RTC_PROG   := crackalack_rt2rtc$(EXE)
+RT2ZST_PROG   := crackalack_rt2zst$(EXE)
 GENKNOWN_PROG    := gen_known_hash$(EXE)
 CPU_TESTS_PROG   := crackalack_cpu_tests$(EXE)
 
@@ -125,6 +134,12 @@ BINARIES := \
 	$(OUTDIR)/$(ENUMERATE) \
 	$(OUTDIR)/$(SORT_PROG) \
 	$(OUTDIR)/$(PLAN_PROG)
+
+# crackalack_rt2zst requires zstd, which is not wired up for Windows (see the
+# SRCS filter above) — only add it to the default binary set on non-Windows.
+ifneq ($(BUILD),windows)
+  BINARIES += $(OUTDIR)/$(RT2ZST_PROG)
+endif
 
 .PHONY: all linux linux-opencl macos windows clean strip \
         prep_opencl_headers prep_none \
@@ -152,16 +167,16 @@ gen_known_hash: $(abspath $(OUTDIR)/$(GENKNOWN_PROG))
 CPU_TESTS_OBJDIR := build/cpu-tests/obj
 ifeq ($(shell uname -s),Darwin)
   CPU_TESTS_CC       := clang
-  CPU_TESTS_CPPFLAGS := -DUSE_METAL -I. -Itests -I/opt/homebrew/include
+  CPU_TESTS_CPPFLAGS := -DUSE_METAL -DHAVE_ZSTD -I. -Itests -I/opt/homebrew/include
   CPU_TESTS_CFLAGS   := -Wall -O3 -g
   CPU_TESTS_LDFLAGS  := -L/opt/homebrew/lib
-  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm
+  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm -lzstd
 else
   CPU_TESTS_CC       := gcc
-  CPU_TESTS_CPPFLAGS := -I. -Itests -I/usr/include
+  CPU_TESTS_CPPFLAGS := -DHAVE_ZSTD -I. -Itests -I/usr/include
   CPU_TESTS_CFLAGS   := -Wall -O3 -g
   CPU_TESTS_LDFLAGS  :=
-  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm
+  CPU_TESTS_LIBS     := -lpthread -lgcrypt -lm -lzstd
 endif
 
 CPU_TESTS_OBJS := \
@@ -195,6 +210,9 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/precompute_collate.o \
 	$(CPU_TESTS_OBJDIR)/rtc_decompress.o \
 	$(CPU_TESTS_OBJDIR)/rti2_decompress.o \
+	$(CPU_TESTS_OBJDIR)/test_zst.o \
+	$(CPU_TESTS_OBJDIR)/zst_decompress.o \
+	$(CPU_TESTS_OBJDIR)/zst_compress.o \
 	$(CPU_TESTS_OBJDIR)/file_lock.o \
 	$(CPU_TESTS_OBJDIR)/hash_validate.o
 
@@ -322,7 +340,7 @@ $(OUTDIR)/$(GEN_PROG): \
 	$(OBJDIR)/verify.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
-$(OUTDIR)/$(UNITTEST_PROG): \
+UNITTEST_OBJS := \
 	$(OBJDIR)/bloom.o \
 	$(OBJDIR)/chain_writer.o \
 	$(OBJDIR)/test_chain_writer.o \
@@ -380,6 +398,14 @@ $(OUTDIR)/$(UNITTEST_PROG): \
 	$(OBJDIR)/rti2_decompress.o \
 	$(OBJDIR)/sort_utils.o \
 	$(OBJDIR)/verify.o
+ifneq ($(BUILD),windows)
+  UNITTEST_OBJS += \
+	$(OBJDIR)/test_zst.o \
+	$(OBJDIR)/zst_decompress.o \
+	$(OBJDIR)/zst_compress.o
+endif
+
+$(OUTDIR)/$(UNITTEST_PROG): $(UNITTEST_OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 $(OUTDIR)/$(GETCHAIN_PROG): $(OBJDIR)/get_chain.o
@@ -410,7 +436,13 @@ $(OUTDIR)/$(RT2RTC_PROG): \
 	$(OBJDIR)/crackalack_rt2rtc.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
-$(OUTDIR)/$(LOOKUP_PROG): \
+$(OUTDIR)/$(RT2ZST_PROG): \
+	$(OBJDIR)/zst_compress.o \
+	$(OBJDIR)/zst_decompress.o \
+	$(OBJDIR)/crackalack_rt2zst.o
+	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
+
+LOOKUP_OBJS := \
 	$(OBJDIR)/bloom.o \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/clock.o \
@@ -431,6 +463,11 @@ $(OUTDIR)/$(LOOKUP_PROG): \
 	$(OBJDIR)/rti2_decompress.o \
 	$(OBJDIR)/test_shared.o \
 	$(OBJDIR)/verify.o
+ifneq ($(BUILD),windows)
+  LOOKUP_OBJS += $(OBJDIR)/zst_decompress.o
+endif
+
+$(OUTDIR)/$(LOOKUP_PROG): $(LOOKUP_OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 $(OUTDIR)/$(PERFECTIFY): \
@@ -445,7 +482,7 @@ $(OUTDIR)/$(ENUMERATE): \
 	$(OBJDIR)/test_shared.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
-$(OUTDIR)/$(SORT_PROG): \
+SORT_OBJS := \
 	$(OBJDIR)/crackalack_sort.o \
 	$(OBJDIR)/charset.o \
 	$(OBJDIR)/file_lock.o \
@@ -456,6 +493,11 @@ $(OUTDIR)/$(SORT_PROG): \
 	$(OBJDIR)/parallel_sort.o \
 	$(OBJDIR)/sort_utils.o \
 	$(GPU_BACKEND_OBJ)
+ifneq ($(BUILD),windows)
+  SORT_OBJS += $(OBJDIR)/zst_compress.o
+endif
+
+$(OUTDIR)/$(SORT_PROG): $(SORT_OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 $(OUTDIR)/$(PLAN_PROG): \
@@ -511,5 +553,5 @@ bundle_windows:
 clean:
 	rm -rf build
 	rm -f *.exe \
-	      crackalack_gen crackalack_unit_tests crackalack_cpu_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_rt2rtc crackalack_lookup perfectify enumerate_chain crackalack_sort crackalack_plan \
+	      crackalack_gen crackalack_unit_tests crackalack_cpu_tests get_chain crackalack_verify crackalack_rtc2rt crackalack_rt2rtc crackalack_rt2zst crackalack_lookup perfectify enumerate_chain crackalack_sort crackalack_plan \
 	      libgcrypt-20.dll libgpg-error-0.dll libwinpthread-1.dll

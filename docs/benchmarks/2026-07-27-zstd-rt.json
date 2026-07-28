@@ -1,0 +1,120 @@
+{
+  "table": "tables/ntlm_ascii-32-95#8-8_0_422000x1000000_0.rt",
+  "levels": [
+    {
+      "level": 1,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 10526581,
+      "ratio": 1.5199617045648535,
+      "compress_s": 0.047206666999954905,
+      "compress_mbs": 338.93517625413557,
+      "compress_rss": 7700480,
+      "decompress_s": 0.029169542000090587,
+      "decompress_mbs": 548.5173541617593,
+      "decompress_rss": 33079296,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 3,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 10522533,
+      "ratio": 1.5205464311682368,
+      "compress_s": 0.07706920800046646,
+      "compress_mbs": 207.6056107895018,
+      "compress_rss": 9994240,
+      "decompress_s": 0.03246433300046192,
+      "decompress_mbs": 492.8485670650416,
+      "decompress_rss": 33079296,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 9,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 9871331,
+      "ratio": 1.6208553841422195,
+      "compress_s": 0.24985916599962366,
+      "compress_mbs": 64.03607382578112,
+      "compress_rss": 21856256,
+      "decompress_s": 0.031873959000222385,
+      "decompress_mbs": 501.977178294305,
+      "decompress_rss": 32407552,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 12,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 9882924,
+      "ratio": 1.6189540666304831,
+      "compress_s": 0.6399985839998408,
+      "compress_mbs": 25.0000553126286,
+      "compress_rss": 53313536,
+      "decompress_s": 0.02831437500026368,
+      "decompress_mbs": 565.0839900174733,
+      "decompress_rss": 32423936,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 19,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 8728071,
+      "ratio": 1.8331656559622396,
+      "compress_s": 4.20597245800036,
+      "compress_mbs": 3.8041143064467087,
+      "compress_rss": 100040704,
+      "decompress_s": 0.03219474999968952,
+      "decompress_mbs": 496.975438546791,
+      "decompress_rss": 31260672,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 22,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 8728069,
+      "ratio": 1.833166076024376,
+      "compress_s": 3.8476206659997843,
+      "compress_mbs": 4.158414092477197,
+      "compress_rss": 292093952,
+      "decompress_s": 0.03514729099970282,
+      "decompress_mbs": 455.22711836127814,
+      "decompress_rss": 31260672,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 19,
+      "threads": 16,
+      "raw_bytes": 16000000,
+      "comp_bytes": 8728070,
+      "ratio": 1.8331658659932837,
+      "compress_s": 3.8438023339995198,
+      "compress_mbs": 4.162544951512067,
+      "compress_rss": 116736000,
+      "decompress_s": 0.032314083000528626,
+      "decompress_mbs": 495.1401529710206,
+      "decompress_rss": 31260672,
+      "roundtrip_ok": true
+    }
+  ],
+  "format_comparison": {
+    "rt": {
+      "lookup_s": 0.7184831659997144,
+      "lookup_rss": 38109184,
+      "cracked": true
+    },
+    "rtc": {
+      "lookup_s": 0.042448082999726466,
+      "lookup_rss": 11665408,
+      "cracked": true
+    },
+    "zst": {
+      "lookup_s": 0.02798416699988593,
+      "lookup_rss": 11681792,
+      "cracked": true
+    }
+  }
+}

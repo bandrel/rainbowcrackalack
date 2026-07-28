@@ -1,0 +1,120 @@
+{
+  "table": "tables/ntlm_ascii-32-95#8-8_0_422000x1000000_0.rt",
+  "levels": [
+    {
+      "level": 1,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 10526581,
+      "ratio": 1.5199617045648535,
+      "compress_s": 0.3143629160003911,
+      "compress_mbs": 50.8965885784699,
+      "compress_rss": 7667712,
+      "decompress_s": 0.03502866700000595,
+      "decompress_mbs": 456.7687374457407,
+      "decompress_rss": 23576576,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 3,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 10522533,
+      "ratio": 1.5205464311682368,
+      "compress_s": 0.07561387499936245,
+      "compress_mbs": 211.60137607198288,
+      "compress_rss": 9994240,
+      "decompress_s": 0.03834087500035821,
+      "decompress_mbs": 417.30920329414795,
+      "decompress_rss": 25165824,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 9,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 9871331,
+      "ratio": 1.6208553841422195,
+      "compress_s": 0.23777179100034118,
+      "compress_mbs": 67.2914138918062,
+      "compress_rss": 21856256,
+      "decompress_s": 0.03057795799941232,
+      "decompress_mbs": 523.2527299667134,
+      "decompress_rss": 27246592,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 12,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 9882924,
+      "ratio": 1.6189540666304831,
+      "compress_s": 0.6510981660003381,
+      "compress_mbs": 24.57386740664186,
+      "compress_rss": 53297152,
+      "decompress_s": 0.032120541999574925,
+      "decompress_mbs": 498.12359953987516,
+      "decompress_rss": 27230208,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 19,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 8728071,
+      "ratio": 1.8331656559622396,
+      "compress_s": 4.471454874999836,
+      "compress_mbs": 3.57825371099168,
+      "compress_rss": 100040704,
+      "decompress_s": 0.032874165999601246,
+      "decompress_mbs": 486.7043623310193,
+      "decompress_rss": 31358976,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 22,
+      "threads": 0,
+      "raw_bytes": 16000000,
+      "comp_bytes": 8728069,
+      "ratio": 1.833166076024376,
+      "compress_s": 4.163587334000113,
+      "compress_mbs": 3.842840011867412,
+      "compress_rss": 292077568,
+      "decompress_s": 0.03337091599951236,
+      "decompress_mbs": 479.4594191011659,
+      "decompress_rss": 38780928,
+      "roundtrip_ok": true
+    },
+    {
+      "level": 19,
+      "threads": 16,
+      "raw_bytes": 16000000,
+      "comp_bytes": 8728070,
+      "ratio": 1.8331658659932837,
+      "compress_s": 4.333143291999477,
+      "compress_mbs": 3.6924696281200045,
+      "compress_rss": 116719616,
+      "decompress_s": 0.03387620800003788,
+      "decompress_mbs": 472.3078805036889,
+      "decompress_rss": 31342592,
+      "roundtrip_ok": true
+    }
+  ],
+  "format_comparison": {
+    "rt": {
+      "lookup_s": 0.9684136670002772,
+      "lookup_rss": 38256640,
+      "cracked": true
+    },
+    "rtc": {
+      "lookup_s": 0.7704248330001064,
+      "lookup_rss": 47382528,
+      "cracked": true
+    },
+    "zst": {
+      "lookup_s": 0.7880604579995634,
+      "lookup_rss": 47431680,
+      "cracked": true
+    }
+  }
+}
