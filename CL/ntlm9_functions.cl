@@ -1,3 +1,5 @@
+#include "shared.h"
+
 #include "ntlm.cl"
 #include "redux_functions_mul32.cl"
 
@@ -33,7 +35,7 @@ inline unsigned long hash_ntlm9(unsigned char *plaintext) {
   return ((unsigned long)output[1]) << 32 | (unsigned long)output[0];
 }
 
-inline unsigned long hash_to_index_ntlm9(unsigned long hash, unsigned int pos) {
+inline unsigned long hash_to_index_ntlm9(unsigned long hash, unsigned int reduction_offset, unsigned int pos) {
   // Divide by multiply
 
   // floor(2 * 2**64 / 95**9) = 58
@@ -41,7 +43,7 @@ inline unsigned long hash_to_index_ntlm9(unsigned long hash, unsigned int pos) {
 
   unsigned int tmp;
 
-  hash += pos;
+  hash += reduction_offset + pos;
 
   //tmp = ((hash >> 59) * 29) >> 5; // not enough
   tmp   = ((hash >> 58) * 29) >> 6; // just right
@@ -55,7 +57,7 @@ inline unsigned long hash_to_index_ntlm9(unsigned long hash, unsigned int pos) {
   return hash;
 }
 
-inline unsigned long hash_char_to_index_ntlm9(__global unsigned char *hash_value, unsigned int pos) {
+inline unsigned long hash_char_to_index_ntlm9(__global unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   unsigned long ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -72,5 +74,5 @@ inline unsigned long hash_char_to_index_ntlm9(__global unsigned char *hash_value
   ret <<= 8;
   ret |= hash_value[0];
 
-  return hash_to_index_ntlm9(ret, pos);
+  return hash_to_index_ntlm9(ret, reduction_offset, pos);
 }

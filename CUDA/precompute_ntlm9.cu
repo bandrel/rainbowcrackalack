@@ -9,7 +9,7 @@ extern "C" __global__ void precompute_ntlm9(
     unsigned int *unused4,
     unsigned int *unused5,
     unsigned int *unused6,
-    unsigned long long *unused7,
+    unsigned int *g_table_index,
     unsigned long long *g_chain_len,
     unsigned int *g_device_num,
     unsigned int *g_total_devices,
@@ -30,11 +30,12 @@ extern "C" __global__ void precompute_ntlm9(
   }
 
   unsigned char plaintext[9];
-  unsigned long long index = hash_char_to_index_ntlm9(g_hash, target_chain_len - 1);
+  unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
+  unsigned long long index = hash_char_to_index_ntlm9(g_hash, reduction_offset, target_chain_len - 1);
 
   for(unsigned int i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_ntlm9(index, plaintext);
-    index = hash_to_index_ntlm9(hash_ntlm9(plaintext), i);
+    index = hash_to_index_ntlm9(hash_ntlm9(plaintext), reduction_offset, i);
   }
 
   g_output[(blockIdx.x * blockDim.x + threadIdx.x)] = index;

@@ -11,7 +11,7 @@ kernel void crackalack_md5_8(
     device unsigned int *unused3 [[buffer(2)]],
     device unsigned int *unused4 [[buffer(3)]],
     device unsigned int *unused5 [[buffer(4)]],
-    device unsigned int *unused_reduction [[buffer(5)]],
+    device unsigned int *g_reduction_offset [[buffer(5)]],
     device unsigned int *g_chain_len [[buffer(6)]],
     device ulong *g_indices [[buffer(7)]],
     device unsigned int *g_pos_start [[buffer(8)]],
@@ -23,11 +23,12 @@ kernel void crackalack_md5_8(
     uint gid [[thread_position_in_grid]]) {
   ulong index = g_indices[gid];
   unsigned char plaintext[8];
+  unsigned int reduction_offset = *g_reduction_offset;
 
 
   for (unsigned int pos = *g_pos_start; pos < (*g_chain_len - 1); pos++) {
     index_to_plaintext_md5_8(index, plaintext);
-    index = hash_to_index_md5_8(hash_md5_8(plaintext), pos);
+    index = hash_to_index_md5_8(hash_md5_8(plaintext), reduction_offset, pos);
   }
 
   g_indices[gid] = index;

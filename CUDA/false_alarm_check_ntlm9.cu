@@ -7,7 +7,7 @@ extern "C" __global__ void false_alarm_check_ntlm9(
     unsigned int *unused3,
     unsigned int *unused4,
     unsigned int *unused5,
-    unsigned long long *unused6,
+    unsigned int *g_reduction_offset,
     unsigned long long *unused7,
     unsigned long long *unused_pspace_table,
     unsigned int *g_device_num,
@@ -27,12 +27,13 @@ extern "C" __global__ void false_alarm_check_ntlm9(
   unsigned long long index = g_start_indices[index_pos], previous_index = 0;
   unsigned long long hash_base_index = g_hash_base_indices[index_pos] % 630249409724609375ULL;
   unsigned int endpoint = g_start_index_positions[index_pos];
+  unsigned int reduction_offset = *g_reduction_offset;
 
   for (unsigned int pos = 0; pos < endpoint + 1; pos++) {
     index_to_plaintext_ntlm9(index, plaintext);
 
     previous_index = index;
-    index = hash_to_index_ntlm9(hash_ntlm9(plaintext), pos);
+    index = hash_to_index_ntlm9(hash_ntlm9(plaintext), reduction_offset, pos);
 
     if ((index == (hash_base_index + pos)) || (index == (hash_base_index + pos - 630249409724609375ULL))) {
       g_plaintext_indices[index_pos] = previous_index;

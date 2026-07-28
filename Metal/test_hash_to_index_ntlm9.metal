@@ -9,6 +9,6 @@ kernel void test_hash_to_index_ntlm9(
     device ulong *g_index [[buffer(2)]],
     uint gid [[thread_position_in_grid]]) {
 
-  *g_index = hash_to_index_ntlm9((ulong)*g_hash, (unsigned int)*g_pos);
+  *g_index = hash_to_index_ntlm9((ulong)*g_hash, 0, (unsigned int)*g_pos);
 
 }

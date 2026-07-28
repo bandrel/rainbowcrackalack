@@ -79,15 +79,17 @@ static int group_c(void)
     if (is_ntlm8(HASH_NTLM, CHARSET_ASCII_32_95, 8, 8, 65536, 422000) != 1)
         { fprintf(stderr, "IN8-04 failed: any reduction_offset should be accepted\n"); ok = 0; }
 
-    /* is_ntlm9 */
+    /* is_ntlm9 - matches any NTLM ascii-32-95 9-char/803000-chain_len config
+     * regardless of reduction_offset, now that the NTLM9 optimized reduce
+     * honors reduction_offset (dynamic table_index support). */
     if (is_ntlm9(HASH_NTLM, CHARSET_ASCII_32_95, 9, 9, 0, 803000) != 1)
         { fprintf(stderr, "IN9-01 failed\n"); ok = 0; }
     if (is_ntlm9(HASH_NTLM, CHARSET_ASCII_32_95, 8, 8, 0, 803000) != 0)
         { fprintf(stderr, "IN9-02 failed: wrong plaintext_len accepted\n"); ok = 0; }
     if (is_ntlm9(HASH_LM, CHARSET_ASCII_32_95, 9, 9, 0, 803000) != 0)
         { fprintf(stderr, "IN9-03 failed: wrong hash_type accepted\n"); ok = 0; }
-    if (is_ntlm9(HASH_NTLM, CHARSET_ASCII_32_95, 9, 9, 65536, 803000) != 0)
-        { fprintf(stderr, "IN9-04 failed: non-zero reduction_offset accepted\n"); ok = 0; }
+    if (is_ntlm9(HASH_NTLM, CHARSET_ASCII_32_95, 9, 9, 65536, 803000) != 1)
+        { fprintf(stderr, "IN9-04 failed: any reduction_offset should be accepted\n"); ok = 0; }
 
     /* is_netntlmv1_7 - like is_ntlm8, matches any chain_len.  The optimized
      * kernel loops on the runtime chain_len and its reduce includes

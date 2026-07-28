@@ -1,3 +1,5 @@
+#include "shared.h"
+
 #include "ntlm.cu"
 #include "redux_functions_mul32.cu"
 
@@ -33,7 +35,7 @@ __device__ inline unsigned long long hash_ntlm9(unsigned char *plaintext) {
   return ((unsigned long long)output[1]) << 32 | (unsigned long long)output[0];
 }
 
-__device__ inline unsigned long long hash_to_index_ntlm9(unsigned long long hash, unsigned int pos) {
+__device__ inline unsigned long long hash_to_index_ntlm9(unsigned long long hash, unsigned int reduction_offset, unsigned int pos) {
   // Divide by multiply
 
   // floor(2 * 2**64 / 95**9) = 58
@@ -41,7 +43,7 @@ __device__ inline unsigned long long hash_to_index_ntlm9(unsigned long long hash
 
   unsigned int tmp;
 
-  hash += pos;
+  hash += reduction_offset + pos;
 
   tmp   = ((hash >> 58) * 29) >> 6; // just right
 
@@ -53,7 +55,7 @@ __device__ inline unsigned long long hash_to_index_ntlm9(unsigned long long hash
   return hash;
 }
 
-__device__ inline unsigned long long hash_char_to_index_ntlm9(unsigned char *hash_value, unsigned int pos) {
+__device__ inline unsigned long long hash_char_to_index_ntlm9(unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   unsigned long long ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -70,5 +72,5 @@ __device__ inline unsigned long long hash_char_to_index_ntlm9(unsigned char *has
   ret <<= 8;
   ret |= hash_value[0];
 
-  return hash_to_index_ntlm9(ret, pos);
+  return hash_to_index_ntlm9(ret, reduction_offset, pos);
 }

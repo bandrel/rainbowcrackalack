@@ -303,7 +303,6 @@ unsigned int is_ntlm9(unsigned int hash_type, char *charset, unsigned int plaint
       (strcmp(charset, CHARSET_ASCII_32_95) == 0) && \
       (plaintext_len_min == 9) && \
       (plaintext_len_max == 9) && \
-      (reduction_offset == 0) && \
       (chain_len == 803000))
     return 1;
   else

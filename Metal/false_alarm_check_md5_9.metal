@@ -10,7 +10,7 @@ kernel void false_alarm_check_md5_9(
     device unsigned int *unused3 [[buffer(2)]],
     device unsigned int *unused4 [[buffer(3)]],
     device unsigned int *unused5 [[buffer(4)]],
-    device ulong *unused6 [[buffer(5)]],
+    device unsigned int *g_reduction_offset [[buffer(5)]],
     device ulong *unused7 [[buffer(6)]],
     device ulong *unused_pspace_table [[buffer(7)]],
     device unsigned int *g_device_num [[buffer(8)]],
@@ -31,12 +31,13 @@ kernel void false_alarm_check_md5_9(
   ulong index = g_start_indices[index_pos], previous_index = 0;
   ulong hash_base_index = g_hash_base_indices[index_pos] % 630249409724609375UL;
   unsigned int endpoint = g_start_index_positions[index_pos];
+  unsigned int reduction_offset = *g_reduction_offset;
 
   for (unsigned int pos = 0; pos < endpoint + 1; pos++) {
     index_to_plaintext_md5_9(index, plaintext);
 
     previous_index = index;
-    index = hash_to_index_md5_9(hash_md5_9(plaintext), pos);
+    index = hash_to_index_md5_9(hash_md5_9(plaintext), reduction_offset, pos);
 
     if ((index == (hash_base_index + pos)) || (index == (hash_base_index + pos - 630249409724609375UL))) {
       g_plaintext_indices[index_pos] = previous_index;
