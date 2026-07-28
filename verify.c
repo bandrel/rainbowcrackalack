@@ -269,21 +269,26 @@ int verify_rainbowtable_file(char *filename, unsigned int table_type, unsigned i
   file_size = rc_ftell(f);
   rc_fseek(f, 0, RCSEEK_SET);
 
+  /* These size checks must return 0, not VERIFY_ERR_TRUNCATED: this function's
+   * contract is 1 on success / 0 on failure, and callers test the result for
+   * truthiness, so a nonzero error code reads as success.  See the note at the
+   * err: label below, where returning VERIFY_ERR_CORRUPTED was the same bug. */
+
   /* An empty file is always an error. */
   if (file_size == 0) {
     rc_fclose(f);
     fprintf(stderr, "Error: file is empty!\n");
-    return VERIFY_ERR_TRUNCATED;
+    return 0;
   /* If the table should be complete, then ensure its file size is what we'd expect.  Skip compressed files. */
   } else if ((table_should_be_complete == VERIFY_TABLE_IS_COMPLETE) && (file_size != (rt_params.num_chains * CHAIN_SIZE)) && !is_compressed) {
     rc_fclose(f);
     fprintf(stderr, "Error: table is expected to be complete, but file size does not match expected value.  Expected: %"PRIu64"; actual: %"PRIu64"\n", rt_params.num_chains * CHAIN_SIZE, file_size);
-    return VERIFY_ERR_TRUNCATED;
+    return 0;
   /* If the table is incomplete, ensure that the file size is a multiple of CHAIN_SIZE. */
   } else if (((file_size % CHAIN_SIZE) != 0) && !is_compressed) {
     rc_fclose(f);
     fprintf(stderr, "Error: file size is not aligned to %u bytes: %"PRIu64"\n", CHAIN_SIZE, file_size);
-    return VERIFY_ERR_TRUNCATED;
+    return 0;
   }
 
   /* Compressed tables cannot be quickly checked, as they currently require the entire table to be loaded into memory. */

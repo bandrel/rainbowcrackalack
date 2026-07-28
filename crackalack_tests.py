@@ -24,6 +24,7 @@ REDB = "\033[1;31m";   # Red + bold
 
 GEN_PROG_NAME='crackalack_gen'
 LOOKUP_PROG_NAME='crackalack_lookup'
+VERIFY_PROG_NAME='crackalack_verify'
 
 CYGWIN=False
 if platform.system().startswith('CYGWIN'):
@@ -132,6 +133,13 @@ def check_pot_file(pot_filename, plaintexts):
             return False
         else:
             return True
+
+    # A missing pot file means nothing was cracked.  That's a test failure, not a
+    # reason to raise: an exception here aborts the whole run, so every later test
+    # section is skipped.
+    if not os.path.exists(get_real_path(pot_filename)):
+        print("FAILED: pot file does not exist: %s\n  Expected plaintexts: %s" % (pot_filename, ', '.join(plaintexts)))
+        return False
 
     pot_lines = []
     with open(get_real_path(pot_filename), 'r') as f:
@@ -503,6 +511,53 @@ def do_lookup_test_5(temp_dir):
 
 # Deletes the pot file if it exists, along with all precompute files.  Creates the
 # rainbowtable directory.  Returns paths to the pot file and rainbow table directory.
+# Run the verify program with the given arguments.  Returns a
+# (returncode, combined_output) tuple.
+def run_verify(args):
+    proc = subprocess.run([verify_prog_path] + args, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT)
+    output = proc.stdout.decode('utf-8', errors='replace')
+    if VERBOSE:
+        print(output)
+
+    return proc.returncode, output
+
+
+# A table whose file size doesn't match the chain count in its filename is
+# truncated.  Verification must fail loudly instead of reporting success.
+def do_verify_test_truncated(temp_dir):
+    rt_dir = os.path.join(temp_dir, 'verify_truncated')
+    os.mkdir(rt_dir)
+
+    # The filename claims 1,000 chains, but only 100 are written.
+    path = create_rt_table(rt_dir, 'ntlm_ascii-32-95#8-8_0_1000x1000_0.rt', 100)
+
+    returncode, output = run_verify(['--raw', get_real_path(path)])
+
+    if returncode == 0:
+        print("  Expected a non-zero exit code for a truncated table, got 0.")
+        return False
+
+    if 'successfully verified' in output:
+        print("  Truncated table was reported as successfully verified.")
+        return False
+
+    return True
+
+
+# Do the verify tests.
+def do_verify_tests(temp_dir):
+    all_passed = True
+
+    if do_verify_test_truncated(temp_dir):
+        print("\t* Verify truncated-table test %spassed.%s" % (GREEN, CLR))
+    else:
+        print("%sFailed%s verify truncated-table test" % (RED, CLR))
+        all_passed = False
+
+    return all_passed
+
+
 def begin_lookup_test(path):
 
     # Delete the pot file if it exists.
@@ -527,11 +582,11 @@ if __name__ == '__main__':
 
     if (len(sys.argv) == 2) and (sys.argv[1] == '--verbose'):
         VERBOSE = True
-    elif (len(sys.argv) == 2) and (sys.argv[1] in ['precomp', 'lookup', 'generate']):
+    elif (len(sys.argv) == 2) and (sys.argv[1] in ['precomp', 'lookup', 'generate', 'verify']):
         tests_to_run = sys.argv[1]
         VERBOSE = True
     elif (len(sys.argv) == 2) and (sys.argv[1] == '--help'):
-        print("\nUsage: %s [precomp | lookup | generate | --verbose]\n\nWith no args, all tests are run.  Otherwise, the 'precomp', 'lookup', or 'generate' arguments will run those respective tests only (with verbose mode on).\n" % sys.argv[0])
+        print("\nUsage: %s [precomp | lookup | generate | verify | --verbose]\n\nWith no args, all tests are run.  Otherwise, the 'precomp', 'lookup', 'generate', or 'verify' arguments will run those respective tests only (with verbose mode on).\n" % sys.argv[0])
         exit(0)
 
     # NVIDIA caches old kernels in ~/.nv/ComputeCache.  We need to delete it so we're
@@ -549,6 +604,7 @@ if __name__ == '__main__':
     # to the crackalack_gen program.
     gen_prog_path = os.path.abspath(GEN_PROG_NAME)
     lookup_prog_path = os.path.abspath(LOOKUP_PROG_NAME)
+    verify_prog_path = os.path.abspath(VERIFY_PROG_NAME)
 
     # Make a temporary directory for us to generate tables in.
     temp_dir = tempfile.mkdtemp(prefix='crackalack_tests')
@@ -569,13 +625,25 @@ if __name__ == '__main__':
 
     all_passed = True
 
+    # Each section evaluates its result before combining it into all_passed.
+    # Writing `all_passed = all_passed and do_x_tests(...)` short-circuits once
+    # anything has failed, so every later section is skipped -- while its header
+    # still prints, making the run look like it covered them.
+
     if (tests_to_run == 'all') or (tests_to_run == 'precomp'):
         print("Performing pre-computation tests...\n")
-        all_passed = all_passed and do_precomp_tests(temp_dir)
+        precomp_passed = do_precomp_tests(temp_dir)
+        all_passed = all_passed and precomp_passed
 
     if (tests_to_run == 'all') or (tests_to_run == 'lookup'):
         print("\n\nPerforming lookup tests...")
-        all_passed = all_passed and do_lookup_tests(temp_dir)
+        lookup_passed = do_lookup_tests(temp_dir)
+        all_passed = all_passed and lookup_passed
+
+    if (tests_to_run == 'all') or (tests_to_run == 'verify'):
+        print("\n\nPerforming verify tests...")
+        verify_passed = do_verify_tests(temp_dir)
+        all_passed = all_passed and verify_passed
 
     if (tests_to_run == 'all') or (tests_to_run == 'generate'):
         print("\n\nPerforming generation tests...\n")
