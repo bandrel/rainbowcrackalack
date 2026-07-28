@@ -134,6 +134,13 @@ def check_pot_file(pot_filename, plaintexts):
         else:
             return True
 
+    # A missing pot file means nothing was cracked.  That's a test failure, not a
+    # reason to raise: an exception here aborts the whole run, so every later test
+    # section is skipped.
+    if not os.path.exists(get_real_path(pot_filename)):
+        print("FAILED: pot file does not exist: %s\n  Expected plaintexts: %s" % (pot_filename, ', '.join(plaintexts)))
+        return False
+
     pot_lines = []
     with open(get_real_path(pot_filename), 'r') as f:
         for line in f:
@@ -618,18 +625,23 @@ if __name__ == '__main__':
 
     all_passed = True
 
+    # Each section evaluates its result before combining it into all_passed.
+    # Writing `all_passed = all_passed and do_x_tests(...)` short-circuits once
+    # anything has failed, so every later section is skipped -- while its header
+    # still prints, making the run look like it covered them.
+
     if (tests_to_run == 'all') or (tests_to_run == 'precomp'):
         print("Performing pre-computation tests...\n")
-        all_passed = all_passed and do_precomp_tests(temp_dir)
+        precomp_passed = do_precomp_tests(temp_dir)
+        all_passed = all_passed and precomp_passed
 
     if (tests_to_run == 'all') or (tests_to_run == 'lookup'):
         print("\n\nPerforming lookup tests...")
-        all_passed = all_passed and do_lookup_tests(temp_dir)
+        lookup_passed = do_lookup_tests(temp_dir)
+        all_passed = all_passed and lookup_passed
 
     if (tests_to_run == 'all') or (tests_to_run == 'verify'):
         print("\n\nPerforming verify tests...")
-        # Evaluate first, then combine: `all_passed and do_verify_tests(...)`
-        # short-circuits and silently skips these tests once anything has failed.
         verify_passed = do_verify_tests(temp_dir)
         all_passed = all_passed and verify_passed
 
