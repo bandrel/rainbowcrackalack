@@ -12,7 +12,7 @@ kernel void precompute_md5_8(
     device unsigned int *unused4 [[buffer(4)]],
     device unsigned int *unused5 [[buffer(5)]],
     device unsigned int *unused6 [[buffer(6)]],
-    device ulong *unused7 [[buffer(7)]],
+    device unsigned int *g_table_index [[buffer(7)]],
     device ulong *unused_chain_len [[buffer(8)]],
     device unsigned int *g_device_num [[buffer(9)]],
     device unsigned int *g_total_devices [[buffer(10)]],
@@ -30,11 +30,12 @@ kernel void precompute_md5_8(
   }
 
   unsigned char plaintext[8];
-  ulong index = hash_char_to_index_md5_8(g_hash, target_chain_len - 1);
+  unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
+  ulong index = hash_char_to_index_md5_8(g_hash, reduction_offset, target_chain_len - 1);
 
   for (unsigned int i = target_chain_len; i < 421999; i++) {
     index_to_plaintext_md5_8(index, plaintext);
-    index = hash_to_index_md5_8(hash_md5_8(plaintext), i);
+    index = hash_to_index_md5_8(hash_md5_8(plaintext), reduction_offset, i);
   }
 
   g_output[gid] = index;

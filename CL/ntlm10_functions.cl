@@ -1,3 +1,5 @@
+#include "shared.h"
+
 #include "ntlm.cl"
 
 __constant char charset[] = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
@@ -61,13 +63,13 @@ inline unsigned long hash_ntlm10(unsigned char *plaintext) {
 }
 
 
-inline unsigned long hash_to_index_ntlm10(unsigned long hash, unsigned int pos) {
+inline unsigned long hash_to_index_ntlm10(unsigned long hash, unsigned int reduction_offset, unsigned int pos) {
   /* 95^10 > 2^64: the 64-bit hash output is always in range, no modulo needed. */
-  return hash + pos;
+  return hash + reduction_offset + pos;
 }
 
 
-inline unsigned long hash_char_to_index_ntlm10(__global unsigned char *hash_value, unsigned int pos) {
+inline unsigned long hash_char_to_index_ntlm10(__global unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   unsigned long ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -84,5 +86,5 @@ inline unsigned long hash_char_to_index_ntlm10(__global unsigned char *hash_valu
   ret <<= 8;
   ret |= hash_value[0];
 
-  return hash_to_index_ntlm10(ret, pos);
+  return hash_to_index_ntlm10(ret, reduction_offset, pos);
 }

@@ -1,3 +1,5 @@
+#include "shared.h"
+
 #include "ntlm.metal"
 #include "redux_functions_mul32.metal"
 
@@ -33,7 +35,7 @@ inline ulong hash_ntlm9(thread unsigned char *plaintext) {
   return ((ulong)output[1]) << 32 | (ulong)output[0];
 }
 
-inline ulong hash_to_index_ntlm9(ulong hash, unsigned int pos) {
+inline ulong hash_to_index_ntlm9(ulong hash, unsigned int reduction_offset, unsigned int pos) {
   // Divide by multiply
 
   // floor(2 * 2**64 / 95**9) = 58
@@ -41,7 +43,7 @@ inline ulong hash_to_index_ntlm9(ulong hash, unsigned int pos) {
 
   unsigned int tmp;
 
-  hash += pos;
+  hash += reduction_offset + pos;
 
   //tmp = ((hash >> 59) * 29) >> 5; // not enough
   tmp   = ((hash >> 58) * 29) >> 6; // just right
@@ -55,7 +57,7 @@ inline ulong hash_to_index_ntlm9(ulong hash, unsigned int pos) {
   return hash;
 }
 
-inline ulong hash_char_to_index_ntlm9(device unsigned char *hash_value, unsigned int pos) {
+inline ulong hash_char_to_index_ntlm9(device unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   ulong ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -72,5 +74,5 @@ inline ulong hash_char_to_index_ntlm9(device unsigned char *hash_value, unsigned
   ret <<= 8;
   ret |= hash_value[0];
 
-  return hash_to_index_ntlm9(ret, pos);
+  return hash_to_index_ntlm9(ret, reduction_offset, pos);
 }

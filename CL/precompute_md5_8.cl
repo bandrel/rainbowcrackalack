@@ -9,7 +9,7 @@ __kernel void precompute_md5_8(
     __global unsigned int *unused4,
     __global unsigned int *unused5,
     __global unsigned int *unused6,
-    __global unsigned long *unused7,
+    __global unsigned int *g_table_index,
     __global unsigned long *unused_chain_len,
     __global unsigned int *g_device_num,
     __global unsigned int *g_total_devices,
@@ -26,11 +26,12 @@ __kernel void precompute_md5_8(
   }
 
   unsigned char plaintext[8];
-  unsigned long index = hash_char_to_index_md5_8(g_hash, target_chain_len - 1);
+  unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
+  unsigned long index = hash_char_to_index_md5_8(g_hash, reduction_offset, target_chain_len - 1);
 
   for(unsigned int i = target_chain_len; i < 421999; i++) {
     index_to_plaintext_md5_8(index, charset, plaintext);
-    index = hash_to_index_md5_8(hash_md5_8(plaintext), i);
+    index = hash_to_index_md5_8(hash_md5_8(plaintext), reduction_offset, i);
   }
 
   g_output[get_global_id(0)] = index;

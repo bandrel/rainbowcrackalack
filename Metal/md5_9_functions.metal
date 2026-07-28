@@ -1,3 +1,5 @@
+#include "shared.h"
+
 #include "md5.metal"
 
 constant char charset[] = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
@@ -32,12 +34,12 @@ inline ulong hash_md5_9(thread unsigned char *plaintext) {
 }
 
 
-inline ulong hash_to_index_md5_9(ulong hash, unsigned int pos) {
-  return (hash + pos) % 630249409724609375UL;  /* 95^9 */
+inline ulong hash_to_index_md5_9(ulong hash, unsigned int reduction_offset, unsigned int pos) {
+  return (hash + reduction_offset + pos) % 630249409724609375UL;  /* 95^9 */
 }
 
 
-inline ulong hash_char_to_index_md5_9(device unsigned char *hash_value, unsigned int pos) {
+inline ulong hash_char_to_index_md5_9(device unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   ulong ret = hash_value[7]; ret <<= 8;
   ret |= hash_value[6]; ret <<= 8;
   ret |= hash_value[5]; ret <<= 8;
@@ -46,5 +48,5 @@ inline ulong hash_char_to_index_md5_9(device unsigned char *hash_value, unsigned
   ret |= hash_value[2]; ret <<= 8;
   ret |= hash_value[1]; ret <<= 8;
   ret |= hash_value[0];
-  return (ret + pos) % 630249409724609375UL;
+  return (ret + reduction_offset + pos) % 630249409724609375UL;
 }
