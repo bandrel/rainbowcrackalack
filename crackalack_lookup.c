@@ -245,7 +245,7 @@ void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filte
 void gpu_binary_search_streaming(preloaded_table *pt, precomputed_and_potential_indices *ppi_head, thread_args *args, unsigned int num_devices);
 void gpu_binary_search_release(void);
 gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size);
-void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices);
+void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices, char *out_index_filename, unsigned int out_index_filename_size);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
 void launch_false_alarm_kernel(fa_batch_t *batch, thread_args *args, false_alarm_state *state);
 void harvest_false_alarm_results(false_alarm_state *state);
@@ -1047,7 +1047,7 @@ void ppi_reset_endpoints(precomputed_and_potential_indices *head) {
     if (head->plaintext == NULL) {
       FREE(head->precomputed_end_indices);
       head->num_precomputed_end_indices = 0;
-
+      FREE(head->index_filename);
     }
     head = head->next;
   }
@@ -1144,6 +1144,7 @@ void free_precomputed_and_potential_indices(precomputed_and_potential_indices **
     FREE(ppi->precomputed_end_indices);
     FREE(ppi->potential_start_indices);
     FREE(ppi->potential_start_index_positions);
+    FREE(ppi->index_filename);
 
     ppi->num_potential_start_indices = 0;
     FREE(ppi->plaintext);
@@ -2068,8 +2069,12 @@ gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, 
  * file containing the raw index_data bytes (no extra newline beyond what's
  * already in index_data).
  *
- * On-disk format matches blurbdust exactly.  Exits on error. */
-void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices) {
+ * On-disk format matches blurbdust exactly.  Exits on error.
+ *
+ * If out_index_filename is non-NULL, the ".index" filename this call created
+ * is copied into it (so the caller can record it on the ppi node and unlink
+ * it later once the hash is cracked). */
+void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices, char *out_index_filename, unsigned int out_index_filename_size) {
   char filename[128] = {0};
   FILE *f = NULL;
   unsigned int i = 0;
@@ -2116,6 +2121,11 @@ void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int nu
     exit(-1);
   }
   FCLOSE(f);
+
+  if (out_index_filename != NULL) {
+    memset(out_index_filename, 0, out_index_filename_size);
+    strncpy(out_index_filename, filename, out_index_filename_size - 1);
+  }
 }
 
 
@@ -2393,12 +2403,14 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
      * (caught by lookup test #3's precalc-hash-mismatch check). Missing
      * slots stay 0 (not the ppi's UINT64_MAX sentinel) to match the raw
      * hash_output zeros the single-hash path also leaves in place. */
+    char saved_index_filename[128] = {0};
     if (index_data_array != NULL && index_data_array[h] != NULL) {
       gpu_ulong *cache_array = calloc(positions_per_hash - 1, sizeof(gpu_ulong));
       if (cache_array == NULL) { fprintf(stderr, "Error allocating batch cache array.\n"); exit(-1); }
       for (unsigned int cp = 0; cp + 2 <= positions_per_hash; cp++)
         cache_array[positions_per_hash - 2 - cp] = hash_output[cp];
-      save_precompute_cache(index_data_array[h], cache_array, positions_per_hash - 1);
+      save_precompute_cache(index_data_array[h], cache_array, positions_per_hash - 1,
+                             saved_index_filename, sizeof(saved_index_filename));
       free(cache_array);
     }
 
@@ -2408,6 +2420,8 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
 
     ppi->username = usernames[h];
     ppi->hash = hashes[h];
+    if (saved_index_filename[0] != '\0')
+      ppi->index_filename = strdup(saved_index_filename);
 
     /* Batched-precompute reverse-order fix (all batched hash types: ntlm8 /
      * netntlmv1_7 / markov_ntlm8).
@@ -2572,12 +2586,17 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
   /* Persist to the precompute disk cache so a subsequent run can skip the
    * GPU dispatch entirely.  Matches the blurbdust on-disk format (raw
    * gpu_ulong array, length output_index = chain_len-1). */
+  char saved_index_filename[128] = {0};
   if (index_data != NULL)
-    save_precompute_cache(index_data, output, output_index);
+    save_precompute_cache(index_data, output, output_index,
+                           saved_index_filename, sizeof(saved_index_filename));
 
   if (update_ppi != NULL) {
     /* Update an existing ppi node for a new table configuration. */
     FREE(update_ppi->precomputed_end_indices);
+    FREE(update_ppi->index_filename);
+    if (saved_index_filename[0] != '\0')
+      update_ppi->index_filename = strdup(saved_index_filename);
     update_ppi->num_precomputed_end_indices = output_index;
     update_ppi->precomputed_end_indices = calloc(output_index, sizeof(gpu_ulong));
     if (update_ppi->precomputed_end_indices == NULL) {
@@ -2609,6 +2628,8 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
 
     ppi->username = args->username;
     ppi->hash = args->hash;
+    if (saved_index_filename[0] != '\0')
+      ppi->index_filename = strdup(saved_index_filename);
     ppi->num_precomputed_end_indices = output_index;
 
     ppi->precomputed_end_indices = calloc(ppi->num_precomputed_end_indices, sizeof(gpu_ulong));
@@ -3121,6 +3142,8 @@ void streaming_lookup(char *rt_dir, const rt_parameters *filter,
     if (ppi == NULL) { fprintf(stderr, "Error allocating ppi.\n"); exit(-1); }
     ppi->username = uncracked_usernames[i];
     ppi->hash = uncracked_hashes[i];
+    if (cache_fn[0] != '\0')
+      ppi->index_filename = strdup(cache_fn);
     ppi->num_precomputed_end_indices = count;
     ppi->precomputed_end_indices = calloc(count, sizeof(gpu_ulong));
     if (ppi->precomputed_end_indices == NULL) {
@@ -3802,6 +3825,30 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
 
   FCLOSE(jtr_file);
   FCLOSE(hashcat_file);
+
+  /* Delete the precompute disk-cache entry backing this hash, if any.  A hash
+   * can be cracked without ever having a cache entry on disk, so a NULL or
+   * empty index_filename is not an error -- just skip the unlinks. */
+  if (ppi->index_filename != NULL && ppi->index_filename[0] != '\0') {
+    char data_filename[128] = {0};
+    char *dot_pos = NULL;
+
+    strncpy(data_filename, ppi->index_filename, sizeof(data_filename) - 1);
+    dot_pos = strrchr(data_filename, '.');
+
+    /* Delete the .index file containing information about the precomputed
+     * indices.  Since this hash was cracked, this is no longer needed. */
+    if (unlink(ppi->index_filename) != 0)
+      fprintf(stderr, "Error while deleting precompute index file: %s: %s\n", ppi->index_filename, strerror(errno));
+
+    /* Truncate the ".index" off the end of the filename; this forms the
+     * precomputation data filename. */
+    if (dot_pos != NULL) {
+      *dot_pos = '\0';
+      if (unlink(data_filename) != 0)
+        fprintf(stderr, "Error while deleting precompute file: %s: %s\n", data_filename, strerror(errno));
+    }
+  }
 
   num_cracked++;
   num_falsealarms--;
