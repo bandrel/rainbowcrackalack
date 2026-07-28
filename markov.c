@@ -15,7 +15,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#define _GNU_SOURCE
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,45 +24,34 @@
 #include "markov.h"
 
 /* -------------------------------------------------------------------------
- * qsort_r comparator helpers
+ * sort_by_freq_desc
  *
- * macOS:  qsort_r(base, nel, width, thunk, compar(thunk, a, b))
- * Linux:  qsort_r(base, nmemb, size, compar(a, b, arg), arg)
+ * Sorts `indices` (length n, each a valid index into `freq`) descending by
+ * freq[indices[i]], breaking ties by ascending index. Insertion sort is
+ * used deliberately: n is always <= 255 here, and this avoids depending on
+ * any platform's reentrant qsort variant (qsort_r's signature differs
+ * between BSD/macOS and glibc, and mingw-w64 provides neither).
  * ------------------------------------------------------------------------- */
 
-typedef struct {
-  const uint64_t *freq;
-} sort_ctx;
-
-#ifdef __APPLE__
-
-static int cmp_by_freq_desc_apple(void *thunk, const void *a, const void *b)
+static void sort_by_freq_desc(uint8_t *indices, unsigned int n, const uint64_t *freq)
 {
-  const sort_ctx *ctx = (const sort_ctx *)thunk;
-  uint8_t ia = *(const uint8_t *)a;
-  uint8_t ib = *(const uint8_t *)b;
-  if (ctx->freq[ib] > ctx->freq[ia])
-    return 1;
-  if (ctx->freq[ib] < ctx->freq[ia])
-    return -1;
-  return (int)ia - (int)ib;   /* stable tie-break by index */
+  for (unsigned int i = 1; i < n; i++) {
+    uint8_t key = indices[i];
+    uint64_t key_freq = freq[key];
+    unsigned int j = i;
+    while (j > 0) {
+      uint8_t prev = indices[j - 1];
+      uint64_t prev_freq = freq[prev];
+      /* Move prev right if it belongs after key: lower freq, or equal freq
+       * with a higher index (so ties end up ascending by index). */
+      if (prev_freq < key_freq || (prev_freq == key_freq && prev > key))
+        indices[j--] = prev;
+      else
+        break;
+    }
+    indices[j] = key;
+  }
 }
-
-#else /* Linux */
-
-static int cmp_by_freq_desc_linux(const void *a, const void *b, void *arg)
-{
-  const sort_ctx *ctx = (const sort_ctx *)arg;
-  uint8_t ia = *(const uint8_t *)a;
-  uint8_t ib = *(const uint8_t *)b;
-  if (ctx->freq[ib] > ctx->freq[ia])
-    return 1;
-  if (ctx->freq[ib] < ctx->freq[ia])
-    return -1;
-  return (int)ia - (int)ib;
-}
-
-#endif /* __APPLE__ */
 
 /* -------------------------------------------------------------------------
  * markov_build_sorted
@@ -83,35 +71,16 @@ void markov_build_sorted(markov_model *model)
   for (size_t i = 0; i < total_bigram; i++)
     model->sorted_bigram[i] = (uint8_t)(i % n);
 
-#ifdef __APPLE__
   /* Sort sorted_pos0 by pos0_freq descending */
-  sort_ctx ctx0 = { model->pos0_freq };
-  qsort_r(model->sorted_pos0, n, sizeof(uint8_t), &ctx0,
-          cmp_by_freq_desc_apple);
+  sort_by_freq_desc(model->sorted_pos0, n, model->pos0_freq);
 
   /* For each position and previous character, sort the bigram row */
   for (unsigned int pos = 0; pos < max_pos; pos++) {
     for (unsigned int p = 0; p < n; p++) {
       size_t offset = (size_t)pos * n * n + (size_t)p * n;
-      sort_ctx ctxb = { model->bigram_freq + offset };
-      qsort_r(model->sorted_bigram + offset, n, sizeof(uint8_t),
-              &ctxb, cmp_by_freq_desc_apple);
+      sort_by_freq_desc(model->sorted_bigram + offset, n, model->bigram_freq + offset);
     }
   }
-#else
-  sort_ctx ctx0 = { model->pos0_freq };
-  qsort_r(model->sorted_pos0, n, sizeof(uint8_t),
-          cmp_by_freq_desc_linux, &ctx0);
-
-  for (unsigned int pos = 0; pos < max_pos; pos++) {
-    for (unsigned int p = 0; p < n; p++) {
-      size_t offset = (size_t)pos * n * n + (size_t)p * n;
-      sort_ctx ctxb = { model->bigram_freq + offset };
-      qsort_r(model->sorted_bigram + offset, n, sizeof(uint8_t),
-              cmp_by_freq_desc_linux, &ctxb);
-    }
-  }
-#endif
 }
 
 /* -------------------------------------------------------------------------
