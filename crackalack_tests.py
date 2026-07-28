@@ -683,6 +683,118 @@ def do_fast_path_equivalence_tests(temp_dir):
 INCLUDE_NTLM9_FAST_PATH_TEST = False
 
 
+# Batched vs. per-hash precompute equivalence test.
+#
+# Commit 6d6aca7 fixed batch_precompute_all_hashes() writing its on-disk
+# rcracki.precalc.N cache file reversed and one entry too long relative to
+# the canonical per-hash precompute_hash() path.  Nothing else in this suite
+# exercises the batch path (num_hashes >= 2) against the per-hash path
+# directly at a nonzero table_index -- do_lookup_test_3 catches a regression
+# only via a hardcoded oracle sha256, which would need hand-updating if the
+# cache format ever legitimately changes.  This test instead runs the same
+# hash both ways (once alone -> per-hash path, once as the first of four ->
+# batch path) against the same table and asserts the two resulting cache
+# files agree byte-for-byte.  Oracle-free: no expected hash is hardcoded.
+#
+# table_index 32 (not 0) is used deliberately -- table_index 0 was always
+# correct even in the broken code (reduction_offset there degenerates such
+# that the reversal/length bugs happened not to matter), so it would pass
+# vacuously against the pre-fix code.
+BATCH_PRECOMPUTE_TABLE = 'ntlm_ascii-32-95#8-8_32_100x1024_0.rt'
+BATCH_PRECOMPUTE_HASHES = [
+    'cbd0ab7936e84a60cf94ce55ab9c1448',
+    '2627ce94b7adcc0b5be394ec6e2293dc',
+    '76f1948b006c026b606886b39653f812',
+    '4ecc2ad7428a2c641500a58bfd02009f',
+]
+
+
+# Given a temp_dir containing rcracki.precalc.N[.index] cache files, finds the
+# entry whose .index sidecar's cache key ends in ":<password_hash>\n" (see
+# build_precompute_index_data() in crackalack_lookup.c) and returns the
+# (precalc_file_path, index_file_path) pair.  Returns (None, None) if no match
+# is found -- the batch path writes one cache entry per hash, so which index N
+# lands on our target hash is not guaranteed to be 0.
+def find_precalc_entry_for_hash(temp_dir, password_hash):
+    needle = (':%s\n' % password_hash).encode('utf-8')
+    for index_path in glob.glob(os.path.join(temp_dir, 'rcracki.precalc.*.index')):
+        with open(index_path, 'rb') as f:
+            content = f.read()
+        if content.endswith(needle):
+            data_path = index_path[:-len('.index')]
+            return data_path, index_path
+    return None, None
+
+
+def do_batch_precompute_equivalence_test(temp_dir):
+    target_hash = BATCH_PRECOMPUTE_HASHES[0]
+
+    # --- Run 1: single hash -> must take the per-hash precompute path ---
+    pot_filepath, rt_dir = begin_lookup_test(temp_dir)
+    fake_table = create_rt_table(rt_dir, BATCH_PRECOMPUTE_TABLE, 1024)
+    output_single = run_lookup(rt_dir, target_hash)
+    os.unlink(fake_table)
+
+    if 'Batched precompute (' in output_single:
+        print("FAILED: single-hash run unexpectedly engaged the batch precompute path -- test would be vacuous")
+        return False
+
+    precalc_path_single = os.path.join(temp_dir, 'rcracki.precalc.0')
+    index_path_single = os.path.join(temp_dir, 'rcracki.precalc.0.index')
+    precalc_hash_single = get_hash(precalc_path_single)
+    index_hash_single = get_hash(index_path_single)
+
+    if precalc_hash_single is None or index_hash_single is None:
+        print("FAILED: precalc file(s) missing after single-hash (per-hash path) run")
+        return False
+
+    os.unlink(precalc_path_single)
+    os.unlink(index_path_single)
+
+    # --- Run 2: four hashes, target_hash first -> must take the batch path ---
+    pot_filepath, rt_dir = begin_lookup_test(temp_dir)
+    fake_table = create_rt_table(rt_dir, BATCH_PRECOMPUTE_TABLE, 1024)
+    hashes_file = os.path.join(temp_dir, 'batch_precompute_hashes.txt')
+    with open(hashes_file, 'w') as f:
+        f.write('\n'.join(BATCH_PRECOMPUTE_HASHES))
+    output_batch = run_lookup(rt_dir, hashes_file)
+    os.unlink(fake_table)
+    os.unlink(hashes_file)
+
+    if 'Batched precompute (' not in output_batch:
+        print("FAILED: four-hash run did not engage the batch precompute path -- test would be vacuous")
+        return False
+
+    # The four cache entries aren't guaranteed to land at index 0-3 in hash
+    # order, so locate the one whose .index sidecar names target_hash.
+    precalc_path_batch, index_path_batch = find_precalc_entry_for_hash(temp_dir, target_hash)
+    if precalc_path_batch is None:
+        print("FAILED: could not find a precalc cache entry for hash %s after batch run" % target_hash)
+        return False
+
+    precalc_hash_batch = get_hash(precalc_path_batch)
+    index_hash_batch = get_hash(index_path_batch)
+
+    # Clean up all four batch cache entries so this test doesn't leak files
+    # into later sections.
+    for f in glob.glob(os.path.join(temp_dir, 'rcracki.precalc.*')):
+        os.unlink(f)
+
+    if precalc_hash_batch is None or index_hash_batch is None:
+        print("FAILED: precalc file(s) missing for target hash after batch run")
+        return False
+
+    if precalc_hash_single != precalc_hash_batch:
+        print("FAILED: rcracki.precalc.N differs between per-hash and batch precompute paths!\n\tPer-hash: %s\n\tBatch:    %s" % (precalc_hash_single, precalc_hash_batch))
+        return False
+
+    if index_hash_single != index_hash_batch:
+        print("FAILED: rcracki.precalc.N.index differs between per-hash and batch precompute paths!\n\tPer-hash: %s\n\tBatch:    %s" % (index_hash_single, index_hash_batch))
+        return False
+
+    return True
+
+
 def begin_lookup_test(path):
 
     # Delete the pot file if it exists.
@@ -768,6 +880,16 @@ if __name__ == '__main__':
         print("\n\nPerforming fast-path/generic-kernel equivalence tests...")
         fast_path_passed = do_fast_path_equivalence_tests(temp_dir)
         all_passed = all_passed and fast_path_passed
+
+        print("\n\nPerforming batch/per-hash precompute equivalence test...")
+        print('Batch precompute vs. per-hash equivalence (%s)... ' % BATCH_PRECOMPUTE_TABLE, end='', flush=True)
+        if do_batch_precompute_equivalence_test(temp_dir):
+            print("%spassed.%s" % (GREEN, CLR))
+            batch_precompute_passed = True
+        else:
+            print("%sFAILED%s" % (RED, CLR))
+            batch_precompute_passed = False
+        all_passed = all_passed and batch_precompute_passed
 
     if (tests_to_run == 'all') or (tests_to_run == 'verify'):
         print("\n\nPerforming verify tests...")
