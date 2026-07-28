@@ -11,9 +11,9 @@ kernel void precompute_ntlm10(
     device char *unused3 [[buffer(3)]],
     device unsigned int *unused4 [[buffer(4)]],
     device unsigned int *unused5 [[buffer(5)]],
-    device unsigned int *g_chain_len [[buffer(6)]],
+    device unsigned int *unused6 [[buffer(6)]],
     device unsigned int *g_table_index [[buffer(7)]],
-    device ulong *unused8 [[buffer(8)]],
+    device ulong *g_chain_len [[buffer(8)]],
     device unsigned int *g_device_num [[buffer(9)]],
     device unsigned int *g_total_devices [[buffer(10)]],
     device unsigned int *g_exec_block_scaler [[buffer(11)]],
@@ -22,7 +22,9 @@ kernel void precompute_ntlm10(
     device ulong *unused10 [[buffer(14)]],
     uint gid [[thread_position_in_grid]]) {
 
-  unsigned int chain_len = *g_chain_len;
+  /* Honor the host's chain_len (arg 8) instead of arg 6, which the host
+   * actually binds to plaintext_len_max. */
+  ulong chain_len = *g_chain_len;
   long target_chain_len = (chain_len - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
 
   if (target_chain_len < 1) {
