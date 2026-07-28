@@ -479,6 +479,7 @@ $(OUTDIR)/$(ENUMERATE): \
 	$(OBJDIR)/cpu_rt_functions.o \
 	$(OBJDIR)/enumerate_chain.o \
 	$(OBJDIR)/markov.o \
+	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/test_shared.o
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
