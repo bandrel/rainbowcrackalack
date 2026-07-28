@@ -1,3 +1,5 @@
+#include "shared.h"
+
 constant char charset[] = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
 
 
@@ -167,12 +169,12 @@ inline ulong hash_ntlm8(thread unsigned char *plaintext) {
 }
 
 
-inline ulong hash_to_index_ntlm8(ulong hash, unsigned int pos) {
-  return (hash + pos) % 6634204312890625UL;
+inline ulong hash_to_index_ntlm8(ulong hash, unsigned int reduction_offset, unsigned int pos) {
+  return (hash + reduction_offset + pos) % 6634204312890625UL;
 }
 
 
-inline ulong hash_char_to_index_ntlm8(device unsigned char *hash_value, unsigned int pos) {
+inline ulong hash_char_to_index_ntlm8(device unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   ulong ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -189,5 +191,5 @@ inline ulong hash_char_to_index_ntlm8(device unsigned char *hash_value, unsigned
   ret <<= 8;
   ret |= hash_value[0];
 
-  return (ret + pos) % 6634204312890625UL;
+  return (ret + reduction_offset + pos) % 6634204312890625UL;
 }
