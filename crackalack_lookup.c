@@ -1574,6 +1574,7 @@ void *host_thread_precompute(void *ptr) {
   size_t gws = 0;
   gpu_ulong *output = NULL, *output_block = NULL;
   unsigned int output_len = 0, output_block_len = 0, num_exec_blocks = 0, exec_block = 0, output_index = 0, output_block_index = 0;
+  size_t output_block_alloc = 0;
   /*unsigned int i = 0;*/
 
   unsigned char hash_binary[32] = {0};
@@ -1732,9 +1733,25 @@ void *host_thread_precompute(void *ptr) {
   /* This will hold the results from this one GPU. */
   output = calloc(output_len, sizeof(gpu_ulong));
 
-  /* Holds the results from one kernel exec. */
+  /* Holds the results from one kernel exec.
+   *
+   * Every precompute kernel stores to g_output at its raw global id -- and
+   * the out-of-range early-return path stores a 0 there BEFORE bailing:
+   *
+   *     if (target_chain_len < 1) { g_output[gid] = 0; return; }
+   *
+   * On OpenCL/Metal the dispatch is exactly `gws` work items, so gid < gws
+   * always.  The CUDA backend rounds the grid up to a whole multiple of its
+   * block size, so up to GPU_LAUNCH_GRANULARITY - 1 extra threads run with
+   * gid >= gws and that store lands past the end of the device buffer,
+   * silently zeroing whatever was allocated next in VRAM (in practice the
+   * plaintext_space_up_to_index / plaintext_space_total buffers created just
+   * below, which then makes hash_to_index() a modulo-by-zero).  Size the
+   * buffer to the padded launch so those stores stay in bounds; only the
+   * first output_block_len entries are ever consumed. */
   output_block_len = gws;
-  output_block = calloc(output_block_len, sizeof(gpu_ulong));
+  output_block_alloc = GPU_GWS_PAD(output_block_len);
+  output_block = calloc(output_block_alloc, sizeof(gpu_ulong));
 
   if ((output == NULL) || (output_block == NULL)) {
     fprintf(stderr, "Error while allocating output buffer(s).\n");
@@ -1772,7 +1789,7 @@ void *host_thread_precompute(void *ptr) {
 
   /* Coexist with other GPU processes: wait for enough VRAM for the precompute
    * output buffer before allocating it. */
-  gpu_wait_for_free_vram(gpu->device, (uint64_t)output_block_len * sizeof(gpu_ulong));
+  gpu_wait_for_free_vram(gpu->device, (uint64_t)output_block_alloc * sizeof(gpu_ulong));
 
   CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(1, hash_buffer, CL_RO, hash_binary, hash_binary_len);
@@ -1785,7 +1802,7 @@ void *host_thread_precompute(void *ptr) {
   CLCREATEARG(8, chain_len_buffer, CL_RO, chain_len_ulong, sizeof(gpu_ulong));
   CLCREATEARG(9, device_num_buffer, CL_RO, gpu->device_number, sizeof(gpu_uint));
   CLCREATEARG(10, total_devices_buffer, CL_RO, args->total_devices, sizeof(gpu_uint));
-  CLCREATEARG_ARRAY(12, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
+  CLCREATEARG_ARRAY(12, output_block_buffer, CL_WO, output_block, output_block_alloc * sizeof(gpu_ulong));
 
   {
     uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
@@ -1847,7 +1864,7 @@ void *host_thread_precompute(void *ptr) {
     CLWAIT(gpu->queue);
 
     /* Read the results. */
-    CLREADBUFFER(output_block_buffer, output_block_len * sizeof(gpu_ulong), output_block);
+    CLREADBUFFER(output_block_buffer, output_block_alloc * sizeof(gpu_ulong), output_block);
 
     /* Append this block out output to the total output for this GPU. */
     output_block_index = 0;

@@ -682,8 +682,13 @@ int gpu_enqueue_kernel(gpu_queue q, gpu_kernel k, unsigned int dim, size_t *gws)
    * cuOccupancyMaxPotentialBlockSize-based auto-tuning and a global 128
    * were both tried and produced 4x and 1.4x slower precompute respectively.
    * Per-kernel tuning is left for future work; future kernels with high
-   * register pressure may want a different fixed block size. */
-  unsigned int block_size = 256;
+   * register pressure may want a different fixed block size.
+   *
+   * NOTE: this is GPU_LAUNCH_GRANULARITY (gpu_backend.h).  Changing it here
+   * changes how far past `gws` the launch overshoots, and host buffers
+   * indexed by the raw global id are padded with GPU_GWS_PAD() to match --
+   * so the two must stay tied together. */
+  unsigned int block_size = GPU_LAUNCH_GRANULARITY;
   unsigned int grid_size = (unsigned int)((gws[0] + block_size - 1) / block_size);
   if (grid_size == 0) grid_size = 1;
 

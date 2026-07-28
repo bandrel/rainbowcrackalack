@@ -334,6 +334,7 @@ void *host_thread(void *ptr) {
   int using_fast_path_kernel = 0;
   size_t gws = 0, kernel_work_group_size = 0, kernel_preferred_work_group_size_multiple = 0;
   uint64_t *start_indices = NULL, *end_indices = NULL;
+  size_t indices_alloc = 0;
   unsigned int i = 0, indices_size = 0, thread_complete = 0, num_passes = 0, pass = 0, chain_len = 0, charset_len = 0;
   /*time_t thread_start_time = 0;
   double elapsed = 0;*/
@@ -562,8 +563,18 @@ void *host_thread(void *ptr) {
 #endif
 
   indices_size = gws;
-  start_indices = calloc(indices_size, sizeof(gpu_ulong));
-  end_indices = calloc(indices_size, sizeof(gpu_ulong));
+  /* The generation kernels store to g_indices at their raw global id with no
+   * range check.  OpenCL/Metal dispatch exactly `gws` work items, but the CUDA
+   * backend rounds the grid up to a whole multiple of its block size, so up to
+   * GPU_LAUNCH_GRANULARITY - 1 extra threads run with gid >= gws and write past
+   * the end of the buffer, corrupting whatever VRAM follows it.  Over-allocate
+   * the host and device index buffers to the padded launch size so those stores
+   * land in slack; indices_size (the number of chains actually generated and
+   * written per pass) is deliberately left at gws so tables stay byte-identical
+   * across backends. */
+  indices_alloc = GPU_GWS_PAD(indices_size);
+  start_indices = calloc(indices_alloc, sizeof(gpu_ulong));
+  end_indices = calloc(indices_alloc, sizeof(gpu_ulong));
   if ((start_indices == NULL) || (end_indices == NULL)) {
     fprintf(stderr, "Failed to create start/end index buffers.\n");
     exit(-1);
@@ -708,7 +719,7 @@ void *host_thread(void *ptr) {
       CLCREATEARG(4, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
       CLCREATEARG(5, reduction_offset_buffer, CL_RO, args->reduction_offset, sizeof(gpu_uint));
       CLCREATEARG(6, chain_len_buffer, CL_RO, args->chain_len, sizeof(gpu_uint));
-      CLCREATEARG_ARRAY(7, indices_buffer, CL_RW, start_indices, indices_size * sizeof(gpu_ulong));
+      CLCREATEARG_ARRAY(7, indices_buffer, CL_RW, start_indices, indices_alloc * sizeof(gpu_ulong));
       CLCREATEARG(8, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(9, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
       CLCREATEARG(10, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
@@ -743,7 +754,7 @@ void *host_thread(void *ptr) {
         CLCREATEARG_ARRAY(14, challenge_buffer, CL_RO, args->challenge, NETNTLMV1_CHALLENGE_LEN);
       }
     } else {
-      CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
+      CLWRITEBUFFER(indices_buffer, indices_alloc * sizeof(gpu_ulong), start_indices);
     }
 
     /* Auto-calibrate the max chain steps per kernel dispatch on first iteration.
@@ -787,7 +798,7 @@ void *host_thread(void *ptr) {
       fflush(stdout);
 
       /* Re-upload the original start indices since the probe consumed them. */
-      CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
+      CLWRITEBUFFER(indices_buffer, indices_alloc * sizeof(gpu_ulong), start_indices);
       calibration_done = 1;
     }
 
@@ -828,7 +839,7 @@ void *host_thread(void *ptr) {
     }
 
     /* Get the kernel output. */
-    CLREADBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), end_indices);
+    CLREADBUFFER(indices_buffer, indices_alloc * sizeof(gpu_ulong), end_indices);
 
     /* If we are in benchmark mode, don't loop again, nor write to the output file. */
     if (args->benchmark_mode)
