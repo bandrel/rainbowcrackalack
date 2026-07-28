@@ -259,8 +259,11 @@ def get_real_path(path):
 
 
 # Run the lookup program with the specified rainbow table directory and password hash
-# (or file path to password hashes).
-def run_lookup(rt_dir, password_hash, pot_filepath=None):
+# (or file path to password hashes).  extra_env, if given, is a dict merged on top of
+# the current environment for this subprocess only (e.g. to set RCRT_DISABLE_FAST_PATH).
+# Returns the combined stdout+stderr text of the run so callers can inspect which
+# kernel path was engaged.
+def run_lookup(rt_dir, password_hash, pot_filepath=None, extra_env=None):
 
     # If the password hash is actually a file on disk, translate it to the real path (on Cygwin).
     if os.path.exists(password_hash):
@@ -271,16 +274,22 @@ def run_lookup(rt_dir, password_hash, pot_filepath=None):
     if pot_filepath is not None:
         args.append(get_real_path(pot_filepath))
 
-    # If verbose mode is on, print the output to stdout and stderr.
-    so = stdout=subprocess.DEVNULL
-    se = stderr=subprocess.DEVNULL
-    if VERBOSE:
-        so = None
-        se = None
+    env = None
+    if extra_env is not None:
+        env = os.environ.copy()
+        env.update(extra_env)
 
-    proc = subprocess.run(args, stdout=so, stderr=se)
+    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    output = proc.stdout.decode('utf-8', errors='replace')
+
+    # If verbose mode is on, print the captured output.
+    if VERBOSE:
+        print(output, end='')
+
     if proc.returncode != 0:
         print("Lookup failed with exit code: %d." % proc.returncode)
+
+    return output
 
 
 # Do the lookup tests.
@@ -558,6 +567,122 @@ def do_verify_tests(temp_dir):
     return all_passed
 
 
+# Fast-path vs. generic-kernel equivalence tests.
+#
+# For each row, a fake rainbow table is created with parameters that the named
+# selector (is_ntlm8/is_ntlm10/is_md5_8/is_md5_9/is_ntlm9 in misc.c) accepts.
+# crackalack_lookup is run twice against the identical table parameters -- once
+# normally (fast path engaged) and once with RCRT_DISABLE_FAST_PATH=1 (forced
+# through the generic kernel) -- and the resulting rcracki.precalc.0 (and its
+# .index sidecar) are compared byte-for-byte.  Precompute output depends only on
+# the table's *parameters* (parsed from its filename), not its chain data, so
+# using a freshly-randomized fake table for each run is fine and does not
+# reintroduce an oracle: no expected hash is hardcoded anywhere in this test.
+#
+# Deliberately chosen NOT to reuse the historical-default parameters (table_index
+# 0, default chain_len) since those are the one case that was always correct and
+# would pass even against the old broken kernels.
+#
+# 'note' is the exact substring crackalack_lookup prints to stdout/stderr when it
+# selects that optimized kernel (e.g. "optimized NTLM8 kernel").  We assert this
+# substring IS present in the normal run's output and IS NOT present in the
+# disabled run's output, so a test where both runs silently take the same path
+# (and would pass vacuously) is caught instead of asserting nothing.
+FAST_PATH_CASES = [
+    {'name': 'ntlm8',  'table': 'ntlm_ascii-32-95#8-8_16_100x1024_0.rt',    'note': 'optimized NTLM8 kernel'},
+    {'name': 'ntlm10', 'table': 'ntlm_ascii-32-95#10-10_128_100x1024_0.rt', 'note': 'optimized NTLM10 kernel'},
+    {'name': 'md5_8',  'table': 'md5_ascii-32-95#8-8_32_100x1024_0.rt',     'note': 'optimized MD5_8 kernel'},
+    {'name': 'md5_9',  'table': 'md5_ascii-32-95#9-9_64_100x1024_0.rt',     'note': 'optimized MD5_9 kernel'},
+]
+
+# NTLM9's selector (is_ntlm9) additionally requires chain_len == 803000, so it is
+# the only case that needs its own list -- see the runtime discussion in the
+# task report before enabling this in the main suite.
+FAST_PATH_CASE_NTLM9 = {'name': 'ntlm9', 'table': 'ntlm_ascii-32-95#9-9_777_803000x1024_0.rt', 'note': 'optimized NTLM9 kernel'}
+
+FAST_PATH_PASSWORD_HASH = '49e5bfaab1be72a6c5236f15736a3e15'
+
+
+# Runs a single fast-path-vs-generic-kernel equivalence case.  Returns True if the
+# two runs (a) each engaged the kernel path they were supposed to, and (b) produced
+# byte-identical rcracki.precalc.0[.index] files.
+def do_fast_path_case(temp_dir, case):
+    table_filename = case['table']
+    note = case['note']
+
+    # --- Run 1: fast path enabled (default; RCRT_DISABLE_FAST_PATH unset) ---
+    pot_filepath, rt_dir = begin_lookup_test(temp_dir)
+    fake_table = create_rt_table(rt_dir, table_filename, 1024)
+    output_fast = run_lookup(rt_dir, FAST_PATH_PASSWORD_HASH)
+    os.unlink(fake_table)
+
+    if note not in output_fast:
+        print("FAILED: fast-path run did not engage the optimized kernel (expected to see %r in output)" % note)
+        return False
+
+    precalc_hash_fast = get_hash(os.path.join(temp_dir, 'rcracki.precalc.0'))
+    index_hash_fast = get_hash(os.path.join(temp_dir, 'rcracki.precalc.0.index'))
+
+    if precalc_hash_fast is None or index_hash_fast is None:
+        print("FAILED: precalc file(s) missing after fast-path run")
+        return False
+
+    # --- Run 2: fast path force-disabled; must fall back to the generic kernel ---
+    pot_filepath, rt_dir = begin_lookup_test(temp_dir)
+    fake_table = create_rt_table(rt_dir, table_filename, 1024)
+    output_generic = run_lookup(rt_dir, FAST_PATH_PASSWORD_HASH, extra_env={'RCRT_DISABLE_FAST_PATH': '1'})
+    os.unlink(fake_table)
+
+    if note in output_generic:
+        print("FAILED: RCRT_DISABLE_FAST_PATH=1 run still engaged the optimized kernel (saw %r in output) -- test would be vacuous" % note)
+        return False
+
+    precalc_hash_generic = get_hash(os.path.join(temp_dir, 'rcracki.precalc.0'))
+    index_hash_generic = get_hash(os.path.join(temp_dir, 'rcracki.precalc.0.index'))
+
+    if precalc_hash_generic is None or index_hash_generic is None:
+        print("FAILED: precalc file(s) missing after generic-kernel run")
+        return False
+
+    if precalc_hash_fast != precalc_hash_generic:
+        print("FAILED: rcracki.precalc.0 differs between optimized and generic kernels!\n\tOptimized: %s\n\tGeneric:   %s" % (precalc_hash_fast, precalc_hash_generic))
+        return False
+
+    if index_hash_fast != index_hash_generic:
+        print("FAILED: rcracki.precalc.0.index differs between optimized and generic kernels!\n\tOptimized: %s\n\tGeneric:   %s" % (index_hash_fast, index_hash_generic))
+        return False
+
+    return True
+
+
+def do_fast_path_equivalence_tests(temp_dir):
+    all_passed = True
+
+    cases = list(FAST_PATH_CASES)
+    if INCLUDE_NTLM9_FAST_PATH_TEST:
+        cases.append(FAST_PATH_CASE_NTLM9)
+
+    for case in cases:
+        print('Fast-path/generic-kernel equivalence: %s (%s)... ' % (case['name'], case['table']), end='', flush=True)
+        if do_fast_path_case(temp_dir, case):
+            print("%spassed.%s" % (GREEN, CLR))
+        else:
+            print("%sFAILED%s" % (RED, CLR))
+            all_passed = False
+
+    return all_passed
+
+
+# NTLM9's optimized selector only ever matches chain_len == 803000, so it is the
+# only row that needs a chain of that length rather than the cheap 100 used by
+# the other rows.  Measured: a single precompute run at chain_len 803000 took
+# ~14.5 minutes on Apple M3 Max/Metal (vs. seconds for the chain_len-100 rows
+# above) -- running it twice (fast + generic) would add ~29 minutes to the
+# suite for one row.  That is unreasonably slow for routine test runs, so this
+# is left disabled by default; see the task report for the measured number.
+INCLUDE_NTLM9_FAST_PATH_TEST = False
+
+
 def begin_lookup_test(path):
 
     # Delete the pot file if it exists.
@@ -639,6 +764,10 @@ if __name__ == '__main__':
         print("\n\nPerforming lookup tests...")
         lookup_passed = do_lookup_tests(temp_dir)
         all_passed = all_passed and lookup_passed
+
+        print("\n\nPerforming fast-path/generic-kernel equivalence tests...")
+        fast_path_passed = do_fast_path_equivalence_tests(temp_dir)
+        all_passed = all_passed and fast_path_passed
 
     if (tests_to_run == 'all') or (tests_to_run == 'verify'):
         print("\n\nPerforming verify tests...")
