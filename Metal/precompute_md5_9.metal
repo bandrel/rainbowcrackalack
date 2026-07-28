@@ -13,7 +13,7 @@ kernel void precompute_md5_9(
     device unsigned int *unused5 [[buffer(5)]],
     device unsigned int *unused6 [[buffer(6)]],
     device unsigned int *g_table_index [[buffer(7)]],
-    device ulong *unused_chain_len [[buffer(8)]],
+    device ulong *g_chain_len [[buffer(8)]],
     device unsigned int *g_device_num [[buffer(9)]],
     device unsigned int *g_total_devices [[buffer(10)]],
     device unsigned int *g_exec_block_scaler [[buffer(11)]],
@@ -22,7 +22,10 @@ kernel void precompute_md5_9(
     device ulong *unused9 [[buffer(14)]],
     uint gid [[thread_position_in_grid]]) {
 
-  long target_chain_len = (803000 - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
+  /* Honor the host's chain_len (arg 8) instead of a hardcoded constant, so
+   * lookups against tables of any chain length crack correctly. */
+  ulong chain_len = *g_chain_len;
+  long target_chain_len = (chain_len - *g_device_num) - ((gid + *g_exec_block_scaler) * *g_total_devices) - 1;
 
   if (target_chain_len < 1) {
     g_output[gid] = 0;
@@ -33,7 +36,7 @@ kernel void precompute_md5_9(
   unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
   ulong index = hash_char_to_index_md5_9(g_hash, reduction_offset, target_chain_len - 1);
 
-  for (unsigned int i = target_chain_len; i < 802999; i++) {
+  for (unsigned int i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_md5_9(index, plaintext);
     index = hash_to_index_md5_9(hash_md5_9(plaintext), reduction_offset, i);
   }
