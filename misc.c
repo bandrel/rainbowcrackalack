@@ -30,6 +30,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -292,17 +293,17 @@ void get_rt_log_filename(char *log_filename, size_t log_filename_size, char *rt_
  * path -- so their output can be compared directly.  Defaults to disabled
  * (fast paths behave exactly as before) and is read from the environment
  * exactly once. */
+static pthread_once_t fast_path_disabled_once = PTHREAD_ONCE_INIT;
+static int fast_path_disabled_flag = 0;
+
+static void fast_path_disabled_init(void) {
+  char *env = getenv("RCRT_DISABLE_FAST_PATH");
+  fast_path_disabled_flag = (env && env[0] && (strcmp(env, "0") != 0));
+}
+
 static int fast_path_disabled(void) {
-  static int checked = 0;
-  static int disabled = 0;
-
-  if (!checked) {
-    char *env = getenv("RCRT_DISABLE_FAST_PATH");
-    disabled = (env && env[0] && (strcmp(env, "0") != 0));
-    checked = 1;
-  }
-
-  return disabled;
+  pthread_once(&fast_path_disabled_once, fast_path_disabled_init);
+  return fast_path_disabled_flag;
 }
 
 
