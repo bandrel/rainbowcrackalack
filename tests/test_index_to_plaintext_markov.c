@@ -99,12 +99,12 @@ static int gpu_test_i2p_markov(gpu_device device, gpu_context context,
     CLMAKETESTVARS();
     int test_passed = 0;
 
-    gpu_buffer charset_buf  = NULL, charset_len_buf = NULL;
-    gpu_buffer plen_buf     = NULL, index_buf       = NULL;
-    gpu_buffer plaintext_buf = NULL, plen_out_buf   = NULL;
-    gpu_buffer debug_buf    = NULL;
-    gpu_buffer sorted_pos0_buf = NULL, sorted_bigram_buf = NULL;
-    gpu_buffer max_positions_buf = NULL;
+    gpu_buffer charset_buf  = GPU_BUFFER_NULL, charset_len_buf = GPU_BUFFER_NULL;
+    gpu_buffer plen_buf     = GPU_BUFFER_NULL, index_buf       = GPU_BUFFER_NULL;
+    gpu_buffer plaintext_buf = GPU_BUFFER_NULL, plen_out_buf   = GPU_BUFFER_NULL;
+    gpu_buffer debug_buf    = GPU_BUFFER_NULL;
+    gpu_buffer sorted_pos0_buf = GPU_BUFFER_NULL, sorted_bigram_buf = GPU_BUFFER_NULL;
+    gpu_buffer max_positions_buf = GPU_BUFFER_NULL;
 
     unsigned char *plaintext = NULL;
     unsigned char *debug_ptr = NULL;

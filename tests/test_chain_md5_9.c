@@ -67,11 +67,11 @@ int cpu_test_chain_md5_9(uint64_t start, uint64_t expected_end) {
 int gpu_test_chain_md5_9(gpu_device device, gpu_context context, gpu_kernel kernel, uint64_t start, uint64_t expected_end) {
   CLMAKETESTVARS();
   int test_passed = 0;
-  gpu_buffer start_buffer = NULL, chain_len_buffer = NULL, pos_start_buffer = NULL;
+  gpu_buffer start_buffer = GPU_BUFFER_NULL, chain_len_buffer = GPU_BUFFER_NULL, pos_start_buffer = GPU_BUFFER_NULL;
   gpu_ulong end = 0;
-  gpu_buffer unused1 = NULL, unused2 = NULL, unused3 = NULL, unused4 = NULL, unused5 = NULL;
-  gpu_buffer unused_reduction_buf = NULL;
-  gpu_buffer unused6 = NULL, unused7 = NULL, unused8_buf = NULL, unused9_buf = NULL, unused10_buf = NULL;
+  gpu_buffer unused1 = GPU_BUFFER_NULL, unused2 = GPU_BUFFER_NULL, unused3 = GPU_BUFFER_NULL, unused4 = GPU_BUFFER_NULL, unused5 = GPU_BUFFER_NULL;
+  gpu_buffer unused_reduction_buf = GPU_BUFFER_NULL;
+  gpu_buffer unused6 = GPU_BUFFER_NULL, unused7 = GPU_BUFFER_NULL, unused8_buf = GPU_BUFFER_NULL, unused9_buf = GPU_BUFFER_NULL, unused10_buf = GPU_BUFFER_NULL;
   gpu_uint unused_int = 0;
   gpu_ulong unused_ulong = 0;
   gpu_ulong unused_ulong_arr[MAX_PLAINTEXT_LEN] = {0};

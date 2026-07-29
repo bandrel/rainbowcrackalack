@@ -91,7 +91,7 @@ int gpu_test_hash(gpu_device device, gpu_context context, gpu_kernel kernel, cha
   unsigned char expected_output[32] = {0};
   unsigned int expected_output_len = 0;
 
-  gpu_buffer alg_buffer = NULL, input_buffer = NULL, input_len_buffer = NULL, output_buffer = NULL, output_len_buffer = NULL, debug_buffer = NULL;
+  gpu_buffer alg_buffer = GPU_BUFFER_NULL, input_buffer = GPU_BUFFER_NULL, input_len_buffer = GPU_BUFFER_NULL, output_buffer = GPU_BUFFER_NULL, output_len_buffer = GPU_BUFFER_NULL, debug_buffer = GPU_BUFFER_NULL;
 
   char *input = NULL;
   unsigned char *output = NULL, *debug_ptr = NULL;

@@ -49,13 +49,13 @@ static int gpu_test_i2p_mask(gpu_device device, gpu_context context,
     CLMAKETESTVARS();
     int test_passed = 0;
 
-    gpu_buffer mask_data_buf    = NULL;
-    gpu_buffer mask_lens_buf    = NULL;
-    gpu_buffer mask_len_buf     = NULL;
-    gpu_buffer index_buf        = NULL;
-    gpu_buffer plaintext_buf    = NULL;
-    gpu_buffer plen_out_buf     = NULL;
-    gpu_buffer debug_buf        = NULL;
+    gpu_buffer mask_data_buf    = GPU_BUFFER_NULL;
+    gpu_buffer mask_lens_buf    = GPU_BUFFER_NULL;
+    gpu_buffer mask_len_buf     = GPU_BUFFER_NULL;
+    gpu_buffer index_buf        = GPU_BUFFER_NULL;
+    gpu_buffer plaintext_buf    = GPU_BUFFER_NULL;
+    gpu_buffer plen_out_buf     = GPU_BUFFER_NULL;
+    gpu_buffer debug_buf        = GPU_BUFFER_NULL;
 
     unsigned char *plaintext = NULL;
     unsigned char *debug_ptr = NULL;

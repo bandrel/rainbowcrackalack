@@ -59,7 +59,7 @@ int cpu_test_h2i_ntlm9(char *hash_hex, uint64_t plaintext_space_total, unsigned 
 int gpu_test_h2i_ntlm9(gpu_device device, gpu_context context, gpu_kernel kernel, char *hash_hex, unsigned int pos, uint64_t expected_index) {
   CLMAKETESTVARS();
   int test_passed = 0;
-  gpu_buffer hash_buffer = NULL, pos_buffer = NULL, index_buffer = NULL;
+  gpu_buffer hash_buffer = GPU_BUFFER_NULL, pos_buffer = GPU_BUFFER_NULL, index_buffer = GPU_BUFFER_NULL;
   gpu_ulong hash_long = 0;
   gpu_ulong index = 0;
   unsigned char hash[MAX_HASH_OUTPUT_LEN] = {0};

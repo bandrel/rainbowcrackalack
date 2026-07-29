@@ -42,8 +42,8 @@ static int gpu_test_md5_hash(gpu_device device, gpu_context context,
     CLMAKETESTVARS();
     int test_passed = 0;
 
-    gpu_buffer alg_buffer = NULL, input_buffer = NULL, input_len_buffer = NULL;
-    gpu_buffer output_buffer = NULL, output_len_buffer = NULL, debug_buffer = NULL;
+    gpu_buffer alg_buffer = GPU_BUFFER_NULL, input_buffer = GPU_BUFFER_NULL, input_len_buffer = GPU_BUFFER_NULL;
+    gpu_buffer output_buffer = GPU_BUFFER_NULL, output_len_buffer = GPU_BUFFER_NULL, debug_buffer = GPU_BUFFER_NULL;
 
     char *gpu_input = NULL;
     unsigned char *output = NULL;

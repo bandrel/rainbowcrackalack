@@ -47,7 +47,7 @@ static int gpu_test_one(gpu_device device, gpu_context context, gpu_kernel kerne
     CLMAKETESTVARS();
     int test_passed = 0;
 
-    gpu_buffer plaintext_buf = NULL, challenge_buf = NULL, output_buf = NULL;
+    gpu_buffer plaintext_buf = GPU_BUFFER_NULL, challenge_buf = GPU_BUFFER_NULL, output_buf = GPU_BUFFER_NULL;
 
     unsigned char gpu_plaintext[8] = {0};
     unsigned char gpu_challenge[8] = {0};

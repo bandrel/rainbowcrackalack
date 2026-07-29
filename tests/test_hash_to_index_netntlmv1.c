@@ -56,11 +56,11 @@ static int gpu_test_netntlmv1_h2i(gpu_device device, gpu_context context,
     CLMAKETESTVARS();
     int test_passed = 0;
 
-    gpu_buffer hash_buffer = NULL, hash_len_buffer = NULL;
-    gpu_buffer charset_len_buffer = NULL;
-    gpu_buffer plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL;
-    gpu_buffer table_index_buffer = NULL, pos_buffer = NULL;
-    gpu_buffer index_buffer = NULL, debug_buffer = NULL;
+    gpu_buffer hash_buffer = GPU_BUFFER_NULL, hash_len_buffer = GPU_BUFFER_NULL;
+    gpu_buffer charset_len_buffer = GPU_BUFFER_NULL;
+    gpu_buffer plaintext_len_min_buffer = GPU_BUFFER_NULL, plaintext_len_max_buffer = GPU_BUFFER_NULL;
+    gpu_buffer table_index_buffer = GPU_BUFFER_NULL, pos_buffer = GPU_BUFFER_NULL;
+    gpu_buffer index_buffer = GPU_BUFFER_NULL, debug_buffer = GPU_BUFFER_NULL;
 
     unsigned char hash_bytes[MAX_HASH_OUTPUT_LEN] = {0};
     unsigned int hash_len = 0;

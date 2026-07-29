@@ -1188,11 +1188,11 @@ void *host_thread_false_alarm(void *ptr) {
   int err = 0;
   char *kernel_path = FALSE_ALARM_KERNEL_PATH, *kernel_name = "false_alarm_check";
 
-  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
-  gpu_buffer challenge_buffer = NULL;
+  gpu_buffer hash_type_buffer = GPU_BUFFER_NULL, charset_buffer = GPU_BUFFER_NULL, charset_len_buffer = GPU_BUFFER_NULL, plaintext_len_min_buffer = GPU_BUFFER_NULL, plaintext_len_max_buffer = GPU_BUFFER_NULL, reduction_offset_buffer = GPU_BUFFER_NULL, plaintext_space_total_buffer = GPU_BUFFER_NULL, plaintext_space_up_to_index_buffer = GPU_BUFFER_NULL, device_num_buffer = GPU_BUFFER_NULL, total_devices_buffer = GPU_BUFFER_NULL, num_start_indices_buffer = GPU_BUFFER_NULL, start_indices_buffer = GPU_BUFFER_NULL, start_index_positions_buffer = GPU_BUFFER_NULL, hash_base_indices_buffer = GPU_BUFFER_NULL, output_block_buffer = GPU_BUFFER_NULL, exec_block_scaler_buffer = GPU_BUFFER_NULL;
+  gpu_buffer sorted_pos0_buffer = GPU_BUFFER_NULL, sorted_bigram_buffer = GPU_BUFFER_NULL, max_positions_buffer = GPU_BUFFER_NULL;
+  gpu_buffer challenge_buffer = GPU_BUFFER_NULL;
   /* Combined mask+Markov buffers (markov_mask false-alarm kernel slots 16-20). */
-  gpu_buffer mm_r_pos0_buffer = NULL, mm_r_bigram_buffer = NULL, mm_sizes_buffer = NULL, mm_mask_len_buffer = NULL, mm_max_sz_buffer = NULL;
+  gpu_buffer mm_r_pos0_buffer = GPU_BUFFER_NULL, mm_r_bigram_buffer = GPU_BUFFER_NULL, mm_sizes_buffer = GPU_BUFFER_NULL, mm_mask_len_buffer = GPU_BUFFER_NULL, mm_max_sz_buffer = GPU_BUFFER_NULL;
   /*gpu_buffer debug_ulong_buffer = NULL;*/
 
   gpu_ulong *start_indices = NULL, *hash_base_indices = NULL, *plaintext_indices = NULL, *output_block = NULL;
@@ -1566,10 +1566,10 @@ void *host_thread_precompute(void *ptr) {
   int err = 0;
   char *kernel_path = PRECOMPUTE_KERNEL_PATH, *kernel_name = "precompute";
 
-  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL/*, debug_buffer = NULL*/;
-  gpu_buffer challenge_buffer = NULL;
+  gpu_buffer hash_type_buffer = GPU_BUFFER_NULL, hash_buffer = GPU_BUFFER_NULL, hash_len_buffer = GPU_BUFFER_NULL, charset_buffer = GPU_BUFFER_NULL, charset_len_buffer = GPU_BUFFER_NULL, plaintext_len_min_buffer = GPU_BUFFER_NULL, plaintext_len_max_buffer = GPU_BUFFER_NULL, table_index_buffer = GPU_BUFFER_NULL, chain_len_buffer = GPU_BUFFER_NULL, device_num_buffer = GPU_BUFFER_NULL, total_devices_buffer = GPU_BUFFER_NULL, exec_block_scaler_buffer = GPU_BUFFER_NULL, output_block_buffer = GPU_BUFFER_NULL, pspace_table_buffer = GPU_BUFFER_NULL, pspace_total_buffer = GPU_BUFFER_NULL, sorted_pos0_buffer = GPU_BUFFER_NULL, sorted_bigram_buffer = GPU_BUFFER_NULL, max_positions_buffer = GPU_BUFFER_NULL/*, debug_buffer = NULL*/;
+  gpu_buffer challenge_buffer = GPU_BUFFER_NULL;
   /* Combined mask+Markov buffers (markov_mask precompute kernel slots 15-19). */
-  gpu_buffer mm_r_pos0_buffer = NULL, mm_r_bigram_buffer = NULL, mm_sizes_buffer = NULL, mm_mask_len_buffer = NULL, mm_max_sz_buffer = NULL;
+  gpu_buffer mm_r_pos0_buffer = GPU_BUFFER_NULL, mm_r_bigram_buffer = GPU_BUFFER_NULL, mm_sizes_buffer = GPU_BUFFER_NULL, mm_mask_len_buffer = GPU_BUFFER_NULL, mm_max_sz_buffer = GPU_BUFFER_NULL;
 
   size_t gws = 0;
   gpu_ulong *output = NULL, *output_block = NULL;
@@ -2191,12 +2191,12 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   gpu_kernel kernel = NULL;
   struct timespec batch_start = {0};
 
-  gpu_buffer hashes_buffer = NULL, num_hashes_buffer = NULL, positions_buffer = NULL;
-  gpu_buffer charset_len_buffer = NULL, chain_len_buffer = NULL;
-  gpu_buffer device_num_buffer = NULL, total_devices_buffer = NULL;
-  gpu_buffer output_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
-  gpu_buffer challenge_buffer = NULL;
+  gpu_buffer hashes_buffer = GPU_BUFFER_NULL, num_hashes_buffer = GPU_BUFFER_NULL, positions_buffer = GPU_BUFFER_NULL;
+  gpu_buffer charset_len_buffer = GPU_BUFFER_NULL, chain_len_buffer = GPU_BUFFER_NULL;
+  gpu_buffer device_num_buffer = GPU_BUFFER_NULL, total_devices_buffer = GPU_BUFFER_NULL;
+  gpu_buffer output_buffer = GPU_BUFFER_NULL;
+  gpu_buffer sorted_pos0_buffer = GPU_BUFFER_NULL, sorted_bigram_buffer = GPU_BUFFER_NULL;
+  gpu_buffer challenge_buffer = GPU_BUFFER_NULL;
 
   unsigned int positions_per_hash = args[0].chain_len;  /* Single device: all positions */
   size_t total_work_items = (size_t)num_hashes * positions_per_hash;
@@ -4160,7 +4160,7 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
 
 int main(int ac, char **av) {
   char *rt_dir = NULL, *single_hash = NULL, *filename = NULL, *file_data = NULL, **usernames = NULL, **hashes = NULL, *pot_file_data = NULL;
-  unsigned int i = 0, j = 0;
+  unsigned int i = 0;
   int file_format = 0;
   FILE *f = NULL;
   struct stat st = {0};

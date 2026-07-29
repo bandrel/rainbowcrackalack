@@ -77,7 +77,7 @@ int gpu_test_index_to_plaintext(gpu_device device, gpu_context context, gpu_kern
   CLMAKETESTVARS();
   int test_passed = 0;
 
-  gpu_buffer charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, index_buffer = NULL, plaintext_buffer = NULL, plaintext_len_buffer = NULL, debug_buffer = NULL;
+  gpu_buffer charset_buffer = GPU_BUFFER_NULL, charset_len_buffer = GPU_BUFFER_NULL, plaintext_len_min_buffer = GPU_BUFFER_NULL, plaintext_len_max_buffer = GPU_BUFFER_NULL, index_buffer = GPU_BUFFER_NULL, plaintext_buffer = GPU_BUFFER_NULL, plaintext_len_buffer = GPU_BUFFER_NULL, debug_buffer = GPU_BUFFER_NULL;
 
   unsigned char *plaintext = NULL;
   unsigned char *debug_ptr = NULL;
