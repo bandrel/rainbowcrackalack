@@ -8,6 +8,9 @@
  * g_output:  flat array of num_hashes * total_positions entries
  *            layout: [hash0_pos0, hash0_pos1, ..., hash1_pos0, ...]
  *
+ * g_table_index: table_index for this batch; reduction_offset is derived
+ *                via TABLE_INDEX_TO_REDUCTION_OFFSET(), matching precompute.cl.
+ *
  * Per-chunk dispatch:
  *   g_chunk_positions: number of positions in this chunk
  *   g_pos_start:       first position index for this chunk
@@ -17,7 +20,7 @@ __kernel void precompute_ntlm8_batch(
     __global unsigned char *g_hashes,
     __global unsigned int *g_num_hashes,
     __global unsigned int *g_chunk_positions,
-    __global unsigned int *g_charset_len,
+    __global unsigned int *g_table_index,
     __global unsigned long *g_chain_len,
     __global unsigned int *g_pos_start,
     __global unsigned int *g_total_positions,
@@ -49,11 +52,12 @@ __kernel void precompute_ntlm8_batch(
 
   __global unsigned char *hash = g_hashes + hash_idx * 16;
   unsigned char plaintext[8];
-  unsigned long index = hash_char_to_index_ntlm8(hash, target_chain_len - 1);
+  unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
+  unsigned long index = hash_char_to_index_ntlm8(hash, reduction_offset, target_chain_len - 1);
 
   for (unsigned long i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_ntlm8(index, charset, plaintext);
-    index = hash_to_index_ntlm8(hash_ntlm8(plaintext), i);
+    index = hash_to_index_ntlm8(hash_ntlm8(plaintext), reduction_offset, i);
   }
 
   g_output[(unsigned long)hash_idx * total_positions + absolute_pos] = index;

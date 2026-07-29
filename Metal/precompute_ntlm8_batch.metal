@@ -9,7 +9,7 @@ kernel void precompute_ntlm8_batch(
     device unsigned char *g_hashes [[buffer(0)]],
     device unsigned int *g_num_hashes [[buffer(1)]],
     device unsigned int *g_chunk_positions [[buffer(2)]],
-    device unsigned int *g_charset_len [[buffer(3)]],
+    device unsigned int *g_table_index [[buffer(3)]],
     device ulong *g_chain_len [[buffer(4)]],
     device unsigned int *g_pos_start [[buffer(5)]],
     device unsigned int *g_total_positions [[buffer(6)]],
@@ -41,11 +41,12 @@ kernel void precompute_ntlm8_batch(
 
   device unsigned char *hash = g_hashes + hash_idx * 16;
   unsigned char plaintext[8];
-  ulong index = hash_char_to_index_ntlm8(hash, target_chain_len - 1);
+  unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
+  ulong index = hash_char_to_index_ntlm8(hash, reduction_offset, target_chain_len - 1);
 
   for (ulong i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_ntlm8(index, charset, plaintext);
-    index = hash_to_index_ntlm8(hash_ntlm8(plaintext), i);
+    index = hash_to_index_ntlm8(hash_ntlm8(plaintext), reduction_offset, i);
   }
 
   g_output[(ulong)hash_idx * total_positions + absolute_pos] = index;

@@ -8,9 +8,9 @@ __kernel void precompute_ntlm10(
     __global char *unused3,
     __global unsigned int *unused4,
     __global unsigned int *unused5,
-    __global unsigned int *g_chain_len,
-    __global unsigned long *unused7,
-    __global unsigned long *unused8,
+    __global unsigned int *unused6,
+    __global unsigned int *g_table_index,
+    __global unsigned long *g_chain_len,
     __global unsigned int *g_device_num,
     __global unsigned int *g_total_devices,
     __global unsigned int *g_exec_block_scaler,
@@ -18,7 +18,9 @@ __kernel void precompute_ntlm10(
     __global unsigned long *unused9,
     __global unsigned long *unused10) {
 
-  unsigned int chain_len = *g_chain_len;
+  /* Honor the host's chain_len (arg 8) instead of arg 6, which the host
+   * actually binds to plaintext_len_max. */
+  unsigned long chain_len = *g_chain_len;
   long target_chain_len = (chain_len - *g_device_num) - ((get_global_id(0) + *g_exec_block_scaler) * *g_total_devices) - 1;
 
   if (target_chain_len < 1) {
@@ -27,11 +29,12 @@ __kernel void precompute_ntlm10(
   }
 
   unsigned char plaintext[10];
-  unsigned long index = hash_char_to_index_ntlm10(g_hash, target_chain_len - 1);
+  unsigned int reduction_offset = TABLE_INDEX_TO_REDUCTION_OFFSET(*g_table_index);
+  unsigned long index = hash_char_to_index_ntlm10(g_hash, reduction_offset, target_chain_len - 1);
 
   for(unsigned int i = target_chain_len; i < chain_len - 1; i++) {
     index_to_plaintext_ntlm10(index, plaintext);
-    index = hash_to_index_ntlm10(hash_ntlm10(plaintext), i);
+    index = hash_to_index_ntlm10(hash_ntlm10(plaintext), reduction_offset, i);
   }
 
   g_output[get_global_id(0)] = index;

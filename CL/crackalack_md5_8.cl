@@ -8,10 +8,10 @@ __kernel void crackalack_md5_8(
     __global unsigned int *unused3,
     __global unsigned int *unused4,
     __global unsigned int *unused5,
-    __global unsigned int *unused6,
-    __global unsigned int *unused_chain_len,
+    __global unsigned int *g_reduction_offset,
+    __global unsigned int *g_chain_len,
     __global unsigned long *g_indices,
-    __global unsigned long *unused8,
+    __global unsigned int *g_pos_start,
     __global unsigned long *unused9,
     __global unsigned int *unused10,
     __global char *unused11,
@@ -19,11 +19,12 @@ __kernel void crackalack_md5_8(
     __global unsigned int *unused13) {
   unsigned long index = g_indices[get_global_id(0)];
   unsigned char plaintext[8];
+  unsigned int reduction_offset = *g_reduction_offset;
 
 
-  for (unsigned int pos = 0; pos < 421999; pos++) {
+  for (unsigned int pos = *g_pos_start; pos < (*g_chain_len - 1); pos++) {
     index_to_plaintext_md5_8(index, charset, plaintext);
-    index = hash_to_index_md5_8(hash_md5_8(plaintext), pos);
+    index = hash_to_index_md5_8(hash_md5_8(plaintext), reduction_offset, pos);
   }
 
   g_indices[get_global_id(0)] = index;

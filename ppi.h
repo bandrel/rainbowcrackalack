@@ -24,6 +24,9 @@ struct _precomputed_and_potential_indices {
   unsigned int                               *potential_start_index_positions; /* Buffer size is always num_potential_start_indices. */
 
   char                                       *plaintext;        /* Set if hash is cracked. */
+  char                                       *index_filename;   /* File path containing the ".index" file, if this
+                                                                  * hash's precompute was served from or written to
+                                                                  * the on-disk precalc cache; NULL otherwise. */
   struct _precomputed_and_potential_indices  *next;
 };
 

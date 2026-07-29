@@ -30,6 +30,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -285,8 +286,32 @@ void get_rt_log_filename(char *log_filename, size_t log_filename_size, char *rt_
 }
 
 
+/* Test/diagnostic hook: if RCRT_DISABLE_FAST_PATH is set to a non-empty value
+ * other than "0", every optimized-kernel selector below returns 0, routing
+ * all work through the generic kernels.  This lets the same binary be run
+ * twice -- once through the optimized path, once forced through the generic
+ * path -- so their output can be compared directly.  Defaults to disabled
+ * (fast paths behave exactly as before) and is read from the environment
+ * exactly once. */
+static pthread_once_t fast_path_disabled_once = PTHREAD_ONCE_INIT;
+static int fast_path_disabled_flag = 0;
+
+static void fast_path_disabled_init(void) {
+  char *env = getenv("RCRT_DISABLE_FAST_PATH");
+  fast_path_disabled_flag = (env && env[0] && (strcmp(env, "0") != 0));
+}
+
+static int fast_path_disabled(void) {
+  pthread_once(&fast_path_disabled_once, fast_path_disabled_init);
+  return fast_path_disabled_flag;
+}
+
+
 /* Returns 1 if the parameters form the standard NTLM 8 set, otherwise 0. */
 unsigned int is_ntlm8(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len) {
+  if (fast_path_disabled())
+    return 0;
+
   if ((hash_type == HASH_NTLM) && \
       (strcmp(charset, CHARSET_ASCII_32_95) == 0) && \
       (plaintext_len_min == 8) && \
@@ -299,11 +324,13 @@ unsigned int is_ntlm8(unsigned int hash_type, char *charset, unsigned int plaint
 
 /* Returns 1 if the parameters form the standard NTLM 9 set, otherwise 0. */
 unsigned int is_ntlm9(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int reduction_offset, unsigned int chain_len) {
+  if (fast_path_disabled())
+    return 0;
+
   if ((hash_type == HASH_NTLM) && \
       (strcmp(charset, CHARSET_ASCII_32_95) == 0) && \
       (plaintext_len_min == 9) && \
       (plaintext_len_max == 9) && \
-      (reduction_offset == 0) && \
       (chain_len == 803000))
     return 1;
   else
@@ -323,6 +350,9 @@ unsigned int is_ntlm9(unsigned int hash_type, char *charset, unsigned int plaint
  *
  * chain_len is kept in the signature so callers need no change. */
 unsigned int is_netntlmv1_7(unsigned int hash_type, char *charset_name, unsigned int plaintext_len_min, unsigned int plaintext_len_max, unsigned int chain_len) {
+  if (fast_path_disabled())
+    return 0;
+
   if ((hash_type == HASH_NETNTLMV1) && \
       (strcmp(charset_name, "byte") == 0) && \
       (plaintext_len_min == 7) && \
@@ -349,6 +379,9 @@ unsigned int is_markov_ntlm9(unsigned int hash_type, char *charset, unsigned int
 
 /* Returns 1 if the parameters form the standard NTLM 10 set, otherwise 0. */
 unsigned int is_ntlm10(unsigned int hash_type, char *charset, unsigned int plaintext_len_min, unsigned int plaintext_len_max) {
+  if (fast_path_disabled())
+    return 0;
+
   return (hash_type == HASH_NTLM)
       && (strcmp(charset, CHARSET_ASCII_32_95) == 0)
       && (plaintext_len_min == 10)
@@ -367,6 +400,9 @@ unsigned int is_markov_ntlm10(unsigned int hash_type, char *charset, unsigned in
 unsigned int is_md5_8(unsigned int hash_type, char *charset,
                        unsigned int plaintext_len_min,
                        unsigned int plaintext_len_max) {
+  if (fast_path_disabled())
+    return 0;
+
   return (hash_type == HASH_MD5)
       && (strcmp(charset, CHARSET_ASCII_32_95) == 0)
       && (plaintext_len_min == 8)
@@ -378,6 +414,9 @@ unsigned int is_md5_8(unsigned int hash_type, char *charset,
 unsigned int is_md5_9(unsigned int hash_type, char *charset,
                        unsigned int plaintext_len_min,
                        unsigned int plaintext_len_max) {
+  if (fast_path_disabled())
+    return 0;
+
   return (hash_type == HASH_MD5)
       && (strcmp(charset, CHARSET_ASCII_32_95) == 0)
       && (plaintext_len_min == 9)

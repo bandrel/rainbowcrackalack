@@ -138,10 +138,12 @@ static int gpu_sort(uint64_t *data, uint64_t num_chains) {
   gpu_queue queue = NULL;
   gpu_program program = NULL;
   gpu_kernel kernel = NULL;
-  gpu_buffer data_buf = NULL, k_buf = NULL, j_buf = NULL;
+  gpu_buffer data_buf = GPU_BUFFER_NULL, k_buf = GPU_BUFFER_NULL, j_buf = GPU_BUFFER_NULL;
   uint64_t *padded_data = NULL;
   uint64_t n_padded = 1;
+  size_t n_alloc = 0;
   unsigned int i = 0;
+  size_t j = 0;
   size_t data_size = 0;
   size_t gws = 0;
   gpu_uint k_val = 0, j_val = 0;
@@ -159,7 +161,17 @@ static int gpu_sort(uint64_t *data, uint64_t num_chains) {
     return -1;  /* table too large to sort on GPU */
   }
 
-  padded_data = malloc((size_t)n_padded * 2 * sizeof(uint64_t));
+  /* The sort kernel stores to data[gid * 2] with only an `if (l <= i) return`
+   * guard, no bound against the launch's gws. OpenCL/Metal dispatch exactly
+   * `gws` (== n_padded) work items, but CUDA rounds the grid up to a whole
+   * multiple of its block size, so up to GPU_LAUNCH_GRANULARITY - 1 extra
+   * threads run with gid >= n_padded and write past the end of the buffer.
+   * Over-allocate the host and device buffers to the padded launch size so
+   * those stores land in slack; gws/n_padded (the count that drives the
+   * bitonic sort's k/j loop bounds) is deliberately left unchanged. */
+  n_alloc = GPU_GWS_PAD((size_t)n_padded);
+
+  padded_data = malloc(n_alloc * 2 * sizeof(uint64_t));
   if (padded_data == NULL)
     return -1;
 
@@ -167,6 +179,10 @@ static int gpu_sort(uint64_t *data, uint64_t num_chains) {
   for (i = num_chains; i < n_padded; i++) {
     padded_data[i * 2]     = 0;
     padded_data[i * 2 + 1] = UINT64_MAX;
+  }
+  for (j = (size_t)n_padded; j < n_alloc; j++) {
+    padded_data[j * 2]     = 0;
+    padded_data[j * 2 + 1] = UINT64_MAX;
   }
 
   context = CLCREATECONTEXT(context_callback, &devices[0]);
@@ -182,7 +198,11 @@ static int gpu_sort(uint64_t *data, uint64_t num_chains) {
   load_kernel(context, 1, &devices[0], SORT_KERNEL_PATH, "bitonic_sort_step",
               &program, &kernel, 0);
 
-  data_size = (size_t)n_padded * 2 * sizeof(uint64_t);
+  /* Device buffer is sized to n_alloc (the padded launch size), not n_padded
+   * (the sort's actual element count), so CUDA's overshoot threads land in
+   * slack. gws below is deliberately left at n_padded -- it is a COUNT that
+   * drives the bitonic sort's k/j loop bounds, not a buffer size. */
+  data_size = n_alloc * 2 * sizeof(uint64_t);
   CLCREATEARG_ARRAY(0, data_buf, GPU_RW, padded_data, data_size);
   k_val = 2;
   j_val = 1;

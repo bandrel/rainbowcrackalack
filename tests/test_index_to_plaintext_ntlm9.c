@@ -41,7 +41,7 @@ struct i2p_ntlm9_test i2p_ntlm9_tests[] = {
 int gpu_test_index_to_plaintext_ntlm9(gpu_device device, gpu_context context, gpu_kernel kernel, gpu_ulong index, char *expected_plaintext) {
   CLMAKETESTVARS();
   int test_passed = 0;
-  gpu_buffer index_buffer = NULL, plaintext_buffer = NULL;
+  gpu_buffer index_buffer = GPU_BUFFER_NULL, plaintext_buffer = GPU_BUFFER_NULL;
   unsigned char *plaintext = NULL;
 
 

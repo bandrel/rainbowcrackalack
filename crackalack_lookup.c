@@ -245,7 +245,7 @@ void rt_binary_search(gpu_ulong *rainbow_table, uint64_t num_chains, bloom_filte
 void gpu_binary_search_streaming(preloaded_table *pt, precomputed_and_potential_indices *ppi_head, thread_args *args, unsigned int num_devices);
 void gpu_binary_search_release(void);
 gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, char *filename, unsigned int filename_size);
-void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices);
+void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices, char *out_index_filename, unsigned int out_index_filename_size);
 void search_tables(unsigned int total_tables, precomputed_and_potential_indices *ppi, thread_args *args);
 void launch_false_alarm_kernel(fa_batch_t *batch, thread_args *args, false_alarm_state *state);
 void harvest_false_alarm_results(false_alarm_state *state);
@@ -1047,7 +1047,7 @@ void ppi_reset_endpoints(precomputed_and_potential_indices *head) {
     if (head->plaintext == NULL) {
       FREE(head->precomputed_end_indices);
       head->num_precomputed_end_indices = 0;
-
+      FREE(head->index_filename);
     }
     head = head->next;
   }
@@ -1144,6 +1144,7 @@ void free_precomputed_and_potential_indices(precomputed_and_potential_indices **
     FREE(ppi->precomputed_end_indices);
     FREE(ppi->potential_start_indices);
     FREE(ppi->potential_start_index_positions);
+    FREE(ppi->index_filename);
 
     ppi->num_potential_start_indices = 0;
     FREE(ppi->plaintext);
@@ -1187,11 +1188,11 @@ void *host_thread_false_alarm(void *ptr) {
   int err = 0;
   char *kernel_path = FALSE_ALARM_KERNEL_PATH, *kernel_name = "false_alarm_check";
 
-  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, plaintext_space_total_buffer = NULL, plaintext_space_up_to_index_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, num_start_indices_buffer = NULL, start_indices_buffer = NULL, start_index_positions_buffer = NULL, hash_base_indices_buffer = NULL, output_block_buffer = NULL, exec_block_scaler_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
-  gpu_buffer challenge_buffer = NULL;
+  gpu_buffer hash_type_buffer = GPU_BUFFER_NULL, charset_buffer = GPU_BUFFER_NULL, charset_len_buffer = GPU_BUFFER_NULL, plaintext_len_min_buffer = GPU_BUFFER_NULL, plaintext_len_max_buffer = GPU_BUFFER_NULL, reduction_offset_buffer = GPU_BUFFER_NULL, plaintext_space_total_buffer = GPU_BUFFER_NULL, plaintext_space_up_to_index_buffer = GPU_BUFFER_NULL, device_num_buffer = GPU_BUFFER_NULL, total_devices_buffer = GPU_BUFFER_NULL, num_start_indices_buffer = GPU_BUFFER_NULL, start_indices_buffer = GPU_BUFFER_NULL, start_index_positions_buffer = GPU_BUFFER_NULL, hash_base_indices_buffer = GPU_BUFFER_NULL, output_block_buffer = GPU_BUFFER_NULL, exec_block_scaler_buffer = GPU_BUFFER_NULL;
+  gpu_buffer sorted_pos0_buffer = GPU_BUFFER_NULL, sorted_bigram_buffer = GPU_BUFFER_NULL, max_positions_buffer = GPU_BUFFER_NULL;
+  gpu_buffer challenge_buffer = GPU_BUFFER_NULL;
   /* Combined mask+Markov buffers (markov_mask false-alarm kernel slots 16-20). */
-  gpu_buffer mm_r_pos0_buffer = NULL, mm_r_bigram_buffer = NULL, mm_sizes_buffer = NULL, mm_mask_len_buffer = NULL, mm_max_sz_buffer = NULL;
+  gpu_buffer mm_r_pos0_buffer = GPU_BUFFER_NULL, mm_r_bigram_buffer = GPU_BUFFER_NULL, mm_sizes_buffer = GPU_BUFFER_NULL, mm_mask_len_buffer = GPU_BUFFER_NULL, mm_max_sz_buffer = GPU_BUFFER_NULL;
   /*gpu_buffer debug_ulong_buffer = NULL;*/
 
   gpu_ulong *start_indices = NULL, *hash_base_indices = NULL, *plaintext_indices = NULL, *output_block = NULL;
@@ -1565,14 +1566,15 @@ void *host_thread_precompute(void *ptr) {
   int err = 0;
   char *kernel_path = PRECOMPUTE_KERNEL_PATH, *kernel_name = "precompute";
 
-  gpu_buffer hash_type_buffer = NULL, hash_buffer = NULL, hash_len_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, device_num_buffer = NULL, total_devices_buffer = NULL, exec_block_scaler_buffer = NULL, output_block_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL, sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL/*, debug_buffer = NULL*/;
-  gpu_buffer challenge_buffer = NULL;
+  gpu_buffer hash_type_buffer = GPU_BUFFER_NULL, hash_buffer = GPU_BUFFER_NULL, hash_len_buffer = GPU_BUFFER_NULL, charset_buffer = GPU_BUFFER_NULL, charset_len_buffer = GPU_BUFFER_NULL, plaintext_len_min_buffer = GPU_BUFFER_NULL, plaintext_len_max_buffer = GPU_BUFFER_NULL, table_index_buffer = GPU_BUFFER_NULL, chain_len_buffer = GPU_BUFFER_NULL, device_num_buffer = GPU_BUFFER_NULL, total_devices_buffer = GPU_BUFFER_NULL, exec_block_scaler_buffer = GPU_BUFFER_NULL, output_block_buffer = GPU_BUFFER_NULL, pspace_table_buffer = GPU_BUFFER_NULL, pspace_total_buffer = GPU_BUFFER_NULL, sorted_pos0_buffer = GPU_BUFFER_NULL, sorted_bigram_buffer = GPU_BUFFER_NULL, max_positions_buffer = GPU_BUFFER_NULL/*, debug_buffer = NULL*/;
+  gpu_buffer challenge_buffer = GPU_BUFFER_NULL;
   /* Combined mask+Markov buffers (markov_mask precompute kernel slots 15-19). */
-  gpu_buffer mm_r_pos0_buffer = NULL, mm_r_bigram_buffer = NULL, mm_sizes_buffer = NULL, mm_mask_len_buffer = NULL, mm_max_sz_buffer = NULL;
+  gpu_buffer mm_r_pos0_buffer = GPU_BUFFER_NULL, mm_r_bigram_buffer = GPU_BUFFER_NULL, mm_sizes_buffer = GPU_BUFFER_NULL, mm_mask_len_buffer = GPU_BUFFER_NULL, mm_max_sz_buffer = GPU_BUFFER_NULL;
 
   size_t gws = 0;
   gpu_ulong *output = NULL, *output_block = NULL;
   unsigned int output_len = 0, output_block_len = 0, num_exec_blocks = 0, exec_block = 0, output_index = 0, output_block_index = 0;
+  size_t output_block_alloc = 0;
   /*unsigned int i = 0;*/
 
   unsigned char hash_binary[32] = {0};
@@ -1731,9 +1733,25 @@ void *host_thread_precompute(void *ptr) {
   /* This will hold the results from this one GPU. */
   output = calloc(output_len, sizeof(gpu_ulong));
 
-  /* Holds the results from one kernel exec. */
+  /* Holds the results from one kernel exec.
+   *
+   * Every precompute kernel stores to g_output at its raw global id -- and
+   * the out-of-range early-return path stores a 0 there BEFORE bailing:
+   *
+   *     if (target_chain_len < 1) { g_output[gid] = 0; return; }
+   *
+   * On OpenCL/Metal the dispatch is exactly `gws` work items, so gid < gws
+   * always.  The CUDA backend rounds the grid up to a whole multiple of its
+   * block size, so up to GPU_LAUNCH_GRANULARITY - 1 extra threads run with
+   * gid >= gws and that store lands past the end of the device buffer,
+   * silently zeroing whatever was allocated next in VRAM (in practice the
+   * plaintext_space_up_to_index / plaintext_space_total buffers created just
+   * below, which then makes hash_to_index() a modulo-by-zero).  Size the
+   * buffer to the padded launch so those stores stay in bounds; only the
+   * first output_block_len entries are ever consumed. */
   output_block_len = gws;
-  output_block = calloc(output_block_len, sizeof(gpu_ulong));
+  output_block_alloc = GPU_GWS_PAD(output_block_len);
+  output_block = calloc(output_block_alloc, sizeof(gpu_ulong));
 
   if ((output == NULL) || (output_block == NULL)) {
     fprintf(stderr, "Error while allocating output buffer(s).\n");
@@ -1771,7 +1789,7 @@ void *host_thread_precompute(void *ptr) {
 
   /* Coexist with other GPU processes: wait for enough VRAM for the precompute
    * output buffer before allocating it. */
-  gpu_wait_for_free_vram(gpu->device, (uint64_t)output_block_len * sizeof(gpu_ulong));
+  gpu_wait_for_free_vram(gpu->device, (uint64_t)output_block_alloc * sizeof(gpu_ulong));
 
   CLCREATEARG(0, hash_type_buffer, CL_RO, args->hash_type, sizeof(gpu_uint));
   CLCREATEARG_ARRAY(1, hash_buffer, CL_RO, hash_binary, hash_binary_len);
@@ -1784,7 +1802,7 @@ void *host_thread_precompute(void *ptr) {
   CLCREATEARG(8, chain_len_buffer, CL_RO, chain_len_ulong, sizeof(gpu_ulong));
   CLCREATEARG(9, device_num_buffer, CL_RO, gpu->device_number, sizeof(gpu_uint));
   CLCREATEARG(10, total_devices_buffer, CL_RO, args->total_devices, sizeof(gpu_uint));
-  CLCREATEARG_ARRAY(12, output_block_buffer, CL_WO, output_block, output_block_len * sizeof(gpu_ulong));
+  CLCREATEARG_ARRAY(12, output_block_buffer, CL_WO, output_block, output_block_alloc * sizeof(gpu_ulong));
 
   {
     uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
@@ -1846,7 +1864,7 @@ void *host_thread_precompute(void *ptr) {
     CLWAIT(gpu->queue);
 
     /* Read the results. */
-    CLREADBUFFER(output_block_buffer, output_block_len * sizeof(gpu_ulong), output_block);
+    CLREADBUFFER(output_block_buffer, output_block_alloc * sizeof(gpu_ulong), output_block);
 
     /* Append this block out output to the total output for this GPU. */
     output_block_index = 0;
@@ -2068,8 +2086,12 @@ gpu_ulong *search_precompute_cache(char *index_data, unsigned int *num_indices, 
  * file containing the raw index_data bytes (no extra newline beyond what's
  * already in index_data).
  *
- * On-disk format matches blurbdust exactly.  Exits on error. */
-void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices) {
+ * On-disk format matches blurbdust exactly.  Exits on error.
+ *
+ * If out_index_filename is non-NULL, the ".index" filename this call created
+ * is copied into it (so the caller can record it on the ppi node and unlink
+ * it later once the hash is cracked). */
+void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int num_indices, char *out_index_filename, unsigned int out_index_filename_size) {
   char filename[128] = {0};
   FILE *f = NULL;
   unsigned int i = 0;
@@ -2116,6 +2138,11 @@ void save_precompute_cache(char *index_data, gpu_ulong *indices, unsigned int nu
     exit(-1);
   }
   FCLOSE(f);
+
+  if (out_index_filename != NULL) {
+    memset(out_index_filename, 0, out_index_filename_size);
+    strncpy(out_index_filename, filename, out_index_filename_size - 1);
+  }
 }
 
 
@@ -2164,12 +2191,12 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   gpu_kernel kernel = NULL;
   struct timespec batch_start = {0};
 
-  gpu_buffer hashes_buffer = NULL, num_hashes_buffer = NULL, positions_buffer = NULL;
-  gpu_buffer charset_len_buffer = NULL, chain_len_buffer = NULL;
-  gpu_buffer device_num_buffer = NULL, total_devices_buffer = NULL;
-  gpu_buffer output_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL;
-  gpu_buffer challenge_buffer = NULL;
+  gpu_buffer hashes_buffer = GPU_BUFFER_NULL, num_hashes_buffer = GPU_BUFFER_NULL, positions_buffer = GPU_BUFFER_NULL;
+  gpu_buffer charset_len_buffer = GPU_BUFFER_NULL, chain_len_buffer = GPU_BUFFER_NULL;
+  gpu_buffer device_num_buffer = GPU_BUFFER_NULL, total_devices_buffer = GPU_BUFFER_NULL;
+  gpu_buffer output_buffer = GPU_BUFFER_NULL;
+  gpu_buffer sorted_pos0_buffer = GPU_BUFFER_NULL, sorted_bigram_buffer = GPU_BUFFER_NULL;
+  gpu_buffer challenge_buffer = GPU_BUFFER_NULL;
 
   unsigned int positions_per_hash = args[0].chain_len;  /* Single device: all positions */
   size_t total_work_items = (size_t)num_hashes * positions_per_hash;
@@ -2237,8 +2264,10 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   gpu_uint positions_uint = positions_per_hash;
 
   /* Set kernel arguments.  Args 0-2 and 4-7 are shared across all batch
-   * kernels.  Arg 3 differs: charset_len for NTLM, reduction_offset for
-   * NetNTLMv1. */
+   * kernels.  Arg 3 differs by kernel: charset_len for Markov NTLM8,
+   * reduction_offset for NetNTLMv1, table_index for plain (standard) NTLM8 --
+   * the plain NTLM8 batch kernel derives reduction_offset from table_index
+   * itself via TABLE_INDEX_TO_REDUCTION_OFFSET(), matching precompute.cl. */
   CLCREATEARG_ARRAY(0, hashes_buffer, CL_RO, all_hashes_bin, num_hashes * 16);
   CLCREATEARG(1, num_hashes_buffer, CL_RO, num_hashes_uint, sizeof(gpu_uint));
   CLCREATEARG(2, positions_buffer, CL_RO, positions_uint, sizeof(gpu_uint));
@@ -2246,9 +2275,12 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
   if (use_netntlmv1_batch) {
     gpu_uint reduction_offset = args[0].reduction_offset;
     CLCREATEARG(3, charset_len_buffer, CL_RO, reduction_offset, sizeof(gpu_uint));
-  } else {
+  } else if (use_markov_batch) {
     int charset_len = strlen(args[0].charset);
     CLCREATEARG(3, charset_len_buffer, CL_RO, charset_len, sizeof(gpu_uint));
+  } else {
+    gpu_uint table_index = args[0].table_index;
+    CLCREATEARG(3, charset_len_buffer, CL_RO, table_index, sizeof(gpu_uint));
   }
 
   CLCREATEARG(4, chain_len_buffer, CL_RO, chain_len_ulong, sizeof(gpu_ulong));
@@ -2370,12 +2402,34 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
       exit(-1);
     }
 
-    /* Write the unfiltered output to the disk cache before we apply the
-     * non-zero filter below.  blurbdust's on-disk format is the full
-     * chain_len-1 array including zeros, so the cache is interchangeable
-     * with rcracki and with the pre-refactor crackalack_lookup. */
-    if (index_data_array != NULL && index_data_array[h] != NULL)
-      save_precompute_cache(index_data_array[h], hash_output, positions_per_hash);
+    /* Write the disk cache in the same column-ordered, chain_len-1-length
+     * layout the single-hash (non-batch) path's "output" array uses (see
+     * precompute_hash() above), so cache files are byte-identical between
+     * the two precompute paths and interchangeable with rcracki/blurbdust.
+     *
+     * hash_output[p] (p ascending, this batch kernel's absolute_pos) is the
+     * exact same per-position value the single-hash path computes at
+     * results[p] for num_devices==1 -- both are indexed by ascending
+     * absolute chain position.  The single-hash path then descending-fills
+     * its output array (see the "GPU0: 100 94 88 ..." collation above), which
+     * is precisely the reversal hash_output[p] -> array[positions_per_hash-2-p]
+     * that collate_batched_precompute_endpoints() below also performs for the
+     * ppi.  Previously this wrote hash_output straight through with no
+     * reversal and one entry too many (chain_len instead of chain_len-1),
+     * producing a cache file that didn't match the single-hash path's layout
+     * (caught by lookup test #3's precalc-hash-mismatch check). Missing
+     * slots stay 0 (not the ppi's UINT64_MAX sentinel) to match the raw
+     * hash_output zeros the single-hash path also leaves in place. */
+    char saved_index_filename[128] = {0};
+    if (index_data_array != NULL && index_data_array[h] != NULL) {
+      gpu_ulong *cache_array = calloc(positions_per_hash - 1, sizeof(gpu_ulong));
+      if (cache_array == NULL) { fprintf(stderr, "Error allocating batch cache array.\n"); exit(-1); }
+      for (unsigned int cp = 0; cp + 2 <= positions_per_hash; cp++)
+        cache_array[positions_per_hash - 2 - cp] = hash_output[cp];
+      save_precompute_cache(index_data_array[h], cache_array, positions_per_hash - 1,
+                             saved_index_filename, sizeof(saved_index_filename));
+      free(cache_array);
+    }
 
     /* Create ppi node. */
     precomputed_and_potential_indices *ppi = calloc(1, sizeof(precomputed_and_potential_indices));
@@ -2383,6 +2437,8 @@ int batch_precompute_all_hashes(unsigned int num_devices, thread_args *args,
 
     ppi->username = usernames[h];
     ppi->hash = hashes[h];
+    if (saved_index_filename[0] != '\0')
+      ppi->index_filename = strdup(saved_index_filename);
 
     /* Batched-precompute reverse-order fix (all batched hash types: ntlm8 /
      * netntlmv1_7 / markov_ntlm8).
@@ -2547,12 +2603,17 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
   /* Persist to the precompute disk cache so a subsequent run can skip the
    * GPU dispatch entirely.  Matches the blurbdust on-disk format (raw
    * gpu_ulong array, length output_index = chain_len-1). */
+  char saved_index_filename[128] = {0};
   if (index_data != NULL)
-    save_precompute_cache(index_data, output, output_index);
+    save_precompute_cache(index_data, output, output_index,
+                           saved_index_filename, sizeof(saved_index_filename));
 
   if (update_ppi != NULL) {
     /* Update an existing ppi node for a new table configuration. */
     FREE(update_ppi->precomputed_end_indices);
+    FREE(update_ppi->index_filename);
+    if (saved_index_filename[0] != '\0')
+      update_ppi->index_filename = strdup(saved_index_filename);
     update_ppi->num_precomputed_end_indices = output_index;
     update_ppi->precomputed_end_indices = calloc(output_index, sizeof(gpu_ulong));
     if (update_ppi->precomputed_end_indices == NULL) {
@@ -2584,6 +2645,8 @@ void precompute_hash(unsigned int num_devices, thread_args *args, precomputed_an
 
     ppi->username = args->username;
     ppi->hash = args->hash;
+    if (saved_index_filename[0] != '\0')
+      ppi->index_filename = strdup(saved_index_filename);
     ppi->num_precomputed_end_indices = output_index;
 
     ppi->precomputed_end_indices = calloc(ppi->num_precomputed_end_indices, sizeof(gpu_ulong));
@@ -3096,6 +3159,8 @@ void streaming_lookup(char *rt_dir, const rt_parameters *filter,
     if (ppi == NULL) { fprintf(stderr, "Error allocating ppi.\n"); exit(-1); }
     ppi->username = uncracked_usernames[i];
     ppi->hash = uncracked_hashes[i];
+    if (cache_fn[0] != '\0')
+      ppi->index_filename = strdup(cache_fn);
     ppi->num_precomputed_end_indices = count;
     ppi->precomputed_end_indices = calloc(count, sizeof(gpu_ulong));
     if (ppi->precomputed_end_indices == NULL) {
@@ -3778,6 +3843,30 @@ void save_cracked_hash(precomputed_and_potential_indices *ppi, unsigned int hash
   FCLOSE(jtr_file);
   FCLOSE(hashcat_file);
 
+  /* Delete the precompute disk-cache entry backing this hash, if any.  A hash
+   * can be cracked without ever having a cache entry on disk, so a NULL or
+   * empty index_filename is not an error -- just skip the unlinks. */
+  if (ppi->index_filename != NULL && ppi->index_filename[0] != '\0') {
+    char data_filename[128] = {0};
+    char *dot_pos = NULL;
+
+    strncpy(data_filename, ppi->index_filename, sizeof(data_filename) - 1);
+    dot_pos = strrchr(data_filename, '.');
+
+    /* Delete the .index file containing information about the precomputed
+     * indices.  Since this hash was cracked, this is no longer needed. */
+    if (unlink(ppi->index_filename) != 0)
+      fprintf(stderr, "Error while deleting precompute index file: %s: %s\n", ppi->index_filename, strerror(errno));
+
+    /* Truncate the ".index" off the end of the filename; this forms the
+     * precomputation data filename. */
+    if (dot_pos != NULL) {
+      *dot_pos = '\0';
+      if (unlink(data_filename) != 0)
+        fprintf(stderr, "Error while deleting precompute file: %s: %s\n", data_filename, strerror(errno));
+    }
+  }
+
   num_cracked++;
   num_falsealarms--;
 }
@@ -4071,7 +4160,7 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
 
 int main(int ac, char **av) {
   char *rt_dir = NULL, *single_hash = NULL, *filename = NULL, *file_data = NULL, **usernames = NULL, **hashes = NULL, *pot_file_data = NULL;
-  unsigned int i = 0, j = 0;
+  unsigned int i = 0;
   int file_format = 0;
   FILE *f = NULL;
   struct stat st = {0};

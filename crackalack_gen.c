@@ -334,6 +334,7 @@ void *host_thread(void *ptr) {
   int using_fast_path_kernel = 0;
   size_t gws = 0, kernel_work_group_size = 0, kernel_preferred_work_group_size_multiple = 0;
   uint64_t *start_indices = NULL, *end_indices = NULL;
+  size_t indices_alloc = 0;
   unsigned int i = 0, indices_size = 0, thread_complete = 0, num_passes = 0, pass = 0, chain_len = 0, charset_len = 0;
   /*time_t thread_start_time = 0;
   double elapsed = 0;*/
@@ -343,10 +344,10 @@ void *host_thread(void *ptr) {
   gpu_queue queue = NULL;
   gpu_kernel kernel = NULL;
 
-  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
-  gpu_buffer mask_data_buffer = NULL, mask_lens_buffer = NULL, mask_len_buffer = NULL;
-  gpu_buffer challenge_buffer = NULL;
+  gpu_buffer hash_type_buffer = GPU_BUFFER_NULL, charset_buffer = GPU_BUFFER_NULL, charset_len_buffer = GPU_BUFFER_NULL, plaintext_len_min_buffer = GPU_BUFFER_NULL, plaintext_len_max_buffer = GPU_BUFFER_NULL, reduction_offset_buffer = GPU_BUFFER_NULL, chain_len_buffer = GPU_BUFFER_NULL, indices_buffer = GPU_BUFFER_NULL, pos_start_buffer = GPU_BUFFER_NULL, pspace_table_buffer = GPU_BUFFER_NULL, pspace_total_buffer = GPU_BUFFER_NULL;
+  gpu_buffer sorted_pos0_buffer = GPU_BUFFER_NULL, sorted_bigram_buffer = GPU_BUFFER_NULL, max_positions_buffer = GPU_BUFFER_NULL;
+  gpu_buffer mask_data_buffer = GPU_BUFFER_NULL, mask_lens_buffer = GPU_BUFFER_NULL, mask_len_buffer = GPU_BUFFER_NULL;
+  gpu_buffer challenge_buffer = GPU_BUFFER_NULL;
 
   gpu_uint pos_start = 0;
   markov_model markov = {0};
@@ -356,7 +357,7 @@ void *host_thread(void *ptr) {
 
   /* Combined mask+markov mode. */
   int combined_mode = (args->use_mask && args->use_markov);
-  gpu_buffer mm_r_pos0_buffer = NULL, mm_r_bigram_buffer = NULL, mm_sizes_buffer = NULL, mm_mask_len_buffer = NULL, mm_max_sz_buffer = NULL;
+  gpu_buffer mm_r_pos0_buffer = GPU_BUFFER_NULL, mm_r_bigram_buffer = GPU_BUFFER_NULL, mm_sizes_buffer = GPU_BUFFER_NULL, mm_mask_len_buffer = GPU_BUFFER_NULL, mm_max_sz_buffer = GPU_BUFFER_NULL;
   uint8_t  mm_r_pos0_flat[256] = {0};
   uint8_t *mm_r_bigram_flat = NULL;
   gpu_uint mm_sizes_flat[MAX_PLAINTEXT_LEN] = {0};
@@ -562,8 +563,18 @@ void *host_thread(void *ptr) {
 #endif
 
   indices_size = gws;
-  start_indices = calloc(indices_size, sizeof(gpu_ulong));
-  end_indices = calloc(indices_size, sizeof(gpu_ulong));
+  /* The generation kernels store to g_indices at their raw global id with no
+   * range check.  OpenCL/Metal dispatch exactly `gws` work items, but the CUDA
+   * backend rounds the grid up to a whole multiple of its block size, so up to
+   * GPU_LAUNCH_GRANULARITY - 1 extra threads run with gid >= gws and write past
+   * the end of the buffer, corrupting whatever VRAM follows it.  Over-allocate
+   * the host and device index buffers to the padded launch size so those stores
+   * land in slack; indices_size (the number of chains actually generated and
+   * written per pass) is deliberately left at gws so tables stay byte-identical
+   * across backends. */
+  indices_alloc = GPU_GWS_PAD(indices_size);
+  start_indices = calloc(indices_alloc, sizeof(gpu_ulong));
+  end_indices = calloc(indices_alloc, sizeof(gpu_ulong));
   if ((start_indices == NULL) || (end_indices == NULL)) {
     fprintf(stderr, "Failed to create start/end index buffers.\n");
     exit(-1);
@@ -677,7 +688,7 @@ void *host_thread(void *ptr) {
     }
 
     /* Most of the parameters need only be set once upon first invokation. */
-    if (hash_type_buffer == NULL) {
+    if (hash_type_buffer == GPU_BUFFER_NULL) {
       uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
       gpu_ulong pspace_total;
       if (combined_mode)
@@ -708,7 +719,7 @@ void *host_thread(void *ptr) {
       CLCREATEARG(4, plaintext_len_max_buffer, CL_RO, args->plaintext_len_max, sizeof(gpu_uint));
       CLCREATEARG(5, reduction_offset_buffer, CL_RO, args->reduction_offset, sizeof(gpu_uint));
       CLCREATEARG(6, chain_len_buffer, CL_RO, args->chain_len, sizeof(gpu_uint));
-      CLCREATEARG_ARRAY(7, indices_buffer, CL_RW, start_indices, indices_size * sizeof(gpu_ulong));
+      CLCREATEARG_ARRAY(7, indices_buffer, CL_RW, start_indices, indices_alloc * sizeof(gpu_ulong));
       CLCREATEARG(8, pos_start_buffer, CL_RO, pos_start, sizeof(gpu_uint));
       CLCREATEARG_ARRAY(9, pspace_table_buffer, CL_RO, pspace_up_to_index, MAX_PLAINTEXT_LEN * sizeof(gpu_ulong));
       CLCREATEARG(10, pspace_total_buffer, CL_RO, pspace_total, sizeof(gpu_ulong));
@@ -743,7 +754,7 @@ void *host_thread(void *ptr) {
         CLCREATEARG_ARRAY(14, challenge_buffer, CL_RO, args->challenge, NETNTLMV1_CHALLENGE_LEN);
       }
     } else {
-      CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
+      CLWRITEBUFFER(indices_buffer, indices_alloc * sizeof(gpu_ulong), start_indices);
     }
 
     /* Auto-calibrate the max chain steps per kernel dispatch on first iteration.
@@ -787,7 +798,7 @@ void *host_thread(void *ptr) {
       fflush(stdout);
 
       /* Re-upload the original start indices since the probe consumed them. */
-      CLWRITEBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), start_indices);
+      CLWRITEBUFFER(indices_buffer, indices_alloc * sizeof(gpu_ulong), start_indices);
       calibration_done = 1;
     }
 
@@ -828,7 +839,7 @@ void *host_thread(void *ptr) {
     }
 
     /* Get the kernel output. */
-    CLREADBUFFER(indices_buffer, indices_size * sizeof(gpu_ulong), end_indices);
+    CLREADBUFFER(indices_buffer, indices_alloc * sizeof(gpu_ulong), end_indices);
 
     /* If we are in benchmark mode, don't loop again, nor write to the output file. */
     if (args->benchmark_mode)

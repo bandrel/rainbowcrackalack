@@ -1,3 +1,5 @@
+#include "shared.h"
+
 #include "ntlm.metal"
 
 inline void index_to_plaintext_ntlm10(ulong index, thread unsigned char *plaintext) {
@@ -58,13 +60,13 @@ inline ulong hash_ntlm10(thread unsigned char *plaintext) {
 }
 
 
-inline ulong hash_to_index_ntlm10(ulong hash, unsigned int pos) {
+inline ulong hash_to_index_ntlm10(ulong hash, unsigned int reduction_offset, unsigned int pos) {
   /* 95^10 > 2^64: the 64-bit hash output is always in range, no modulo needed. */
-  return hash + pos;
+  return hash + reduction_offset + pos;
 }
 
 
-inline ulong hash_char_to_index_ntlm10(device unsigned char *hash_value, unsigned int pos) {
+inline ulong hash_char_to_index_ntlm10(device unsigned char *hash_value, unsigned int reduction_offset, unsigned int pos) {
   ulong ret = hash_value[7];
   ret <<= 8;
   ret |= hash_value[6];
@@ -81,5 +83,5 @@ inline ulong hash_char_to_index_ntlm10(device unsigned char *hash_value, unsigne
   ret <<= 8;
   ret |= hash_value[0];
 
-  return hash_to_index_ntlm10(ret, pos);
+  return hash_to_index_ntlm10(ret, reduction_offset, pos);
 }

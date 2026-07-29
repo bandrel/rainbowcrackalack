@@ -46,7 +46,7 @@ typedef CUcontext     gpu_context;
 typedef CUstream      gpu_queue;
 typedef CUmodule      gpu_program;
 typedef CUfunction    gpu_kernel;
-typedef CUdeviceptr   gpu_buffer;  /* Integer type; CUDA-branch macros use 0, not NULL, as the sentinel value. */
+typedef CUdeviceptr   gpu_buffer;  /* Integer type; use GPU_BUFFER_NULL, not NULL, as the sentinel value. */
 typedef uint32_t      gpu_uint;
 typedef uint64_t      gpu_ulong;
 typedef int           gpu_int;
@@ -98,6 +98,16 @@ typedef cl_bool  gpu_bool;
 #define DEFAULT_BUILD_OPTIONS "-I. -ICL -cl-std=CL1.2"
 
 #endif /* USE_METAL */
+
+/* Null sentinel for gpu_buffer.  Every backend but CUDA typedefs gpu_buffer to
+ * a pointer, where NULL works; CUDA's CUdeviceptr is an integer, so assigning
+ * or comparing against NULL there is an int-from-pointer conversion.  Use this
+ * instead of NULL for gpu_buffer values. */
+#ifdef USE_CUDA
+#define GPU_BUFFER_NULL ((gpu_buffer)0)
+#else
+#define GPU_BUFFER_NULL ((gpu_buffer)NULL)
+#endif
 
 /* Keep legacy CL_ flag aliases for compatibility with existing macros. */
 #define CL_RO GPU_RO
@@ -302,6 +312,32 @@ void gpu_thread_detach(void);
 #define gpu_thread_attach() ((void)0)
 #define gpu_thread_detach() ((void)0)
 #endif
+
+
+/* --- Launch granularity -------------------------------------------------
+ * OpenCL (clEnqueueNDRangeKernel) and Metal (dispatchThreads:) launch
+ * EXACTLY the requested global work size, so a kernel never observes a
+ * global id >= gws.  The CUDA backend has no such primitive: it launches
+ * ceil(gws / block_size) blocks of block_size threads, so up to
+ * block_size - 1 EXTRA threads run with ids >= gws.
+ *
+ * Those extra threads are usually harmless because the kernels derive a
+ * work item from the id and bail when it falls out of range -- but any
+ * kernel that stores to a buffer at its raw global id BEFORE bailing
+ * (e.g. `g_output[tid] = 0;` in every precompute*.cu) writes past the end
+ * of that buffer.  Every device buffer indexed by the raw global id must
+ * therefore be sized with GPU_GWS_PAD() so those stores stay in bounds.
+ *
+ * GPU_LAUNCH_GRANULARITY MUST match the block size used by
+ * cuda_setup.c:gpu_enqueue_kernel() (which references this macro). */
+#ifdef USE_CUDA
+#define GPU_LAUNCH_GRANULARITY 256
+#else
+#define GPU_LAUNCH_GRANULARITY 1
+#endif
+
+#define GPU_GWS_PAD(_n) \
+  ((((size_t)(_n) + (size_t)(GPU_LAUNCH_GRANULARITY) - 1) / (size_t)(GPU_LAUNCH_GRANULARITY)) * (size_t)(GPU_LAUNCH_GRANULARITY))
 
 
 /* --- Convenience macros (backward compatible) --- */

@@ -1,3 +1,5 @@
+#include "shared.h"
+
 __constant__ char charset[] = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
 
 #include "md5.cu"
@@ -34,12 +36,13 @@ __device__ inline unsigned long long hash_md5_9(unsigned char *plaintext) {
 }
 
 
-__device__ inline unsigned long long hash_to_index_md5_9(unsigned long long hash, unsigned int pos) {
-  return (hash + pos) % 630249409724609375ULL;  /* 95^9 */
+__device__ inline unsigned long long hash_to_index_md5_9(unsigned long long hash, unsigned int reduction_offset, unsigned int pos) {
+  return (hash + reduction_offset + pos) % 630249409724609375ULL;  /* 95^9 */
 }
 
 
 __device__ inline unsigned long long hash_char_to_index_md5_9(unsigned char *hash_value,
+                                                               unsigned int reduction_offset,
                                                                unsigned int pos) {
   unsigned long long ret = hash_value[7]; ret <<= 8;
   ret |= hash_value[6]; ret <<= 8;
@@ -49,5 +52,5 @@ __device__ inline unsigned long long hash_char_to_index_md5_9(unsigned char *has
   ret |= hash_value[2]; ret <<= 8;
   ret |= hash_value[1]; ret <<= 8;
   ret |= hash_value[0];
-  return (ret + pos) % 630249409724609375ULL;
+  return (ret + reduction_offset + pos) % 630249409724609375ULL;
 }
