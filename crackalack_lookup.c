@@ -321,8 +321,7 @@ unsigned int fa_batch_threshold = 16384;
  * num_chains, which is twice the legacy bloom efficiency without
  * extra memory.  Tighter targets (e.g. 0.0001) land in a bigger
  * pow2 bucket and pay more in bloom-query work than they save in
- * binary-search work on this workload.  See
- * docs/superpowers/specs/2026-05-24-bloom-filter-tightening-design.md. */
+ * binary-search work on this workload. */
 double bloom_target_fpr = 0.01;
 
 /* Set to 1 when --bloom-fpr was given an explicit value > 0, which forces the
