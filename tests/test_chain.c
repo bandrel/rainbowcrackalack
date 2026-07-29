@@ -93,7 +93,7 @@ int gpu_test_chain(gpu_device device, gpu_context context, gpu_kernel kernel, ch
 
   int test_passed = 0;
 
-  gpu_buffer charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, table_index_buffer = NULL, chain_len_buffer = NULL, start_buffer = NULL, end_buffer = NULL, debug_buffer = NULL;
+  gpu_buffer charset_buffer = GPU_BUFFER_NULL, charset_len_buffer = GPU_BUFFER_NULL, plaintext_len_min_buffer = GPU_BUFFER_NULL, plaintext_len_max_buffer = GPU_BUFFER_NULL, table_index_buffer = GPU_BUFFER_NULL, chain_len_buffer = GPU_BUFFER_NULL, start_buffer = GPU_BUFFER_NULL, end_buffer = GPU_BUFFER_NULL, debug_buffer = GPU_BUFFER_NULL;
 
   unsigned char *debug_ptr = NULL;
   gpu_ulong *end_ptr = NULL;

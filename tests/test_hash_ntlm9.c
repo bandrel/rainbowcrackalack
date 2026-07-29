@@ -69,7 +69,7 @@ int gpu_test_ntlm9(gpu_device device, gpu_context context, gpu_kernel kernel, ch
   unsigned char expected_output[32] = {0};
   /*unsigned int expected_output_len = 0;*/
 
-  gpu_buffer input_buffer = NULL, output_buffer = NULL;
+  gpu_buffer input_buffer = GPU_BUFFER_NULL, output_buffer = GPU_BUFFER_NULL;
 
   char *input = NULL;
   gpu_ulong output = 0;

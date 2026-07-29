@@ -128,13 +128,13 @@ static int gpu_test_mask_chain(gpu_device device, gpu_context context,
     memset(mask_lens, 0, sizeof(mask_lens));
     mask_to_gpu_buffers(mask, mask_data, mask_lens);
 
-    gpu_buffer hash_type_buf = NULL, charset_buf = NULL, charset_len_buf = NULL;
-    gpu_buffer plen_min_buf = NULL, plen_max_buf = NULL;
-    gpu_buffer reduc_buf = NULL, chain_len_buf = NULL;
-    gpu_buffer indices_buf = NULL, pos_start_buf = NULL;
-    gpu_buffer pspace_up_to_buf = NULL, pspace_total_buf = NULL;
-    gpu_buffer mask_data_buf = NULL, mask_lens_buf = NULL;
-    gpu_buffer mask_len_buf = NULL;
+    gpu_buffer hash_type_buf = GPU_BUFFER_NULL, charset_buf = GPU_BUFFER_NULL, charset_len_buf = GPU_BUFFER_NULL;
+    gpu_buffer plen_min_buf = GPU_BUFFER_NULL, plen_max_buf = GPU_BUFFER_NULL;
+    gpu_buffer reduc_buf = GPU_BUFFER_NULL, chain_len_buf = GPU_BUFFER_NULL;
+    gpu_buffer indices_buf = GPU_BUFFER_NULL, pos_start_buf = GPU_BUFFER_NULL;
+    gpu_buffer pspace_up_to_buf = GPU_BUFFER_NULL, pspace_total_buf = GPU_BUFFER_NULL;
+    gpu_buffer mask_data_buf = GPU_BUFFER_NULL, mask_lens_buf = GPU_BUFFER_NULL;
+    gpu_buffer mask_len_buf = GPU_BUFFER_NULL;
 
     queue = CLCREATEQUEUE(context, device);
 

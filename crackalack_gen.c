@@ -344,10 +344,10 @@ void *host_thread(void *ptr) {
   gpu_queue queue = NULL;
   gpu_kernel kernel = NULL;
 
-  gpu_buffer hash_type_buffer = NULL, charset_buffer = NULL, charset_len_buffer = NULL, plaintext_len_min_buffer = NULL, plaintext_len_max_buffer = NULL, reduction_offset_buffer = NULL, chain_len_buffer = NULL, indices_buffer = NULL, pos_start_buffer = NULL, pspace_table_buffer = NULL, pspace_total_buffer = NULL;
-  gpu_buffer sorted_pos0_buffer = NULL, sorted_bigram_buffer = NULL, max_positions_buffer = NULL;
-  gpu_buffer mask_data_buffer = NULL, mask_lens_buffer = NULL, mask_len_buffer = NULL;
-  gpu_buffer challenge_buffer = NULL;
+  gpu_buffer hash_type_buffer = GPU_BUFFER_NULL, charset_buffer = GPU_BUFFER_NULL, charset_len_buffer = GPU_BUFFER_NULL, plaintext_len_min_buffer = GPU_BUFFER_NULL, plaintext_len_max_buffer = GPU_BUFFER_NULL, reduction_offset_buffer = GPU_BUFFER_NULL, chain_len_buffer = GPU_BUFFER_NULL, indices_buffer = GPU_BUFFER_NULL, pos_start_buffer = GPU_BUFFER_NULL, pspace_table_buffer = GPU_BUFFER_NULL, pspace_total_buffer = GPU_BUFFER_NULL;
+  gpu_buffer sorted_pos0_buffer = GPU_BUFFER_NULL, sorted_bigram_buffer = GPU_BUFFER_NULL, max_positions_buffer = GPU_BUFFER_NULL;
+  gpu_buffer mask_data_buffer = GPU_BUFFER_NULL, mask_lens_buffer = GPU_BUFFER_NULL, mask_len_buffer = GPU_BUFFER_NULL;
+  gpu_buffer challenge_buffer = GPU_BUFFER_NULL;
 
   gpu_uint pos_start = 0;
   markov_model markov = {0};
@@ -357,7 +357,7 @@ void *host_thread(void *ptr) {
 
   /* Combined mask+markov mode. */
   int combined_mode = (args->use_mask && args->use_markov);
-  gpu_buffer mm_r_pos0_buffer = NULL, mm_r_bigram_buffer = NULL, mm_sizes_buffer = NULL, mm_mask_len_buffer = NULL, mm_max_sz_buffer = NULL;
+  gpu_buffer mm_r_pos0_buffer = GPU_BUFFER_NULL, mm_r_bigram_buffer = GPU_BUFFER_NULL, mm_sizes_buffer = GPU_BUFFER_NULL, mm_mask_len_buffer = GPU_BUFFER_NULL, mm_max_sz_buffer = GPU_BUFFER_NULL;
   uint8_t  mm_r_pos0_flat[256] = {0};
   uint8_t *mm_r_bigram_flat = NULL;
   gpu_uint mm_sizes_flat[MAX_PLAINTEXT_LEN] = {0};
@@ -688,7 +688,7 @@ void *host_thread(void *ptr) {
     }
 
     /* Most of the parameters need only be set once upon first invokation. */
-    if (hash_type_buffer == NULL) {
+    if (hash_type_buffer == GPU_BUFFER_NULL) {
       uint64_t pspace_up_to_index[MAX_PLAINTEXT_LEN + 1] = {0};
       gpu_ulong pspace_total;
       if (combined_mode)

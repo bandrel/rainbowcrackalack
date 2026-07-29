@@ -138,7 +138,7 @@ static int gpu_sort(uint64_t *data, uint64_t num_chains) {
   gpu_queue queue = NULL;
   gpu_program program = NULL;
   gpu_kernel kernel = NULL;
-  gpu_buffer data_buf = NULL, k_buf = NULL, j_buf = NULL;
+  gpu_buffer data_buf = GPU_BUFFER_NULL, k_buf = GPU_BUFFER_NULL, j_buf = GPU_BUFFER_NULL;
   uint64_t *padded_data = NULL;
   uint64_t n_padded = 1;
   size_t n_alloc = 0;

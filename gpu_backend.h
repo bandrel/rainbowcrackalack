@@ -46,7 +46,7 @@ typedef CUcontext     gpu_context;
 typedef CUstream      gpu_queue;
 typedef CUmodule      gpu_program;
 typedef CUfunction    gpu_kernel;
-typedef CUdeviceptr   gpu_buffer;  /* Integer type; CUDA-branch macros use 0, not NULL, as the sentinel value. */
+typedef CUdeviceptr   gpu_buffer;  /* Integer type; use GPU_BUFFER_NULL, not NULL, as the sentinel value. */
 typedef uint32_t      gpu_uint;
 typedef uint64_t      gpu_ulong;
 typedef int           gpu_int;
@@ -98,6 +98,16 @@ typedef cl_bool  gpu_bool;
 #define DEFAULT_BUILD_OPTIONS "-I. -ICL -cl-std=CL1.2"
 
 #endif /* USE_METAL */
+
+/* Null sentinel for gpu_buffer.  Every backend but CUDA typedefs gpu_buffer to
+ * a pointer, where NULL works; CUDA's CUdeviceptr is an integer, so assigning
+ * or comparing against NULL there is an int-from-pointer conversion.  Use this
+ * instead of NULL for gpu_buffer values. */
+#ifdef USE_CUDA
+#define GPU_BUFFER_NULL ((gpu_buffer)0)
+#else
+#define GPU_BUFFER_NULL ((gpu_buffer)NULL)
+#endif
 
 /* Keep legacy CL_ flag aliases for compatibility with existing macros. */
 #define CL_RO GPU_RO

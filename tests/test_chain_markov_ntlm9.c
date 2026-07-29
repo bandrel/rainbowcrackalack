@@ -105,13 +105,13 @@ static int gpu_test_markov_chain_ntlm9(gpu_device device, gpu_context context,
 
     gpu_uint max_positions_val = MC9_MAX_POSITIONS;
 
-    gpu_buffer hash_type_buf = NULL, charset_buf = NULL, charset_len_buf = NULL;
-    gpu_buffer plen_min_buf = NULL, plen_max_buf = NULL;
-    gpu_buffer reduc_buf = NULL, chain_len_buf = NULL;
-    gpu_buffer indices_buf = NULL, pos_start_buf = NULL;
-    gpu_buffer pspace_up_to_buf = NULL, pspace_total_buf = NULL;
-    gpu_buffer sorted_pos0_buf = NULL, sorted_bigram_buf = NULL;
-    gpu_buffer max_positions_buf = NULL;
+    gpu_buffer hash_type_buf = GPU_BUFFER_NULL, charset_buf = GPU_BUFFER_NULL, charset_len_buf = GPU_BUFFER_NULL;
+    gpu_buffer plen_min_buf = GPU_BUFFER_NULL, plen_max_buf = GPU_BUFFER_NULL;
+    gpu_buffer reduc_buf = GPU_BUFFER_NULL, chain_len_buf = GPU_BUFFER_NULL;
+    gpu_buffer indices_buf = GPU_BUFFER_NULL, pos_start_buf = GPU_BUFFER_NULL;
+    gpu_buffer pspace_up_to_buf = GPU_BUFFER_NULL, pspace_total_buf = GPU_BUFFER_NULL;
+    gpu_buffer sorted_pos0_buf = GPU_BUFFER_NULL, sorted_bigram_buf = GPU_BUFFER_NULL;
+    gpu_buffer max_positions_buf = GPU_BUFFER_NULL;
 
     queue = CLCREATEQUEUE(context, device);
 
