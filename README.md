@@ -340,7 +340,7 @@ This is what runs in **CI**: a GitHub Actions workflow builds and runs `crackala
 
 **Golden vectors** (`test_golden.c`) pin committed input→output pairs for the rainbow-table primitives (independently-verified NTLM/MD5 vectors plus regression-pinned reductions), giving every GPU backend a fixed ground truth to validate against. They run in both test binaries.
 
-**Sanitizers, coverage, and the crack-regression harness** are maintained in the companion **rainbowcrackalack-docs** repo under `code-repo-extracts/scripts/bench/` (they require a GPU); CI fetches them at run time. That harness includes AddressSanitizer/ThreadSanitizer smoke tests, a coverage runner, and `run_regression.sh` (crack round-trip + differential false-negative checks, plus `mask` / `hcmask` / `mask-markov` end-to-end phases).
+**Sanitizers, coverage, benchmarks, and the crack-regression harness** are maintained in the companion **rainbowcrackalack-docs** repo under `code-repo-extracts/scripts/bench/` (they require a GPU); CI fetches them at run time into `scripts/bench/`, which is untracked here. That harness includes AddressSanitizer/ThreadSanitizer smoke tests, a coverage runner, `bench_zstd.py` (zstd level sweep, writes to `docs/benchmarks/`), and `run_regression.sh` (crack round-trip + differential false-negative checks, plus `mask` / `hcmask` / `mask-markov` end-to-end phases).
 
 Two instrumentation entry points remain in-tree via the Makefile:
 

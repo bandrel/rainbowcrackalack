@@ -31,3 +31,7 @@ coverage/
 *.gcno
 *.gcda
 *.gcov
+
+# The regression/benchmark harness is fetched here from the rainbowcrackalack-docs
+# repo at CI time (see .gitlab-ci.yml); nothing under it is tracked.
+scripts/bench/
