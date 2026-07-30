@@ -23,6 +23,8 @@ Two modes:
       done, alongside the manifest.
 """
 import argparse
+import contextlib
+import fcntl
 import filecmp
 import hashlib
 import json
@@ -66,6 +68,33 @@ def discover_parts(base_dir, dir_names):
                 if fn.endswith('.rtc'):
                     parts.append(os.path.abspath(os.path.join(root, fn)))
     return sorted(parts)
+
+
+@contextlib.contextmanager
+def driver_lock(manifest_path):
+    """Guarantees only one driver per manifest, i.e. per range.
+
+    Ranges are the isolation boundary between hosts, but nothing used to enforce
+    one driver per range on a single host. On 2026-07-30 a relaunch left two
+    drivers on 3001-4095; they raced on the same parts and 32 outputs were
+    destroyed. An exclusive flock on <manifest>.lock makes that impossible.
+    The lock file is intentionally separate from the manifest so it can never
+    interfere with the append-only writes.
+    """
+    lock_path = manifest_path + '.lock'
+    fd = open(lock_path, 'w')
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, IOError):
+            sys.exit('another driver already holds %s -- refusing to start a '
+                     'second driver on this range' % lock_path)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        fd.close()
 
 
 def dest_zst_path(rtc_path, base_dir, dest_dir):
@@ -125,11 +154,16 @@ def convert_one_part(rtc_path, rtc2rt_bin, rt2zst_bin, scratch_dir, zst_path=Non
     # may not exist yet on the first part landing in it.
     os.makedirs(os.path.dirname(zst_path), exist_ok=True)
 
+    # An output that is already here when we start belongs to a previous run or
+    # another worker. Cleaning up after our own failure must never destroy it --
+    # doing so cost 32 parts on 2026-07-30, recoverable only from the NAS backup.
+    zst_preexisted = os.path.exists(zst_path)
+
     def fail(detail):
         for p in (scratch_rt, scratch_check):
             if os.path.exists(p):
                 os.remove(p)
-        if os.path.exists(zst_path):
+        if not zst_preexisted and os.path.exists(zst_path):
             os.remove(zst_path)
         return {'part': rtc_path, 'status': 'error', 'detail': detail}
 
@@ -180,6 +214,11 @@ def main(argv=None, runner=subprocess.run):
                              '.rtc. Use when --base-dir is a read-only copy.')
     args = parser.parse_args(argv)
 
+    with driver_lock(args.manifest):
+        _run(args, runner)
+
+
+def _run(args, runner):
     os.makedirs(args.scratch_dir, exist_ok=True)
     dir_names = args.dirs.split(',')
     all_parts = discover_parts(args.base_dir, dir_names)

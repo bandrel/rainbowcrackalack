@@ -44,6 +44,11 @@ class FakeTools(object):
             if 'rtc2rt' in self.fail_on:
                 return FakeResult(1, 'boom')
             src, dst = argv[1], argv[2]
+            # The real binary exits nonzero on a missing source rather than
+            # raising; this is exactly the production path that destroyed 32
+            # outputs, so the double has to reproduce it faithfully.
+            if not os.path.exists(src):
+                return FakeResult(1, 'cannot open %s' % src)
             with open(src, 'rb') as f:
                 data = f.read()
             with open(dst, 'wb') as f:
@@ -189,6 +194,106 @@ class TestNasSourceMode(MigrateTestCase):
 
         self.assertEqual(result['orig_bytes'], os.path.getsize(rtc))
         self.assertEqual(result['new_bytes'], os.path.getsize(zst))
+
+
+class TestFailureNeverDestroysAnotherWorkersOutput(MigrateTestCase):
+    """Regression: fail() used to remove zst_path unconditionally.
+
+    On 2026-07-30 two drivers ran against range 3001-4095. Worker A converted a
+    part and deleted its .rtc; worker B, still holding that part in its file
+    list, ran rtc2rt against the missing source, failed, and fail() deleted the
+    good .rt.zst worker A had just written. 32 parts ended up with neither a
+    .rtc nor a .rt.zst and had to be rebuilt from the NAS backup.
+
+    An output that already existed when this invocation started belongs to
+    someone else and must survive our failure.
+    """
+
+    def test_preexisting_output_survives_missing_source(self):
+        rtc = os.path.join(self.base, '3001-4095/3802/part_0.rtc')
+        os.makedirs(os.path.dirname(rtc))
+        # The exact production shape: source already gone, output already there.
+        zst = rtc[:-4] + '.rt.zst'
+        with open(zst, 'wb') as f:
+            f.write(b'GOOD-OUTPUT-FROM-ANOTHER-WORKER')
+
+        result = self.convert(rtc, zst_path=zst, delete_source=True)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertTrue(os.path.exists(zst),
+                        'fail() destroyed an output it did not create')
+        with open(zst, 'rb') as f:
+            self.assertEqual(f.read(), b'GOOD-OUTPUT-FROM-ANOTHER-WORKER')
+
+    def test_preexisting_output_survives_compress_failure(self):
+        rtc = self.make_part('1001-2000/1500/part_0.rtc')
+        zst = m.dest_zst_path(rtc, self.base, self.dest)
+        os.makedirs(os.path.dirname(zst))
+        with open(zst, 'wb') as f:
+            f.write(b'PRE-EXISTING')
+        tools = FakeTools(fail_on={'compress'})
+
+        result = self.convert(rtc, zst_path=zst, delete_source=False, tools=tools)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertTrue(os.path.exists(zst))
+        with open(zst, 'rb') as f:
+            self.assertEqual(f.read(), b'PRE-EXISTING')
+
+    def test_output_created_by_this_call_is_still_removed_on_failure(self):
+        """The cleanup we DO want must keep working."""
+        rtc = self.make_part('1001-2000/1500/part_0.rtc')
+        zst = m.dest_zst_path(rtc, self.base, self.dest)
+        self.assertFalse(os.path.exists(zst))
+        tools = FakeTools(corrupt_roundtrip=True)
+
+        result = self.convert(rtc, zst_path=zst, delete_source=False, tools=tools)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertFalse(os.path.exists(zst),
+                         'our own partial output should be cleaned up')
+
+
+class TestDriverLock(MigrateTestCase):
+    """Two drivers on one range is what caused the loss; make it impossible."""
+
+    def test_second_driver_on_same_manifest_refuses_to_start(self):
+        self.make_part('1001-2000/1500/part_0.rtc')
+        manifest = os.path.join(self.tmp, 'manifest.jsonl')
+
+        with m.driver_lock(manifest):
+            with self.assertRaises(SystemExit):
+                with m.driver_lock(manifest):
+                    pass
+
+    def test_lock_is_released_after_use(self):
+        manifest = os.path.join(self.tmp, 'manifest.jsonl')
+
+        with m.driver_lock(manifest):
+            pass
+        # Must be re-acquirable; a stale lock would strand the campaign.
+        with m.driver_lock(manifest):
+            pass
+
+    def test_lock_released_even_if_run_raises(self):
+        manifest = os.path.join(self.tmp, 'manifest.jsonl')
+
+        try:
+            with m.driver_lock(manifest):
+                raise RuntimeError('boom')
+        except RuntimeError:
+            pass
+
+        with m.driver_lock(manifest):
+            pass
+
+    def test_different_manifests_do_not_block_each_other(self):
+        a = os.path.join(self.tmp, 'a.jsonl')
+        b = os.path.join(self.tmp, 'b.jsonl')
+
+        with m.driver_lock(a):
+            with m.driver_lock(b):
+                pass
 
 
 class TestLegacyInPlaceMode(MigrateTestCase):
