@@ -64,6 +64,28 @@ Sort before compressing: `--zst` deletes the raw `.rt`, and `crackalack_verify` 
 ./crackalack_sort --zst *.rt                # sort, compress, drop the raw .rt
 ```
 
+#### Bulk `.rtc` -> `.rt.zst` migration
+
+`scripts/migrate/migrate_netntlmv1_zst.py` converts a whole `.rtc` tree part by part
+(`rtc2rt` -> `rt2zst` -> `rt2zst -d` -> byte-identical `filecmp`), recording progress in a
+JSONL manifest so a run resumes without redoing finished parts. Tests:
+`python3 scripts/migrate/test_migrate_netntlmv1_zst.py` (stdlib `unittest`, no pytest, so it
+runs on bare hosts).
+
+Two things to get right, both learned the hard way:
+
+- **`--dest-dir` is mandatory when the source tree is a backup.** Without it the script
+  works in place and **deletes each `.rtc`** after a verified round trip. With it, outputs
+  mirror the source layout under a separate root and the source is never touched. Pointing
+  `--base-dir` at a read-only copy *without* `--dest-dir` would consume the backup.
+- **One driver per range, enforced by `driver_lock()`** — an exclusive `flock` on
+  `<manifest>.lock`. Two drivers sharing a range once destroyed 32 outputs: one deleted a
+  `.rtc` the other still had queued, whose failure cleanup then removed the good `.rt.zst`.
+  Give each host its own range *and* its own manifest.
+
+Note the driver's `print()` output is block-buffered when redirected to a log, so the log
+lags; **count manifest lines, not log lines**, to judge progress.
+
 ### Mask attacks
 
 Hashcat-style masks restrict each position to a specific character class, letting you cover structured password spaces (e.g. `Capital + 6 lower + digit`) with a much smaller table than full-charset coverage.
