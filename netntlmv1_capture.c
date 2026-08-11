@@ -145,6 +145,13 @@ int netntlmv1_parse_capture_line(const char *line, netntlmv1_capture *out, char 
     return -1;
   }
 
+  out->orig_line = strdup(line_copy);
+  if (out->orig_line == NULL) {
+    snprintf(errbuf, errbuf_len, "out of memory");
+    free(line_copy);
+    return -1;
+  }
+
   field_idx = 0;
   field_start = line_copy;
   for (i = 0; i <= linelen; i++) {
@@ -158,32 +165,44 @@ int netntlmv1_parse_capture_line(const char *line, netntlmv1_capture *out, char 
   if (strlen(fields[3]) != 48) {
     snprintf(errbuf, errbuf_len, "LM response must be 48 hex chars, got %zu", strlen(fields[3]));
     free(line_copy);
+    free(out->orig_line);
+    out->orig_line = NULL;
     return -1;
   }
   if (strlen(fields[4]) != 48) {
     snprintf(errbuf, errbuf_len, "NT response must be 48 hex chars, got %zu", strlen(fields[4]));
     free(line_copy);
+    free(out->orig_line);
+    out->orig_line = NULL;
     return -1;
   }
   if (strlen(fields[5]) != 16) {
     snprintf(errbuf, errbuf_len, "challenge must be 16 hex chars, got %zu", strlen(fields[5]));
     free(line_copy);
+    free(out->orig_line);
+    out->orig_line = NULL;
     return -1;
   }
 
   if (netntlmv1_hex_decode(fields[3], 48, out->lm_response) != 0) {
     snprintf(errbuf, errbuf_len, "LM response contains invalid hex");
     free(line_copy);
+    free(out->orig_line);
+    out->orig_line = NULL;
     return -1;
   }
   if (netntlmv1_hex_decode(fields[4], 48, out->nt_response) != 0) {
     snprintf(errbuf, errbuf_len, "NT response contains invalid hex");
     free(line_copy);
+    free(out->orig_line);
+    out->orig_line = NULL;
     return -1;
   }
   if (netntlmv1_hex_decode(fields[5], 16, out->server_challenge) != 0) {
     snprintf(errbuf, errbuf_len, "challenge contains invalid hex");
     free(line_copy);
+    free(out->orig_line);
+    out->orig_line = NULL;
     return -1;
   }
 
@@ -201,6 +220,8 @@ void netntlmv1_free_capture(netntlmv1_capture *cap) {
 
   free(cap->user);
   free(cap->domain);
+  free(cap->orig_line);
   cap->user = NULL;
   cap->domain = NULL;
+  cap->orig_line = NULL;
 }

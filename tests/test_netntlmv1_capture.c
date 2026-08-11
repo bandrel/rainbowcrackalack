@@ -219,6 +219,52 @@ static int group_g(void)
   return ok;
 }
 
+/* --- Group H: orig_line is preserved verbatim (uppercase hex, workstation
+ * field, trailing CRLF stripped) for pot-file reconstruction. --- */
+static int group_h(void)
+{
+  int ok = 1;
+  netntlmv1_capture cap;
+  char errbuf[256];
+  const char *trimmed =
+    "testuser:WKSTN01:TESTDOMAIN:"
+    "000000000000000000000000000000000000000000000000:"
+    "AAAAAAAAAAAAAAAAaaaaaaaaaaaaaaaaAAAAAAAAAAAAAAAA:"
+    "1122334455667788";
+  char line_with_crlf[512];
+
+  /* CAP-15: orig_line matches the input exactly, verbatim, including the
+   * uppercase hex and the non-empty workstation field. */
+  if (netntlmv1_parse_capture_line(trimmed, &cap, errbuf, sizeof(errbuf)) != 0) {
+    fprintf(stderr, "CAP-15 failed: %s\n", errbuf);
+    ok = 0;
+  } else {
+    if (cap.orig_line == NULL || strcmp(cap.orig_line, trimmed) != 0) {
+      fprintf(stderr, "CAP-15 failed: orig_line=\"%s\", expected \"%s\"\n",
+              cap.orig_line ? cap.orig_line : "(null)", trimmed);
+      ok = 0;
+    }
+    netntlmv1_free_capture(&cap);
+  }
+
+  /* CAP-16: trailing CRLF is stripped from orig_line, but the rest of the
+   * line is otherwise untouched. */
+  snprintf(line_with_crlf, sizeof(line_with_crlf), "%s\r\n", trimmed);
+  if (netntlmv1_parse_capture_line(line_with_crlf, &cap, errbuf, sizeof(errbuf)) != 0) {
+    fprintf(stderr, "CAP-16 failed: %s\n", errbuf);
+    ok = 0;
+  } else {
+    if (cap.orig_line == NULL || strcmp(cap.orig_line, trimmed) != 0) {
+      fprintf(stderr, "CAP-16 failed: orig_line=\"%s\", expected \"%s\"\n",
+              cap.orig_line ? cap.orig_line : "(null)", trimmed);
+      ok = 0;
+    }
+    netntlmv1_free_capture(&cap);
+  }
+
+  return ok;
+}
+
 int test_netntlmv1_capture(void)
 {
   int ok = 1;
@@ -230,6 +276,7 @@ int test_netntlmv1_capture(void)
   if (!group_e()) ok = 0;
   if (!group_f()) ok = 0;
   if (!group_g()) ok = 0;
+  if (!group_h()) ok = 0;
 
   return ok;
 }

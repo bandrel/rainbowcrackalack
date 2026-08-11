@@ -208,6 +208,14 @@ The challenge is encoded into the table filename — non-default challenges get 
 
 If you need to override it (e.g. tables without the challenge in their names), pass `--challenge aabbccddeeff0011` to `crackalack_lookup` as well. Note that the precompute cache key includes a non-default challenge, so switching challenges will not produce stale cross-challenge false negatives.
 
+#### One-shot Net-NTLMv1 cracking (-ntlmv1)
+
+Instead of manually splitting a captured Net-NTLMv1 response into DES fragments, `crackalack_lookup` can take a full hashcat `-m 5500` capture line (or a file of them, one per line) and do everything end-to-end — split, lookup, brute-force the remaining 2-byte block, and reassemble the full 16-byte NTLM hash:
+
+    # ./crackalack_lookup /export/netntlmv1_tables/ -ntlmv1 'alice::CORP:<48-hex LM>:<48-hex NT>:<16-hex challenge>'
+
+ESS/NTLM2-Session captures (random per-session client challenge) and captures whose challenge doesn't match the loaded tables are detected and skipped automatically. The pot-file entry for a cracked capture uses the verbatim original capture line as its key, matching real hashcat `-m 5500` pot syntax.
+
 #### Table lookups against NTLM 8-character hashes
 
 The following command shows how to look up a file of NTLM hashes (one per line) against the NTLM 8-character tables:

@@ -148,6 +148,23 @@ printf '?u?l?l?l?l?l?d\n?d?l,?1?1?1?1\n' > masks.hcmask
 ./crackalack_lookup /path/to/tables/ hashes.txt --markov dynamic-all.markov
 ```
 
+### NetNTLMv1 one-shot lookup (-ntlmv1)
+
+`crackalack_lookup rainbow_table_directory -ntlmv1 capture_or_file` runs a full end-to-end NetNTLMv1 crack in one invocation: each capture's NT response is split into three DES blocks, the two 7-byte blocks are recovered via table lookup, the 2-byte block3 key is brute-forced (65536 keys, trivial on CPU), and the three recovered pieces are reassembled into the full 16-byte NTLM hash.
+
+- **Capture format** is a hashcat `-m 5500` capture line: `user::domain:LMresponse:NTresponse:serverchallenge` (LM/NT responses are 48 hex chars, challenge is 16 hex chars). `capture_or_file` may be a single capture line or a path to a file containing one capture per line.
+- **ESS/NTLM2-Session captures are detected and skipped.** ESS uses a random per-session client challenge that defeats precomputed tables regardless of how it's folded into the hash, so these captures are reported and skipped rather than attempted.
+- **Tables are challenge-specific.** Any capture whose effective challenge doesn't match the loaded tables' challenge is also skipped and reported. If every capture in a run is ESS, the program exits cleanly (exit 0) rather than with an error, since that's an expected outcome rather than a failure.
+- **Pot-file entries use the verbatim original capture line as the key** (not a reconstruction from parsed fields), matching real hashcat `-m 5500` pot syntax exactly — so a hashcat run against that same original capture line recognizes it as already cracked. The recovered full NTLM hash is stored as the corresponding "cracked value."
+
+```bash
+# One-shot NetNTLMv1 crack from a capture line
+./crackalack_lookup /path/to/netntlmv1_tables/ -ntlmv1 'alice::CORP:aabbccdd...48hex...:11223344...48hex...:aabbccddeeff0011'
+
+# Or from a file of captures, one per line
+./crackalack_lookup /path/to/netntlmv1_tables/ -ntlmv1 captures.txt
+```
+
 ## Tests
 
 Unit tests require a GPU (CUDA on Linux, OpenCL on Windows, Metal on macOS):

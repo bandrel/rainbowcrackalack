@@ -4567,6 +4567,8 @@ int main(int ac, char **av) {
     }
 
     num_hashes = 0;
+    int any_ess_skipped = 0;
+    int any_mismatch_skipped = 0;
     for (i = 0; i < num_ntlmv1_captures; i++) {
       netntlmv1_capture *cap = &ntlmv1_captures[i];
       unsigned char effective_challenge[8], block1[8], block2[8], block3[8];
@@ -4574,6 +4576,8 @@ int main(int ac, char **av) {
 
       if (cap->is_ess) {
         printf("capture %u: ESS/NTLM2-Session detected -- client challenge is random per-session, precomputed tables cannot cover this, skipping\n", i + 1);
+        fflush(stdout);
+        any_ess_skipped = 1;
         continue;
       }
 
@@ -4584,6 +4588,8 @@ int main(int ac, char **av) {
         format_challenge_hex(effective_challenge, a);
         format_challenge_hex(g_challenge, b);
         printf("capture %u: challenge %s doesn't match loaded tables' challenge %s, skipping\n", i + 1, a, b);
+        fflush(stdout);
+        any_mismatch_skipped = 1;
         continue;
       }
 
@@ -4603,8 +4609,17 @@ int main(int ac, char **av) {
     }
 
     if (num_hashes == 0) {
-      fprintf(stderr, "Error: no NetNTLMv1 captures matched the loaded tables' challenge.\n");
-      exit(-1);
+      if (any_mismatch_skipped) {
+        fprintf(stderr, "Error: no NetNTLMv1 captures matched the loaded tables' challenge.\n");
+        exit(-1);
+      } else if (any_ess_skipped) {
+        printf("All %u capture(s) were ESS/NTLM2-Session -- none can be attempted with precomputed tables.\n", num_ntlmv1_captures);
+        fflush(stdout);
+        exit(0);
+      } else {
+        fprintf(stderr, "Error: no NetNTLMv1 captures matched the loaded tables' challenge.\n");
+        exit(-1);
+      }
     }
   }
 
@@ -4727,8 +4742,6 @@ int main(int ac, char **av) {
       unsigned char key1[7], key2[7], key3[2];
       unsigned char full_ntlm[16];
       char full_ntlm_hex[33] = {0};
-      char capture_line[512] = {0};
-      char lm_hex[49] = {0}, nt_hex[49] = {0}, chal_hex[17] = {0};
       precomputed_and_potential_indices synthetic_ppi;
 
       if (!ntlmv1_capture_queued[i])
@@ -4766,13 +4779,8 @@ int main(int ac, char **av) {
 
       printf("%sHASH CRACKED (NetNTLMv1, full NTLM hash) => %s:%s:%s%s\n", GREENB, cap->user, cap->domain, full_ntlm_hex, CLR);
 
-      netntlmv1_hex_encode(cap->lm_response, 24, lm_hex);
-      netntlmv1_hex_encode(cap->nt_response, 24, nt_hex);
-      netntlmv1_hex_encode(cap->server_challenge, 8, chal_hex);
-      snprintf(capture_line, sizeof(capture_line), "%s::%s:%s:%s:%s", cap->user, cap->domain, lm_hex, nt_hex, chal_hex);
-
       memset(&synthetic_ppi, 0, sizeof(synthetic_ppi));
-      synthetic_ppi.hash = capture_line;
+      synthetic_ppi.hash = cap->orig_line;
       synthetic_ppi.plaintext = full_ntlm_hex;
       synthetic_ppi.index_filename = NULL;
       save_cracked_hash(&synthetic_ppi, HASH_NETNTLMV1);

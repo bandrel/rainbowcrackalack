@@ -10,12 +10,14 @@ typedef struct {
   unsigned char nt_response[24];
   unsigned char server_challenge[8];
   int is_ess;
+  char *orig_line; /* verbatim, trimmed (CR/LF stripped) original capture line, for pot-file entries */
 } netntlmv1_capture;
 
 /* Parses "user::domain:LMresp:NTresp:challenge" (LMresp/NTresp = 48 hex
  * chars, challenge = 16 hex chars).  On success, fills *out (caller must
- * eventually call netntlmv1_free_capture()) and sets out->is_ess.  On
- * failure, writes a human-readable reason into errbuf and returns -1. */
+ * eventually call netntlmv1_free_capture()), sets out->is_ess, and stores
+ * the verbatim trimmed input line in out->orig_line.  On failure, writes a
+ * human-readable reason into errbuf and returns -1. */
 int netntlmv1_parse_capture_line(const char *line, netntlmv1_capture *out, char *errbuf, size_t errbuf_len);
 
 /* Returns 1 if lm_response[8..23] are all zero AND lm_response[0..7] are
