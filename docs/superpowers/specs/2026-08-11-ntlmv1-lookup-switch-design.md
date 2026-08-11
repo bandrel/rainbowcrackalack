@@ -100,10 +100,15 @@ For each queued capture:
    `HASH CRACKED (NetNTLMv1, full NTLM hash) => user:domain:<32-hex NTLM hash>`.
 4. Append to the existing pot files via the existing `save_cracked_hash()` writer
    (`crackalack_lookup.c:3790-3872`): build a synthetic `precomputed_and_potential_indices` with
-   `hash` = the capture's 48-hex `NTresp` string (a stable, unique identifier for this capture) and
-   `plaintext` = the recovered 32-hex NTLM hash, `index_filename = NULL` (skips the on-disk cache
-   unlink). This appends a normal-looking entry to both `rainbowcrackalack_jtr.pot` and
-   `rainbowcrackalack_hashcat.pot` with no new file or pot format.
+   `hash` = the **full original capture line** (`user::domain:LMresp:NTresp:challenge`, i.e. exactly
+   what you'd feed hashcat `-m 5500`) and `plaintext` = the recovered 32-hex NTLM hash,
+   `index_filename = NULL` (skips the on-disk cache unlink). Call `save_cracked_hash()` with
+   `hash_type = HASH_NETNTLMV1` (not `HASH_NTLM`) so the JTR writer does *not* prepend `$NT$` — that
+   prefix means "this hash field is an NT hash," which would be wrong here since the hash field is a
+   full NetNTLMv1 capture line, not an NT hash. The resulting pot line matches real hashcat `-m 5500`
+   pot syntax (`<capture line>:<cracked value>`), just with an NTLM hash in the crack-value slot
+   instead of a human password — a real hashcat run against that same capture line with `-m 5500`
+   would recognize it as already-cracked and display the NTLM hash in place of a password.
 
 ## New source files
 
