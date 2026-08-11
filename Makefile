@@ -184,6 +184,8 @@ CPU_TESTS_OBJS := \
 	$(CPU_TESTS_OBJDIR)/cpu_tests_common.o \
 	$(CPU_TESTS_OBJDIR)/test_challenge_host.o \
 	$(CPU_TESTS_OBJDIR)/test_misc.o \
+	$(CPU_TESTS_OBJDIR)/netntlmv1_capture.o \
+	$(CPU_TESTS_OBJDIR)/test_netntlmv1_capture.o \
 	$(CPU_TESTS_OBJDIR)/test_bloom.o \
 	$(CPU_TESTS_OBJDIR)/test_sort.o \
 	$(CPU_TESTS_OBJDIR)/test_decompress.o \
@@ -352,6 +354,7 @@ UNITTEST_OBJS := \
 	$(OBJDIR)/gws.o \
 	$(OBJDIR)/hash_validate.o \
 	$(OBJDIR)/misc.o \
+	$(OBJDIR)/netntlmv1_capture.o \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/test_bloom.o \
 	$(OBJDIR)/test_chain.o \
@@ -367,6 +370,7 @@ UNITTEST_OBJS := \
 	$(OBJDIR)/test_hash_to_index.o \
 	$(OBJDIR)/test_hash_to_index_netntlmv1.o \
 	$(OBJDIR)/test_hash_to_index_ntlm9.o \
+	$(OBJDIR)/test_netntlmv1_capture.o \
 	$(OBJDIR)/test_index_to_plaintext.o \
 	$(OBJDIR)/test_index_to_plaintext_ntlm9.o \
 	$(OBJDIR)/test_index_to_plaintext_markov.o \

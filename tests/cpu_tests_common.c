@@ -12,6 +12,7 @@
 #include "cpu_tests_common.h"
 #include "test_challenge_host.h"
 #include "test_misc.h"
+#include "test_netntlmv1_capture.h"
 #include "test_bloom.h"
 #include "test_sort.h"
 #include "test_decompress.h"
@@ -49,6 +50,14 @@ int run_cpu_only_tests(void) {
   /* Misc tests (CPU-only, no kernel needed). */
   printf("Running misc tests... "); fflush(stdout);
   if (!test_misc()) {
+    all_passed = 0;
+    PRINT_FAILED();
+  } else
+    PRINT_PASSED();
+
+  /* NetNTLMv1 capture tests (CPU-only, no kernel needed). */
+  printf("Running NetNTLMv1 capture tests... "); fflush(stdout);
+  if (!test_netntlmv1_capture()) {
     all_passed = 0;
     PRINT_FAILED();
   } else
