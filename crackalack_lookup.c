@@ -4220,8 +4220,12 @@ static int load_netntlmv1_captures(const char *arg, netntlmv1_capture **out_capt
         capacity *= 2;
         tmp = realloc(captures, capacity * sizeof(netntlmv1_capture));
         if (tmp == NULL) {
+          unsigned int j;
+
           fprintf(stderr, "Error while growing buffer for NetNTLMv1 captures.\n");
           FCLOSE(f);
+          for (j = 0; j < count; j++)
+            netntlmv1_free_capture(&captures[j]);
           FREE(captures);
           return -1;
         }
@@ -4772,6 +4776,17 @@ int main(int ac, char **av) {
       synthetic_ppi.plaintext = full_ntlm_hex;
       synthetic_ppi.index_filename = NULL;
       save_cracked_hash(&synthetic_ppi, HASH_NETNTLMV1);
+      /* save_cracked_hash() unconditionally does num_cracked++ and
+       * num_falsealarms--, on the assumption that every call represents a
+       * newly-cracked hash from the normal pipeline.  This synthetic entry
+       * is not one: the two block cracks that made reassembly possible here
+       * already incremented num_cracked (and adjusted num_falsealarms) via
+       * their own save_cracked_hash() calls earlier in the pipeline.
+       * Compensate here so the pot file still gets the new reassembled
+       * entry appended, but the final report's counters aren't
+       * triple-counted or driven negative (num_falsealarms is unsigned). */
+      num_cracked--;
+      num_falsealarms++;
     }
   }
 
