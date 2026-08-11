@@ -460,6 +460,7 @@ LOOKUP_OBJS := \
 	$(OBJDIR)/markov_mask.o \
 	$(OBJDIR)/mask_parse.o \
 	$(OBJDIR)/misc.o \
+	$(OBJDIR)/netntlmv1_capture.o \
 	$(OBJDIR)/precompute_collate.o \
 	$(GPU_BACKEND_OBJ) \
 	$(OBJDIR)/rar_decompress.o \

@@ -55,6 +55,7 @@
 #include "mask_parse.h"
 #include "bloom.h"
 #include "misc.h"
+#include "netntlmv1_capture.h"
 #include "fa_batch.h"
 #include "precompute_collate.h"
 #ifdef HAVE_UNRAR
@@ -3294,13 +3295,14 @@ void print_usage_and_exit(char *prog_name, int exit_code) {
   char *dir2 = "/home/user/";
 #endif
 
-  fprintf(stderr, "%sUsage:%s %s rainbow_table_directory (single_hash | filename_with_many_hashes.txt) [-gws GWS] [-disable-platform N]\n\n", WHITEB, CLR, prog_name);
+  fprintf(stderr, "%sUsage:%s %s rainbow_table_directory (single_hash | filename_with_many_hashes.txt | -ntlmv1 capture_or_file) [-gws GWS] [-disable-platform N]\n\n", WHITEB, CLR, prog_name);
   fprintf(stderr, "    %s-gws GWS%s    (Optional) Sets the global work size for each GPU.  This can significantly affect the speed.  To tune this setting, start with multiplying the max compute units by the max work group size (both are reported on program start-up).  Then increase/decrease the value and time the results.  For example, if the max compute units is 20, and the max work group size is 1024, try using 20 x 1024 = 20480, then 20480 - 1024 = 19456, 20480 - 2048 = 18432, 2048 + 1024 = 21504, etc.  If you find a value that works better than the automatic setting, please report your findings at: https://github.com/jtesta/rainbowcrackalack/issues\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s-disable-platform N%s    (Optional) Disables a platform from being used (platform numbers are reported on program start-up).  Useful when experiencing strange problems on mixed-GPU systems.  Try disabling each platform one at a time and see if the program behaves normally.\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--fa-batch N%s    (Optional) False-alarm batch flush threshold (default 16384; 1 disables batching).\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--bloom-fpr X%s    (Optional) Bloom filter target false-positive rate (default 0.01; 0 disables).\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--gpu-search%s    (Optional) Offload per-table endpoint binary search to the GPU.  Off by default while still under validation.\n\n", WHITEB, CLR);
   fprintf(stderr, "    %s--challenge HEX%s    (Optional) NetNTLMv1 server challenge as 16 hex digits (default 1122334455667788).  Normally adopted automatically from the loaded tables.\n\n", WHITEB, CLR);
+  fprintf(stderr, "    %s-ntlmv1 capture_or_file%s    Given a full NetNTLMv1 capture (\"user::domain:LMresp:NTresp:challenge\") or a file of one capture per line, splits the NT response into its three DES blocks, cracks block1/block2 via the loaded tables, brute-forces block3's 2-byte key, and prints/pot-files the reassembled 16-byte NTLM hash.  ESS/NTLM2-Session captures are detected and skipped (their random per-session client challenge defeats precomputed tables).  Mutually exclusive with the positional single_hash/filename argument.\n\n", WHITEB, CLR);
   fprintf(stderr, "%sExamples:%s\n    %s %s 64f12cddaa88057e06a81b54e73b949b\n    %s %s %shashes_one_per_line.txt\n    %s %s %spwdump.txt\n\n", WHITEB, CLR, prog_name, dir1, prog_name, dir1, dir2, prog_name, dir1, dir2);
   exit(exit_code);
 }
@@ -4157,6 +4159,92 @@ void search_tables(unsigned int total_tables, precomputed_and_potential_indices 
 }
 
 
+static int ntlmv1_mode = 0;
+static char *ntlmv1_arg = NULL;
+
+/* Loads NetNTLMv1 captures from `arg`.  If `arg` opens as a readable file,
+ * every non-blank, non-'#'-prefixed line is parsed as one capture (bad
+ * lines are warned about and skipped, not fatal).  Otherwise `arg` itself
+ * is parsed as a single capture line.  Returns 0 on success (even with
+ * zero valid captures -- caller checks *out_count), -1 on allocation or
+ * single-line-parse failure. */
+static int load_netntlmv1_captures(const char *arg, netntlmv1_capture **out_captures, unsigned int *out_count) {
+  FILE *f = fopen(arg, "rb");
+  netntlmv1_capture *captures = NULL;
+  unsigned int count = 0, capacity = 0;
+  char errbuf[256];
+
+  if (f == NULL) {
+    captures = calloc(1, sizeof(netntlmv1_capture));
+    if (captures == NULL) {
+      fprintf(stderr, "Error while allocating buffer for NetNTLMv1 capture.\n");
+      return -1;
+    }
+
+    if (netntlmv1_parse_capture_line(arg, &captures[0], errbuf, sizeof(errbuf)) != 0) {
+      fprintf(stderr, "Error parsing NetNTLMv1 capture: %s\n", errbuf);
+      free(captures);
+      return -1;
+    }
+
+    *out_captures = captures;
+    *out_count = 1;
+    return 0;
+  }
+
+  {
+    char line[1024];
+    unsigned int line_num = 0;
+
+    capacity = 16;
+    captures = calloc(capacity, sizeof(netntlmv1_capture));
+    if (captures == NULL) {
+      fprintf(stderr, "Error while allocating buffer for NetNTLMv1 captures.\n");
+      FCLOSE(f);
+      return -1;
+    }
+
+    while (fgets(line, sizeof(line), f) != NULL) {
+      char *p = line;
+
+      line_num++;
+
+      while (*p == ' ' || *p == '\t')
+        p++;
+      if (*p == '\0' || *p == '\n' || *p == '\r' || *p == '#')
+        continue;
+
+      if (count == capacity) {
+        netntlmv1_capture *tmp;
+
+        capacity *= 2;
+        tmp = realloc(captures, capacity * sizeof(netntlmv1_capture));
+        if (tmp == NULL) {
+          fprintf(stderr, "Error while growing buffer for NetNTLMv1 captures.\n");
+          FCLOSE(f);
+          FREE(captures);
+          return -1;
+        }
+        captures = tmp;
+      }
+
+      if (netntlmv1_parse_capture_line(line, &captures[count], errbuf, sizeof(errbuf)) != 0) {
+        fprintf(stderr, "Warning: %s, line %u: %s -- skipping.\n", arg, line_num, errbuf);
+        continue;
+      }
+
+      count++;
+    }
+
+    FCLOSE(f);
+  }
+
+  *out_captures = captures;
+  *out_count = count;
+  return 0;
+}
+
+
 int main(int ac, char **av) {
   char *rt_dir = NULL, *single_hash = NULL, *filename = NULL, *file_data = NULL, **usernames = NULL, **hashes = NULL, *pot_file_data = NULL;
   unsigned int i = 0;
@@ -4180,11 +4268,23 @@ int main(int ac, char **av) {
   setlocale(LC_NUMERIC, "");
   init_max_preload_num();
   memcpy(g_challenge, NETNTLMV1_DEFAULT_CHALLENGE, 8);
+  unsigned int flags_start = 3;
+
   if (ac < 3)
     print_usage_and_exit(av[0], -1);
 
-  /* Parse optional flags (everything after the first two positional args). */
-  for (i = 3; i < (unsigned int)ac; i++) {
+  if (strcmp(av[2], "-ntlmv1") == 0) {
+    if (ac < 4) {
+      fprintf(stderr, "Error: -ntlmv1 requires a capture string or file path.\n");
+      print_usage_and_exit(av[0], -1);
+    }
+    ntlmv1_mode = 1;
+    ntlmv1_arg = av[3];
+    flags_start = 4;
+  }
+
+  /* Parse optional flags (everything after the first two/three positional args). */
+  for (i = flags_start; i < (unsigned int)ac; i++) {
     if ((strcmp(av[i], "-gws") == 0) && (i + 1 < (unsigned int)ac)) {
       user_provided_gws = parse_uint_arg(av[++i], "-gws");
     } else if ((strcmp(av[i], "-disable-platform") == 0) && (i + 1 < (unsigned int)ac)) {
@@ -4301,7 +4401,11 @@ int main(int ac, char **av) {
   FCLOSE(f);
 
   /* Check if the second arg is a hash or a file containing hashes. */
-  if (stat(av[2], &st) == 0)
+  if (ntlmv1_mode) {
+    /* Nothing to do here -- hashes[]/usernames[] are built below, after the
+     * config groups are loaded and the active NetNTLMv1 challenge is
+     * resolved from them. */
+  } else if (stat(av[2], &st) == 0)
     filename = av[2];
   else {
     single_hash = av[2];
@@ -4316,7 +4420,9 @@ int main(int ac, char **av) {
     }
   }
 
-  if (filename) {
+  if (ntlmv1_mode) {
+    /* Handled after config groups are loaded, below. */
+  } else if (filename) {
     FILE *f = fopen(filename, "rb");
     unsigned int previously_cracked = 0;
 
@@ -4382,6 +4488,11 @@ int main(int ac, char **av) {
    * shrink the uncracked-hash set before the expensive groups run. */
   sort_config_groups(&cg_head);
 
+  if (ntlmv1_mode && cg_head->params.hash_type != HASH_NETNTLMV1) {
+    fprintf(stderr, "Error: -ntlmv1 requires NetNTLMv1 rainbow tables; loaded tables in %s are a different hash type.\n", rt_dir);
+    exit(-1);
+  }
+
   /* Use the first config group's hash type for hash format validation. */
   if (cg_head->params.hash_type == HASH_NTLM) {
     for (i = 0; i < num_hashes; i++) {
@@ -4428,6 +4539,69 @@ int main(int ac, char **av) {
     memcpy(g_challenge, table_challenge, 8);
     g_challenge_set = 1;
     set_netntlmv1_challenge(g_challenge);
+  }
+
+  netntlmv1_capture *ntlmv1_captures = NULL;
+  unsigned int num_ntlmv1_captures = 0;
+  unsigned int *ntlmv1_capture_queued = NULL;
+
+  if (ntlmv1_mode) {
+    if (load_netntlmv1_captures(ntlmv1_arg, &ntlmv1_captures, &num_ntlmv1_captures) != 0)
+      goto err;
+
+    if (num_ntlmv1_captures == 0) {
+      fprintf(stderr, "Error: no valid NetNTLMv1 captures were parsed from '%s'.\n", ntlmv1_arg);
+      exit(-1);
+    }
+
+    ntlmv1_capture_queued = calloc(num_ntlmv1_captures, sizeof(unsigned int));
+    usernames = calloc((size_t)num_ntlmv1_captures * 2, sizeof(char *));
+    hashes    = calloc((size_t)num_ntlmv1_captures * 2, sizeof(char *));
+    if (ntlmv1_capture_queued == NULL || usernames == NULL || hashes == NULL) {
+      fprintf(stderr, "Error while allocating buffers for NetNTLMv1 captures.\n");
+      goto err;
+    }
+
+    num_hashes = 0;
+    for (i = 0; i < num_ntlmv1_captures; i++) {
+      netntlmv1_capture *cap = &ntlmv1_captures[i];
+      unsigned char effective_challenge[8], block1[8], block2[8], block3[8];
+      char block1_hex[17] = {0}, block2_hex[17] = {0};
+
+      if (cap->is_ess) {
+        printf("capture %u: ESS/NTLM2-Session detected -- client challenge is random per-session, precomputed tables cannot cover this, skipping\n", i + 1);
+        continue;
+      }
+
+      netntlmv1_effective_challenge(cap, effective_challenge);
+
+      if (memcmp(effective_challenge, g_challenge, 8) != 0) {
+        char a[17] = {0}, b[17] = {0};
+        format_challenge_hex(effective_challenge, a);
+        format_challenge_hex(g_challenge, b);
+        printf("capture %u: challenge %s doesn't match loaded tables' challenge %s, skipping\n", i + 1, a, b);
+        continue;
+      }
+
+      netntlmv1_split_nt_response(cap->nt_response, block1, block2, block3);
+      netntlmv1_hex_encode(block1, 8, block1_hex);
+      netntlmv1_hex_encode(block2, 8, block2_hex);
+
+      usernames[num_hashes] = NULL;
+      hashes[num_hashes] = strdup(block1_hex);
+      num_hashes++;
+
+      usernames[num_hashes] = NULL;
+      hashes[num_hashes] = strdup(block2_hex);
+      num_hashes++;
+
+      ntlmv1_capture_queued[i] = 1;
+    }
+
+    if (num_hashes == 0) {
+      fprintf(stderr, "Error: no NetNTLMv1 captures matched the loaded tables' challenge.\n");
+      exit(-1);
+    }
   }
 
   /* Issue a warning if more than 5,000 hashes were provided, as rainbow tables may
@@ -4540,6 +4714,67 @@ int main(int ac, char **av) {
 
   free_config_groups(&cg_head);
 
+  if (ntlmv1_mode) {
+    for (i = 0; i < num_ntlmv1_captures; i++) {
+      netntlmv1_capture *cap = &ntlmv1_captures[i];
+      unsigned char block1[8], block2[8], block3[8];
+      char block1_hex[17] = {0}, block2_hex[17] = {0};
+      precomputed_and_potential_indices *ppi1, *ppi2;
+      unsigned char key1[7], key2[7], key3[2];
+      unsigned char full_ntlm[16];
+      char full_ntlm_hex[33] = {0};
+      char capture_line[512] = {0};
+      char lm_hex[49] = {0}, nt_hex[49] = {0}, chal_hex[17] = {0};
+      precomputed_and_potential_indices synthetic_ppi;
+
+      if (!ntlmv1_capture_queued[i])
+        continue;
+
+      netntlmv1_split_nt_response(cap->nt_response, block1, block2, block3);
+      netntlmv1_hex_encode(block1, 8, block1_hex);
+      netntlmv1_hex_encode(block2, 8, block2_hex);
+
+      ppi1 = ppi_find(ppi_head, block1_hex);
+      ppi2 = ppi_find(ppi_head, block2_hex);
+
+      if (ppi1 == NULL || ppi1->plaintext == NULL) {
+        printf("capture %u (%s): block1 (%s) not found in tables -- cannot reassemble full NTLM hash.\n", i + 1, cap->user, block1_hex);
+        continue;
+      }
+      if (ppi2 == NULL || ppi2->plaintext == NULL) {
+        printf("capture %u (%s): block2 (%s) not found in tables -- cannot reassemble full NTLM hash.\n", i + 1, cap->user, block2_hex);
+        continue;
+      }
+
+      if (netntlmv1_hex_decode(ppi1->plaintext, 14, key1) != 0 ||
+          netntlmv1_hex_decode(ppi2->plaintext, 14, key2) != 0) {
+        fprintf(stderr, "capture %u (%s): internal error decoding recovered key hex.\n", i + 1, cap->user);
+        continue;
+      }
+
+      if (netntlmv1_bruteforce_block3(block3, g_challenge, key3) != 0) {
+        fprintf(stderr, "capture %u (%s): internal error -- exhaustive 2-byte block3 search found no match (this should never happen).\n", i + 1, cap->user);
+        continue;
+      }
+
+      netntlmv1_assemble_ntlm_hash(key1, key2, key3, full_ntlm);
+      netntlmv1_hex_encode(full_ntlm, 16, full_ntlm_hex);
+
+      printf("%sHASH CRACKED (NetNTLMv1, full NTLM hash) => %s:%s:%s%s\n", GREENB, cap->user, cap->domain, full_ntlm_hex, CLR);
+
+      netntlmv1_hex_encode(cap->lm_response, 24, lm_hex);
+      netntlmv1_hex_encode(cap->nt_response, 24, nt_hex);
+      netntlmv1_hex_encode(cap->server_challenge, 8, chal_hex);
+      snprintf(capture_line, sizeof(capture_line), "%s::%s:%s:%s:%s", cap->user, cap->domain, lm_hex, nt_hex, chal_hex);
+
+      memset(&synthetic_ppi, 0, sizeof(synthetic_ppi));
+      synthetic_ppi.hash = capture_line;
+      synthetic_ppi.plaintext = full_ntlm_hex;
+      synthetic_ppi.index_filename = NULL;
+      save_cracked_hash(&synthetic_ppi, HASH_NETNTLMV1);
+    }
+  }
+
   seconds_to_human_time(time_precomp_str, sizeof(time_precomp_str), time_precomp);
   seconds_to_human_time(time_io_str, sizeof(time_io_str), time_io);
   seconds_to_human_time(time_searching_str, sizeof(time_searching_str), time_searching);
@@ -4573,6 +4808,13 @@ int main(int ac, char **av) {
 
   printf(" %s* Statistics *%s\n\n          Number of tables processed: %u\n              Number of false alarms: %" QUOTE PRIu64"\n          Number of chains processed: %" QUOTE PRIu64"\n\n                Time spent per table: %s\n     False alarms checked per second: %" QUOTE ".1f\n\n         False alarms per no. chains: %.5f%%\n  Successful cracks per false alarms: %.5f%%\n  Successful cracks per total chains: %.8f%%\n\n\n", WHITEB, CLR, num_tables_processed, num_falsealarms, num_chains_processed, time_per_table_str, (double)num_falsealarms / time_falsealarms, ((double)num_falsealarms / (double)num_chains_processed) * 100.0, ((double)num_cracked / (double)num_falsealarms) * 100.0, ((double)num_cracked / (double)num_chains_processed) * 100.0);
 
+
+  if (ntlmv1_mode) {
+    for (i = 0; i < num_ntlmv1_captures; i++)
+      netntlmv1_free_capture(&ntlmv1_captures[i]);
+    FREE(ntlmv1_captures);
+    FREE(ntlmv1_capture_queued);
+  }
 
   free_precomputed_and_potential_indices(&ppi_head);
   free_loaded_hashes(usernames, hashes);
