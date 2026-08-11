@@ -18,8 +18,13 @@ typedef struct {
  * failure, writes a human-readable reason into errbuf and returns -1. */
 int netntlmv1_parse_capture_line(const char *line, netntlmv1_capture *out, char *errbuf, size_t errbuf_len);
 
-/* True if lm_response[8..23] are all zero -- the ESS/NTLM2-Session padding
- * pattern (the real 8-byte client challenge occupies lm_response[0..7]). */
+/* Returns 1 if lm_response[8..23] are all zero AND lm_response[0..7] are
+ * nonzero -- the ESS/NTLM2-Session padding pattern (the real 8-byte client
+ * challenge occupies lm_response[0..7]). An all-zero 24-byte LM response (both
+ * ranges zero) is treated as classic/non-ESS on the theory that it's more
+ * likely a legitimate "no LM response sent" classic capture than a true ESS
+ * capture whose randomly-generated 8-byte client challenge happened to be all
+ * zero. */
 int netntlmv1_capture_is_ess(const netntlmv1_capture *cap);
 
 /* Classic NTLMv1 only: the effective challenge is the raw server challenge.
@@ -35,7 +40,12 @@ void netntlmv1_split_nt_response(const unsigned char nt_response[24],
  * with 5 zero bytes) for the one whose DES encryption of `challenge` equals
  * block3_ct.  Returns 0 and fills out_2bytes on success.  This is a
  * complete keyspace, so a nonzero return indicates an internal bug (e.g. a
- * blocks/challenge mismatch), not a normal "not found" case. */
+ * blocks/challenge mismatch), not a normal "not found" case.
+ *
+ * NOTE: This function mutates the process-wide NetNTLMv1 challenge as a side
+ * effect (via set_netntlmv1_challenge()). Callers must not rely on any
+ * previously-set global challenge surviving this call and must re-set it
+ * afterward if needed. */
 int netntlmv1_bruteforce_block3(const unsigned char block3_ct[8], const unsigned char challenge[8], unsigned char out_2bytes[2]);
 
 /* key1/key2 are the two 7-byte DES keys recovered from the rainbow tables

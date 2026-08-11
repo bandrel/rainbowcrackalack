@@ -37,7 +37,7 @@ NTLMv1 has two variants distinguishable from the capture itself:
   `MD5(server_challenge || client_challenge)[0:8]`, where the client challenge is generated randomly
   by the victim's OS on every authentication and is not attacker-controlled.
 
-**Detection heuristic**: `LMresp` bytes 8–23 all zero ⇒ ESS.
+**Detection heuristic**: `LMresp` bytes 8–23 all zero AND bytes 0–7 nonzero ⇒ ESS. An all-zero 24-byte LM response (both ranges zero) is treated as classic/non-ESS, since it's more likely a legitimate "no LM response sent" classic capture than a true ESS capture whose randomly-generated 8-byte client challenge happened to be all zero.
 
 **Why ESS can't use precomputed tables**: because the client challenge is random per-session, the
 effective encrypted challenge differs on every capture regardless of what server challenge is forced.

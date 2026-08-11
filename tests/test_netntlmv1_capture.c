@@ -36,13 +36,14 @@ static int group_b(void)
   int ok = 1;
   netntlmv1_capture cap;
   char errbuf[256];
-  /* 48 zero hex chars = classic (non-ESS) LM response; 48 'a' hex chars as
-   * an arbitrary NT response; 16 '1' hex chars as the challenge. */
-  const char *classic_line =
+  /* 48 zero hex chars = the ambiguous all-zero LM response case, resolved as
+   * classic (non-ESS) per the tie-break heuristic; 48 'a' hex chars as an
+   * arbitrary NT response; 16 '1' hex chars as the challenge. */
+  const char *classic_line_all_zero =
     "alice::CORP:000000000000000000000000000000000000000000000000:"
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1111111111111111";
 
-  if (netntlmv1_parse_capture_line(classic_line, &cap, errbuf, sizeof(errbuf)) != 0) {
+  if (netntlmv1_parse_capture_line(classic_line_all_zero, &cap, errbuf, sizeof(errbuf)) != 0) {
     fprintf(stderr, "CAP-01 failed: %s\n", errbuf);
     ok = 0;
   } else {
@@ -51,6 +52,24 @@ static int group_b(void)
     if (cap.nt_response[0] != 0xaa) { fprintf(stderr, "CAP-04 failed: nt_response[0]=%02x\n", cap.nt_response[0]); ok = 0; }
     if (cap.server_challenge[0] != 0x11) { fprintf(stderr, "CAP-05 failed: challenge[0]=%02x\n", cap.server_challenge[0]); ok = 0; }
     if (cap.is_ess != 0) { fprintf(stderr, "CAP-06 failed: expected classic (is_ess=0), got %d\n", cap.is_ess); ok = 0; }
+    netntlmv1_free_capture(&cap);
+  }
+
+  /* Realistic classic NTLMv1: LM response with nonzero bytes across the
+   * entire 24-byte field (not the ambiguous all-zero case). */
+  const char *classic_line_realistic =
+    "bob::CORP:aaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbcccccccccccccccc:"
+    "dddddddddddddddddddddddddddddddddddddddddddddddd:2222222222222222";
+
+  if (netntlmv1_parse_capture_line(classic_line_realistic, &cap, errbuf, sizeof(errbuf)) != 0) {
+    fprintf(stderr, "CAP-09 failed: %s\n", errbuf);
+    ok = 0;
+  } else {
+    if (strcmp(cap.user, "bob") != 0) { fprintf(stderr, "CAP-10 failed: user=\"%s\"\n", cap.user); ok = 0; }
+    if (cap.lm_response[0] != 0xaa) { fprintf(stderr, "CAP-11 failed: lm_response[0]=%02x\n", cap.lm_response[0]); ok = 0; }
+    if (cap.lm_response[8] != 0xbb) { fprintf(stderr, "CAP-12 failed: lm_response[8]=%02x\n", cap.lm_response[8]); ok = 0; }
+    if (cap.lm_response[16] != 0xcc) { fprintf(stderr, "CAP-13 failed: lm_response[16]=%02x\n", cap.lm_response[16]); ok = 0; }
+    if (cap.is_ess != 0) { fprintf(stderr, "CAP-14 failed: expected classic (is_ess=0), got %d\n", cap.is_ess); ok = 0; }
     netntlmv1_free_capture(&cap);
   }
 
@@ -163,6 +182,40 @@ static int group_f(void)
     }
   }
 
+  /* Reset the global challenge to a known default (all-zero) to avoid
+   * leaving stale state for subsequent test groups. netntlmv1_bruteforce_block3
+   * mutates the global challenge as a side effect. */
+  {
+    unsigned char default_challenge[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    set_netntlmv1_challenge(default_challenge);
+  }
+
+  return ok;
+}
+
+/* --- Group G: effective challenge --- */
+static int group_g(void)
+{
+  int ok = 1;
+  netntlmv1_capture cap;
+  char errbuf[256];
+  unsigned char out_challenge[8];
+  const char *classic_line =
+    "alice::CORP:000000000000000000000000000000000000000000000000:"
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1111111111111111";
+
+  if (netntlmv1_parse_capture_line(classic_line, &cap, errbuf, sizeof(errbuf)) != 0) {
+    fprintf(stderr, "EFFCH-01 failed: %s\n", errbuf);
+    ok = 0;
+  } else {
+    netntlmv1_effective_challenge(&cap, out_challenge);
+    if (memcmp(out_challenge, cap.server_challenge, 8) != 0) {
+      fprintf(stderr, "EFFCH-02 failed: effective challenge did not match server_challenge\n");
+      ok = 0;
+    }
+    netntlmv1_free_capture(&cap);
+  }
+
   return ok;
 }
 
@@ -176,6 +229,7 @@ int test_netntlmv1_capture(void)
   if (!group_d()) ok = 0;
   if (!group_e()) ok = 0;
   if (!group_f()) ok = 0;
+  if (!group_g()) ok = 0;
 
   return ok;
 }
